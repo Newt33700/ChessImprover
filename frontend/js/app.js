@@ -622,26 +622,40 @@ class ChessImproverApp {
 
   // ─── Mode Exercice ──────────────────────────────────────────────
 
-  _startExercise() {
-    const due = SRS.getDue(SRS.load());
+  async _startExercise() {
+    let due = [];
+    if (window.ChessDB) {
+      due = await ChessDB.getDueCards().catch(() => []);
+    }
+    if (!due.length) {
+      due = SRS.getDue(SRS.load());
+    }
     if (!due.length) { this._toast("✅ Aucune révision aujourd'hui !", "info"); return; }
     const card = due[0];
+    this._hideBoardPanels();
     this._showSection("section-board");
     this._setModePill("Exercice");
-    this.boardMgr.startExercise(card.fen, card.solution, "w");
+
+    // PV peut être un tableau UCI (US 4) ou une chaîne SAN (ancien format)
+    const pv = card.solution;
+    const chess = new Chess();
+    let playerColor = "w";
+    try { chess.load(card.fen); playerColor = chess.turn(); } catch {}
+
+    this.boardMgr.startExercise(card.fen, pv, playerColor);
     const prompt = document.getElementById("exercise-prompt");
     if (prompt) { prompt.textContent = "🎯 Trouvez le meilleur coup !"; prompt.hidden = false; }
     this._currentCard = card;
   }
 
-  _onExerciseResult({ correct, played, solution }) {
-    const prompt = document.getElementById("exercise-prompt");
+  _onExerciseResult({ correct, played, solution, quality }) {
+    const q = quality !== undefined ? quality : (correct ? 5 : 1);
     if (correct) {
-      this._toast("✅ Excellent !", "success");
-      const { xp, level } = XPSystem.add(XP_PER_EXERCISE);
+      this._toast(q >= 5 ? "✅ Excellent !" : "👍 Bien joué !", "success");
+      const { xp, level } = XPSystem.add(q >= 5 ? XP_PER_EXERCISE : Math.round(XP_PER_EXERCISE / 2));
       this._renderXP(xp, level);
       if (this._currentCard) {
-        SRS.saveCard(SRS.review(this._currentCard, 5));
+        SRS.saveCard(SRS.review(this._currentCard, q));
       }
     } else {
       this._toast(`❌ Raté. La solution était ${solution}`, "error");

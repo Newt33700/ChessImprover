@@ -389,24 +389,63 @@ class BoardManager {
 
   /**
    * @param {string} fen          – position de départ de l'exercice
-   * @param {string} solutionMove – coup SAN correct
+   * @param {string|string[]} pv  – Principal Variation (tableau UCI ou SAN) ou coup unique
    * @param {string} playerColor  – "w" | "b"
    */
-  startExercise(fen, solutionMove, playerColor = "w") {
+  startExercise(fen, pv, playerColor = "w") {
     this.mode = "exercise";
-    this.exerciseSolution = solutionMove;
+    this.exercisePV        = Array.isArray(pv) ? pv : [pv];
+    this.exerciseSolution  = this.exercisePV[0] || "";  // compat ancien API
     this.exercisePlayerColor = playerColor;
+    this.exerciseMoveStep  = 0;  // combien de coups PV ont été joués
     this.chess.load(fen);
     this.board.position(fen);
     if (playerColor === "b") this.board.flip();
   }
 
   _checkExerciseSolution(playedMove) {
-    const correct = playedMove.san === this.exerciseSolution;
-    document.dispatchEvent(new CustomEvent("exercise:result", {
-      detail: { correct, played: playedMove.san, solution: this.exerciseSolution }
-    }));
-    return correct;
+    const expected = this.exercisePV[this.exerciseMoveStep];
+    if (!expected) {
+      document.dispatchEvent(new CustomEvent("exercise:result", {
+        detail: { correct: true, played: playedMove.san, solution: this.exerciseSolution, quality: 5 }
+      }));
+      return true;
+    }
+
+    // Comparer par SAN ou par case de destination (UCI)
+    const matchesSan  = playedMove.san === expected;
+    const matchesUCI  = (playedMove.from + playedMove.to) === expected.slice(0, 4);
+    const correct     = matchesSan || matchesUCI;
+
+    if (!correct) {
+      document.dispatchEvent(new CustomEvent("exercise:result", {
+        detail: { correct: false, played: playedMove.san, solution: expected, quality: 1 }
+      }));
+      return false;
+    }
+
+    this.exerciseMoveStep++;
+
+    // Si c'est un coup impair (réponse de l'adversaire), on le joue automatiquement
+    const nextExpected = this.exercisePV[this.exerciseMoveStep];
+    if (nextExpected && this.exerciseMoveStep % 2 === 1) {
+      setTimeout(() => {
+        const oppMove = this.chess.move(nextExpected) || this.chess.move({ from: nextExpected.slice(0,2), to: nextExpected.slice(2,4), promotion: "q" });
+        if (oppMove) {
+          this.board.position(this.chess.fen(), false);
+          this.exerciseMoveStep++;
+        }
+      }, 400);
+      return true;
+    }
+
+    // Si on a joué tous les coups de la PV : succès complet
+    if (this.exerciseMoveStep >= this.exercisePV.length) {
+      document.dispatchEvent(new CustomEvent("exercise:result", {
+        detail: { correct: true, played: playedMove.san, solution: this.exerciseSolution, quality: 5 }
+      }));
+    }
+    return true;
   }
 
   // -------------------------------------------------------------------------
