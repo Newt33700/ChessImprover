@@ -261,7 +261,7 @@ class BoardManager {
       : Math.max(0, whiteAfter  - whiteBefore);
 
     document.dispatchEvent(new CustomEvent("move:accuracy", {
-      detail: { moveIdx, cpLoss },
+      detail: { moveIdx, cpLoss, evalCp: whiteAfter },
     }));
   }
 
