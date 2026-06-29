@@ -49,9 +49,10 @@ const EloEngine = {
   },
 
   estimateElo(accuracy, opponentElo) {
-    // Calibré : 79% précision ≈ 1100 Elo, 90% ≈ 1700 Elo
-    const raw = accuracy * 10 + opponentElo * 0.3;
-    return Math.round(Math.max(400, Math.min(2800, raw)));
+    // Formule logistique : expectedScore → différence Elo → Elo estimé
+    const es  = Math.max(0.001, Math.min(0.999, accuracy / 100));
+    const adv = 400 * Math.log10(es / (1 - es));
+    return Math.round(Math.max(400, Math.min(2800, opponentElo + adv)));
   },
 
   classify(score) {
