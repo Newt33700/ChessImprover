@@ -1,0 +1,952 @@
+/**
+ * Chess Improver – Mode Standalone (déployable sans backend)
+ * Toute la logique métier est portée en JS pur :
+ *   - Parsing PGN via chess.js
+ *   - Calcul Elo CAPS simplifié
+ *   - Détection blunders géométrique
+ *   - SM-2 SRS
+ *   - XP / Streaks en LocalStorage
+ *   - Sync Chess.com via API publique (CORS-friendly)
+ */
+
+// ═══════════════════════════════════════════════════════════════════
+// Constantes
+// ═══════════════════════════════════════════════════════════════════
+const CHESS_COM_API = "https://api.chess.com/pub";
+
+const STORAGE_KEYS = {
+  XP: "ci_xp", LEVEL: "ci_level", STREAK: "ci_streak",
+  LAST_ACTIVE: "ci_last_active", GAMES: "ci_games",
+  SRS_CARDS: "ci_srs_cards", USERNAME: "ci_username",
+};
+
+const XP_PER_GAME     = 50;
+const XP_PER_EXERCISE = 10;
+const XP_PER_LEVEL    = (lvl) => lvl * 100;
+
+// Calibré pour analyse depth-5 (moteur asm.js) : 100cp perte → ~74% précision
+const DECAY = 0.003;
+
+// ═══════════════════════════════════════════════════════════════════
+// LocalStorage Store
+// ═══════════════════════════════════════════════════════════════════
+const Store = {
+  get(k, fb = null) { try { const r = localStorage.getItem(k); return r !== null ? JSON.parse(r) : fb; } catch { return fb; } },
+  set(k, v)         { try { localStorage.setItem(k, JSON.stringify(v)); } catch {} },
+};
+
+// ═══════════════════════════════════════════════════════════════════
+// Logique Elo (portée depuis Python)
+// ═══════════════════════════════════════════════════════════════════
+const EloEngine = {
+  movAccuracy(cpLoss) {
+    return 100 * Math.exp(-DECAY * Math.abs(cpLoss));
+  },
+
+  gameAccuracy(scores) {
+    if (!scores.length) return 0;
+    return scores.reduce((a, b) => a + b, 0) / scores.length;
+  },
+
+  estimateElo(accuracy, opponentElo) {
+    // Calibré : 79% précision ≈ 1100 Elo, 90% ≈ 1700 Elo
+    const raw = accuracy * 10 + opponentElo * 0.3;
+    return Math.round(Math.max(400, Math.min(2800, raw)));
+  },
+
+  classify(score) {
+    if (score >= 95) return "brilliant";
+    if (score >= 85) return "excellent";
+    if (score >= 70) return "good";
+    if (score >= 50) return "inaccuracy";
+    if (score >= 25) return "mistake";
+    return "blunder";
+  },
+};
+
+// ═══════════════════════════════════════════════════════════════════
+// Analyse PGN côté client (chess.js)
+// ═══════════════════════════════════════════════════════════════════
+const PGNAnalyzer = {
+  /**
+   * Analyse géométrique d'une partie PGN.
+   * Retourne { moves, blunders, opponentElo }
+   */
+  analyze(pgn) {
+    const chess = new Chess();
+    let blunders = 0;
+    const moves = [];
+
+    try {
+      chess.load_pgn(pgn);
+    } catch {
+      return { moves: [], blunders: 0, opponentElo: 1000 };
+    }
+
+    // Extraire les headers
+    const headers = chess.header();
+    const whiteElo = parseInt(headers.WhiteElo) || 1000;
+    const blackElo = parseInt(headers.BlackElo) || 1000;
+
+    // Extraire les horloges [%clk H:MM:SS] présentes dans les commentaires PGN
+    const CLK_RE = /\[%clk\s+(\d{1,2}):(\d{2}):(\d{2}(?:\.\d+)?)\]/g;
+    const clocks = [];
+    let clkM;
+    while ((clkM = CLK_RE.exec(pgn)) !== null) {
+      clocks.push(Math.round(parseInt(clkM[1]) * 3600 + parseInt(clkM[2]) * 60 + parseFloat(clkM[3])));
+    }
+    const tcMatch = pgn.match(/\[TimeControl\s+"(\d+)/);
+    const initialTime = tcMatch ? parseInt(tcMatch[1]) : null;
+
+    // Reconstruire coup par coup (sans évaluation moteur)
+    const history = chess.history({ verbose: true });
+    chess.reset();
+
+    history.forEach((move, i) => {
+      const clock = i < clocks.length ? clocks[i] : null;
+      const prevSameColor = i >= 2 ? clocks[i - 2] : initialTime;
+      const timeSpent = (prevSameColor != null && clock != null) ? Math.max(0, prevSameColor - clock) : null;
+      chess.move(move);
+      moves.push({
+        san: move.san,
+        from: move.from, to: move.to,
+        color: move.color,
+        accuracy_score: null,      // null = en attente Stockfish
+        classification: "unknown",
+        cpLoss: null,
+        fen: chess.fen(),
+        clock,
+        timeSpent,
+      });
+    });
+
+    return { moves, blunders: 0, opponentElo: blackElo };
+  },
+
+  /**
+   * Détection des blunders réels depuis les évaluations Stockfish
+   * (appelé depuis le callback du Web Worker)
+   */
+  updateWithStockfish(moves, topEvals, playedEvals) {
+    return moves.map((m, i) => {
+      if (topEvals[i] === undefined) return m;
+      const cpLoss = Math.abs(topEvals[i] - (playedEvals[i] ?? topEvals[i]));
+      const accuracy = EloEngine.movAccuracy(cpLoss);
+      return { ...m, accuracy_score: parseFloat(accuracy.toFixed(1)), classification: EloEngine.classify(accuracy), cpLoss };
+    });
+  },
+};
+
+// ═══════════════════════════════════════════════════════════════════
+// SRS SM-2 (JS pur)
+// ═══════════════════════════════════════════════════════════════════
+const SRS = {
+  EF_MIN: 1.3,
+
+  createCard(id, fen, solution) {
+    return { id, fen, solution, ef: 2.5, interval: 1, reps: 0, due: new Date().toISOString().split("T")[0] };
+  },
+
+  review(card, quality) {
+    const today = new Date().toISOString().split("T")[0];
+    if (quality < 3) {
+      return { ...card, reps: 0, interval: 1, due: today };
+    }
+    const delta = 0.1 - (5 - quality) * (0.08 + (5 - quality) * 0.02);
+    const newEf = Math.max(this.EF_MIN, card.ef + delta);
+    const newReps = card.reps + 1;
+    let newInterval;
+    if (newReps === 1) newInterval = 1;
+    else if (newReps === 2) newInterval = 6;
+    else newInterval = Math.max(1, Math.round(card.interval * newEf));
+
+    const dueDate = new Date();
+    dueDate.setDate(dueDate.getDate() + newInterval);
+    return { ...card, ef: parseFloat(newEf.toFixed(4)), reps: newReps, interval: newInterval, due: dueDate.toISOString().split("T")[0] };
+  },
+
+  getDue(cards) {
+    const today = new Date().toISOString().split("T")[0];
+    return cards.filter((c) => !c.due || c.due <= today).sort((a, b) => (a.due || "").localeCompare(b.due || ""));
+  },
+
+  load()        { return Store.get(STORAGE_KEYS.SRS_CARDS, []); },
+  save(cards)   { Store.set(STORAGE_KEYS.SRS_CARDS, cards); },
+
+  saveCard(card) {
+    const cards = this.load();
+    const idx = cards.findIndex((c) => c.id === card.id);
+    if (idx >= 0) cards[idx] = card; else cards.push(card);
+    this.save(cards);
+  },
+};
+
+// ═══════════════════════════════════════════════════════════════════
+// XP & Streaks
+// ═══════════════════════════════════════════════════════════════════
+const XPSystem = {
+  get()           { return { xp: Store.get(STORAGE_KEYS.XP, 0), level: Store.get(STORAGE_KEYS.LEVEL, 1) }; },
+  add(amount)     {
+    let { xp, level } = this.get();
+    xp += amount;
+    while (xp >= XP_PER_LEVEL(level)) { xp -= XP_PER_LEVEL(level); level++; document.dispatchEvent(new CustomEvent("xp:levelup", { detail: { level } })); }
+    Store.set(STORAGE_KEYS.XP, xp);
+    Store.set(STORAGE_KEYS.LEVEL, level);
+    return { xp, level };
+  },
+};
+
+const StreakSystem = {
+  today() { return new Date().toISOString().split("T")[0]; },
+  daysDiff(a, b) { return Math.round(Math.abs(new Date(a) - new Date(b)) / 86400000); },
+  get() { return Store.get(STORAGE_KEYS.STREAK, 0); },
+  record() {
+    const today = this.today();
+    const last  = Store.get(STORAGE_KEYS.LAST_ACTIVE, null);
+    let streak  = Store.get(STORAGE_KEYS.STREAK, 0);
+    if (!last)              streak = 1;
+    else if (last === today) return streak;
+    else if (this.daysDiff(last, today) === 1) streak++;
+    else streak = 1;
+    Store.set(STORAGE_KEYS.STREAK, streak);
+    Store.set(STORAGE_KEYS.LAST_ACTIVE, today);
+    return streak;
+  },
+};
+
+// ═══════════════════════════════════════════════════════════════════
+// Chess.com API client (JS, CORS public)
+// ═══════════════════════════════════════════════════════════════════
+const ChessComClient = {
+  async getRecentGames(username, limit = 15) {
+    const now = new Date();
+    const games = [];
+    for (let delta = 0; delta < 3 && games.length < limit; delta++) {
+      const d = new Date(now.getFullYear(), now.getMonth() - delta, 1);
+      const y = d.getFullYear();
+      const m = String(d.getMonth() + 1).padStart(2, "0");
+      try {
+        const res = await fetch(`${CHESS_COM_API}/player/${username}/games/${y}/${m}`, {
+          headers: { "User-Agent": "ChessImprover/1.0" },
+        });
+        if (!res.ok) continue;
+        const data = await res.json();
+        games.push(...(data.games || []));
+      } catch { /* réseau indisponible */ }
+    }
+    return games.slice(-limit).reverse();
+  },
+
+  async getStats(username) {
+    try {
+      const res = await fetch(`${CHESS_COM_API}/player/${username}/stats`);
+      return res.ok ? res.json() : {};
+    } catch { return {}; }
+  },
+};
+
+// ═══════════════════════════════════════════════════════════════════
+// Application principale
+// ═══════════════════════════════════════════════════════════════════
+class ChessImproverApp {
+  constructor() {
+    this.username    = Store.get(STORAGE_KEYS.USERNAME, "");
+    this.boardMgr    = null;
+    this.currentGame = null;
+    this.recentGames = [];
+
+    this._openingBookPromise = this._buildOpeningBook();
+    this._initBoard();
+    this._bindEvents();
+    this._renderAll();
+
+    if (this.username) {
+      document.getElementById("username-input").value = this.username;
+    }
+  }
+
+  // ─── Init ───────────────────────────────────────────────────────
+
+  _initBoard() {
+    this.boardMgr = new BoardManager(
+      "board",
+      (move, fen) => this._onPlayerMove(move, fen),
+      (evalData)  => this._onEngineEval(evalData),
+    );
+    document.addEventListener("review:move",    (e) => this._onReviewMove(e.detail));
+    document.addEventListener("exercise:result",(e) => this._onExerciseResult(e.detail));
+    document.addEventListener("ghost:result",   (e) => this._onGhostResult(e.detail));
+    document.addEventListener("move:accuracy",  (e) => this._onMoveAccuracy(e.detail));
+    document.addEventListener("board:flip",     (e) => this._onBoardFlip(e.detail));
+    document.addEventListener("xp:levelup",     (e) => this._toast(`🎉 Niveau ${e.detail.level} atteint !`, "success"));
+  }
+
+  _bindEvents() {
+    document.getElementById("btn-connect")?.addEventListener("click",  () => this._connectUser());
+    document.getElementById("username-input")?.addEventListener("keydown", (e) => { if (e.key === "Enter") this._connectUser(); });
+    document.getElementById("btn-analyze")?.addEventListener("click",  () => this._analyzePGN());
+    document.getElementById("btn-exercise")?.addEventListener("click", () => this._startExercise());
+    document.getElementById("btn-prev")?.addEventListener("click",     () => this.boardMgr.prevMove());
+    document.getElementById("btn-next")?.addEventListener("click",     () => this.boardMgr.nextMove());
+    document.getElementById("btn-flip")?.addEventListener("click",     () => this.boardMgr.flipBoard());
+    document.getElementById("games-list")?.addEventListener("click",   (e) => {
+      const item = e.target.closest("[data-pgn]");
+      if (item) { document.getElementById("pgn-input").value = item.dataset.pgn; this._showSection("section-pgn"); }
+    });
+    document.getElementById("moves-list")?.addEventListener("click", (e) => {
+      const item = e.target.closest("[data-move-index]");
+      if (item) this.boardMgr.goToMove(parseInt(item.dataset.moveIndex, 10));
+    });
+    document.getElementById("btn-to-pgn")?.addEventListener("click", () => this._showSection("section-pgn"));
+    document.getElementById("btn-back-dashboard")?.addEventListener("click", () => this._showSection("section-dashboard"));
+    document.getElementById("btn-back-board")?.addEventListener("click", () => this._showSection("section-dashboard"));
+  }
+
+  // ─── Connexion Chess.com ────────────────────────────────────────
+
+  async _connectUser() {
+    const input = document.getElementById("username-input");
+    const username = input?.value.trim();
+    if (!username) return;
+    this.username = username;
+    Store.set(STORAGE_KEYS.USERNAME, username);
+    this._setLoading(true, `Chargement des parties de ${username}…`);
+    try {
+      const games = await ChessComClient.getRecentGames(username, 20);
+      this.recentGames = games;
+      this._renderGamesList(games);
+      this._toast(`${games.length} parties chargées ✓`, "success");
+    } catch (err) {
+      this._toast("Impossible de contacter Chess.com", "error");
+    } finally {
+      this._setLoading(false);
+      this._renderAll();
+    }
+  }
+
+  // ─── Analyse PGN ────────────────────────────────────────────────
+
+  _analyzePGN() {
+    const pgn = document.getElementById("pgn-input")?.value.trim();
+    if (!pgn) { this._toast("Collez un PGN à analyser", "error"); return; }
+
+    this._setLoading(true, "Analyse en cours…");
+    setTimeout(() => {   // yielde le rendu avant le calcul
+      try {
+        const { moves, blunders, opponentElo } = PGNAnalyzer.analyze(pgn);
+        if (!moves.length) { this._toast("PGN invalide ou vide", "error"); return; }
+
+        const analysis = {
+          game_id:            `manual_${Date.now()}`,
+          pgn,
+          accuracy:           null,   // calculé par Stockfish
+          estimated_elo:      null,
+          moves,
+          blunders_count:     blunders,
+          missed_forks_count: 0,
+          time_panic_count:   0,
+        };
+
+        // Sauvegarde
+        const saved = Store.get(STORAGE_KEYS.GAMES, []);
+        saved.unshift(analysis);
+        Store.set(STORAGE_KEYS.GAMES, saved.slice(0, 100));
+
+        StreakSystem.record();
+        const { xp, level } = XPSystem.add(XP_PER_GAME);
+        this._renderXP(xp, level);
+
+        this.currentGame = analysis;
+        this._enterReviewMode(analysis);
+      } catch (err) {
+        this._toast(`Erreur d'analyse : ${err.message}`, "error");
+      } finally {
+        this._setLoading(false);
+      }
+    }, 50);
+  }
+
+  // ─── Mode Review ────────────────────────────────────────────────
+
+  _enterReviewMode(analysis) {
+    this.currentGame = analysis;
+
+    // Détecter la couleur du joueur depuis les headers PGN
+    this.playerColor = this._detectPlayerColor(analysis.pgn);
+
+    this._showSection("section-board");
+    this._setModePill("Review");
+    const prompt = document.getElementById("exercise-prompt");
+    if (prompt) prompt.hidden = true;
+    this._renderMovesList(analysis.moves);
+    this._renderGameStats(analysis);
+
+    this.boardMgr.startReview(analysis.moves.map((m) => ({
+      san: m.san, classification: m.classification, fen: m.fen, color: m.color,
+    })));
+
+    this._detectBookDepth(analysis.moves).then((depth) => {
+      if (depth !== null) this.boardMgr.setBookDepth(depth);
+    });
+
+    // Orienter le board : joueur toujours en bas
+    const shouldBeFlipped = this.playerColor === "b";
+    if (shouldBeFlipped !== this.boardMgr.flipped) {
+      this.boardMgr.flipBoard();   // émet board:flip → _onBoardFlip
+    } else {
+      this._updatePlayerBars(this.boardMgr.flipped);
+    }
+  }
+
+  _buildOpeningBook() {
+    const base = "https://raw.githubusercontent.com/lichess-org/chess-openings/master/";
+    const book = new Set();
+    return Promise.all(["a", "b", "c", "d", "e"].map(async (f) => {
+      try {
+        const r = await fetch(`${base}${f}.tsv`);
+        if (!r.ok) return;
+        const text = await r.text();
+        for (const line of text.split("\n").slice(1)) {
+          const pgn = line.split("\t")[2]?.trim();
+          if (!pgn) continue;
+          const chess = new Chess();
+          const tokens = pgn.split(/\s+/).filter((t) => t && !/^\d+\.?$/.test(t));
+          for (const san of tokens) {
+            if (!chess.move(san)) break;
+            book.add(chess.fen().split(" ").slice(0, 4).join(" "));
+          }
+        }
+      } catch { /* réseau indisponible, livre réduit */ }
+    })).then(() => book);
+  }
+
+  async _detectBookDepth(moves) {
+    const book = await this._openingBookPromise;
+    if (!book?.size) return null;
+    let depth = 0;
+    for (const move of moves) {
+      if (book.has(move.fen.split(" ").slice(0, 4).join(" "))) depth++;
+      else break;
+    }
+    return depth;
+  }
+
+  _detectPlayerColor(pgn) {
+    try {
+      const chess = new Chess();
+      chess.load_pgn(pgn || "");
+      const h = chess.header();
+      const user = (this.username || "").toLowerCase();
+      if (!user) return "w";
+      if ((h.White || "").toLowerCase() === user) return "w";
+      if ((h.Black || "").toLowerCase() === user) return "b";
+    } catch {}
+    return "w";
+  }
+
+  _onBoardFlip({ flipped }) {
+    this._updatePlayerBars(flipped);
+    this._updateReviewClocks(this.boardMgr?.reviewIndex ?? -1);
+  }
+
+  _updatePlayerBars(flipped) {
+    const pgn = this.currentGame?.pgn || "";
+    let whiteName = "Blancs", blackName = "Noirs";
+    try {
+      const chess = new Chess();
+      chess.load_pgn(pgn);
+      const h = chess.header();
+      whiteName = h.White || "Blancs";
+      blackName = h.Black || "Noirs";
+    } catch {}
+
+    // Flipped = noir en bas ; sinon blanc en bas
+    const bottomColor = flipped ? "b" : "w";
+    const topColor    = flipped ? "w" : "b";
+    const bottomName  = flipped ? blackName : whiteName;
+    const topName     = flipped ? whiteName : blackName;
+
+    const nameTop    = document.getElementById("name-top");
+    const nameBottom = document.getElementById("name-bottom");
+    const pieceTop   = document.getElementById("piece-top");
+    const pieceBottom= document.getElementById("piece-bottom");
+
+    if (nameTop)    nameTop.textContent    = topName;
+    if (nameBottom) nameBottom.textContent = bottomName;
+    if (pieceTop)   { pieceTop.className   = `player-piece-indicator ${topColor === "w" ? "white" : "black"}`; }
+    if (pieceBottom){ pieceBottom.className= `player-piece-indicator ${bottomColor === "w" ? "white" : "black"}`; }
+  }
+
+  _showMoveBadge(san, cls, playerColor) {
+    const badge = document.getElementById("move-badge");
+    if (!badge) return;
+
+    if (!san || !cls || cls === "unknown") {
+      badge.classList.remove("visible");
+      return;
+    }
+
+    // Destination square from SAN
+    let dest;
+    if (san === "O-O")     dest = playerColor === "w" ? "g1" : "g8";
+    else if (san === "O-O-O") dest = playerColor === "w" ? "c1" : "c8";
+    else {
+      const clean = san.replace(/[+#]$/, "").replace(/=[QRBN]$/, "");
+      dest = clean.slice(-2);
+    }
+    if (!/^[a-h][1-8]$/.test(dest)) { badge.classList.remove("visible"); return; }
+
+    const fileIdx = dest.charCodeAt(0) - 97; // a=0 … h=7
+    const rankIdx = parseInt(dest[1]) - 1;   // 1=0 … 8=7
+    const flipped = this.boardMgr?.flipped || false;
+
+    // Top-right corner of the destination square (as % of board-area)
+    const left = (!flipped ? fileIdx + 1 : 8 - fileIdx) * 12.5;
+    const top  = (!flipped ? 7 - rankIdx : rankIdx)     * 12.5;
+
+    const icons = {
+      book:       { bg: "#8b7355",              text: "B"  },
+      brilliant:  { bg: "var(--col-brilliant)", text: "✦" },
+      excellent:  { bg: "#5b8dd9",              text: "!!" },
+      good:       { bg: "var(--col-good)",      text: "!"  },
+      inaccuracy: { bg: "var(--col-inaccuracy)",text: "?!" },
+      mistake:    { bg: "var(--col-mistake)",   text: "?"  },
+      blunder:    { bg: "var(--col-blunder)",   text: "??" },
+    };
+
+    const icon = icons[cls];
+    if (!icon) { badge.classList.remove("visible"); return; }
+
+    badge.style.left       = `${left}%`;
+    badge.style.top        = `${top}%`;
+    badge.style.background = icon.bg;
+    badge.textContent      = icon.text;
+    badge.dataset.cls      = cls;
+
+    badge.classList.remove("visible");
+    requestAnimationFrame(() => badge.classList.add("visible"));
+  }
+
+  _onReviewMove({ index, move, color }) {
+    document.querySelectorAll("[data-move-index]").forEach((el) =>
+      el.classList.toggle("active", parseInt(el.dataset.moveIndex) === index));
+
+    this._updateReviewClocks(index);
+
+    this._showMoveBadge(move?.san, move?.classification, move?.color);
+
+    const info = document.getElementById("move-info");
+    if (!move) { if (info) info.innerHTML = ""; return; }
+
+    const gameMove = this.currentGame?.moves?.[index];
+    const timeSpent = gameMove?.timeSpent;
+    const timeChip = timeSpent != null
+      ? `<span class="move-time-chip">⏱ &minus;${this._formatClock(timeSpent)}</span>`
+      : "";
+
+    const cls = move.classification;
+    const isBlunder = cls === "blunder" || cls === "mistake";
+    const ghostBtn = isBlunder
+      ? `<button class="btn btn--sm" style="margin-left:8px;background:var(--bg-500);border:1px solid var(--border);color:var(--text-secondary)"
+           onclick="window.app?._startGhost(${index})">👻 Ghost</button>`
+      : "";
+    const clsLabel = cls && cls !== "unknown" && cls !== "book" ? `<span style="color:${color}">${cls.toUpperCase()}</span> &nbsp;` : "";
+    const accLabel = move.accuracy_score != null ? ` &nbsp;·&nbsp; Précision : ${move.accuracy_score}%` : "";
+    if (info) info.innerHTML =
+      `<div class="move-info-main">${clsLabel}<strong>${move.san}</strong>${accLabel}${ghostBtn}</div>${timeChip}`;
+    document.querySelector(`[data-move-index="${index}"]`)?.scrollIntoView({ block: "nearest" });
+  }
+
+  _formatClock(secs) {
+    if (secs == null) return "—";
+    const m = Math.floor(secs / 60);
+    const s = Math.floor(secs % 60);
+    return `${m}:${s.toString().padStart(2, "0")}`;
+  }
+
+  _setPlayerClock(color, secs) {
+    const flipped     = this.boardMgr?.flipped || false;
+    const bottomColor = flipped ? "b" : "w";
+    const id  = color === bottomColor ? "clock-bottom" : "clock-top";
+    const el  = document.getElementById(id);
+    if (!el) return;
+    el.textContent = this._formatClock(secs);
+    el.className = "player-clock" +
+      (secs != null && secs < 10 ? " critical" : secs != null && secs < 30 ? " low" : "");
+  }
+
+  _updateReviewClocks(index) {
+    const moves = this.currentGame?.moves || [];
+    const pgn   = this.currentGame?.pgn || "";
+    const tcM   = pgn.match(/\[TimeControl\s+"(\d+)/);
+    const initialTime = tcM ? parseInt(tcM[1]) : null;
+
+    if (index < 0) {
+      this._setPlayerClock("w", initialTime);
+      this._setPlayerClock("b", initialTime);
+      return;
+    }
+
+    let wClock = initialTime, bClock = initialTime;
+    for (let i = 0; i <= index; i++) {
+      if (!moves[i]) continue;
+      if (moves[i].color === "w" && moves[i].clock != null) wClock = moves[i].clock;
+      if (moves[i].color === "b" && moves[i].clock != null) bClock = moves[i].clock;
+    }
+    this._setPlayerClock("w", wClock);
+    this._setPlayerClock("b", bClock);
+  }
+
+  // ─── Mode Exercice ──────────────────────────────────────────────
+
+  _startExercise() {
+    const due = SRS.getDue(SRS.load());
+    if (!due.length) { this._toast("✅ Aucune révision aujourd'hui !", "info"); return; }
+    const card = due[0];
+    this._showSection("section-board");
+    this._setModePill("Exercice");
+    this.boardMgr.startExercise(card.fen, card.solution, "w");
+    const prompt = document.getElementById("exercise-prompt");
+    if (prompt) { prompt.textContent = "🎯 Trouvez le meilleur coup !"; prompt.hidden = false; }
+    this._currentCard = card;
+  }
+
+  _onExerciseResult({ correct, played, solution }) {
+    const prompt = document.getElementById("exercise-prompt");
+    if (correct) {
+      this._toast("✅ Excellent !", "success");
+      const { xp, level } = XPSystem.add(XP_PER_EXERCISE);
+      this._renderXP(xp, level);
+      if (this._currentCard) {
+        SRS.saveCard(SRS.review(this._currentCard, 5));
+      }
+    } else {
+      this._toast(`❌ Raté. La solution était ${solution}`, "error");
+      if (this._currentCard) SRS.saveCard(SRS.review(this._currentCard, 1));
+    }
+  }
+
+  // ─── Précision Stockfish ────────────────────────────────────────
+
+  _onMoveAccuracy({ moveIdx, cpLoss, book }) {
+    const game = this.currentGame;
+    if (!game?.moves[moveIdx]) return;
+    const classification = book ? "book" : EloEngine.classify(EloEngine.movAccuracy(cpLoss));
+    const accuracy_score = book ? 100 : parseFloat(EloEngine.movAccuracy(cpLoss).toFixed(1));
+    game.moves[moveIdx]  = { ...game.moves[moveIdx], cpLoss, accuracy_score, classification };
+    this._updateMoveItem(moveIdx, game.moves[moveIdx]);
+    this._updateGameAccuracy();
+    // Sync reviewMoves pour que la navigation garde la bonne classification
+    if (this.boardMgr?.reviewMoves?.[moveIdx]) {
+      this.boardMgr.reviewMoves[moveIdx].classification = classification;
+    }
+    // Mettre à jour le badge si ce coup est actuellement affiché
+    if (this.boardMgr?.reviewIndex === moveIdx) {
+      const m = this.boardMgr.reviewMoves[moveIdx];
+      this._showMoveBadge(m?.san, classification, m?.color);
+    }
+  }
+
+  _updateGameAccuracy() {
+    const moves  = this.currentGame?.moves || [];
+    const scored = moves.filter((m) => m.accuracy_score != null);
+    if (!scored.length) return;
+    const accuracy = EloEngine.gameAccuracy(scored.map((m) => m.accuracy_score));
+    // Elo estimé sur les parties de l'adversaire
+    let oppElo = 1000;
+    try {
+      const chess = new Chess(); chess.load_pgn(this.currentGame.pgn);
+      const h = chess.header();
+      oppElo = parseInt(h.BlackElo) || parseInt(h.WhiteElo) || 1000;
+    } catch {}
+    this.currentGame.accuracy        = parseFloat(accuracy.toFixed(1));
+    this.currentGame.estimated_elo   = EloEngine.estimateElo(accuracy, oppElo);
+    this.currentGame.blunders_count  = moves.filter((m) => m.classification === "blunder").length;
+    this._renderGameStats(this.currentGame);
+  }
+
+  // ─── Mode Ghost ─────────────────────────────────────────────────
+
+  _startGhost(blunderIndex) {
+    const game = this.currentGame;
+    if (!game || !game.moves) return;
+
+    // Reconstruit la partie pour extraire les FEN et les coups adverses
+    const chess = new Chess();
+    const moves = game.moves;
+
+    // Déterminer la couleur du joueur (blanc par défaut)
+    const playerColor = "w";
+
+    // FEN 3 coups avant le blunder (min index 0)
+    const startIndex = Math.max(0, blunderIndex - 3);
+
+    // Reconstruire jusqu'à startIndex
+    chess.reset();
+    for (let i = 0; i < startIndex; i++) {
+      chess.move(moves[i].san);
+    }
+    const startFen = chess.fen();
+
+    // Collecter les coups adverses depuis startIndex jusqu'à la fin
+    const opponentTurn = playerColor === "w" ? "b" : "w";
+    const opponentMoves = [];
+    for (let i = startIndex; i < moves.length; i++) {
+      if (moves[i].color === opponentTurn) {
+        opponentMoves.push(moves[i].san);
+      }
+    }
+
+    this._showSection("section-board");
+    this._setModePill("Ghost");
+    this.boardMgr.startGhost(startFen, opponentMoves, playerColor);
+
+    const prompt = document.getElementById("exercise-prompt");
+    if (prompt) { prompt.textContent = "👻 Battez votre passé !"; prompt.hidden = false; }
+
+    this._toast("Mode Ghost : corrigez votre gaffe !", "info");
+  }
+
+  _onGhostResult({ success, evaluation }) {
+    if (success) {
+      this._toast(`🎉 Vous avez battu votre passé ! (+${(evaluation/100).toFixed(2)})`, "success");
+      const { xp, level } = XPSystem.add(XP_PER_EXERCISE * 2);
+      this._renderXP(xp, level);
+      StreakSystem.record();
+    } else {
+      this._toast(`👻 Raté — éval finale : ${(evaluation/100).toFixed(2)}`, "error");
+    }
+  }
+
+  // ─── Moteur Stockfish ────────────────────────────────────────────
+
+  _onPlayerMove(move, fen) {
+    const t = document.getElementById("turn-indicator");
+    if (t) t.textContent = this.boardMgr.chess.turn() === "w" ? "Blancs" : "Noirs";
+  }
+
+  _onEngineEval({ evaluation, fen }) {
+    const el = document.getElementById("engine-eval");
+    if (el) {
+      const cp = evaluation;
+      el.textContent = cp >= 0 ? `+${(cp/100).toFixed(2)}` : `${(cp/100).toFixed(2)}`;
+      el.className = `engine-eval ${cp >= 0 ? "positive" : "negative"}`;
+    }
+    document.dispatchEvent(new CustomEvent("engine:eval", { detail: { fen, evaluation } }));
+
+    // Mettre à jour la classification du coup correspondant à ce FEN
+    if (this.currentGame) {
+      const idx = this.currentGame.moves.findIndex((m) => m.fen === fen);
+      if (idx >= 0 && this.currentGame.moves[idx].cpLoss == null) {
+        // On n'a que l'éval après le coup ; on compare avec l'éval précédente si dispo
+        const prevFen = idx > 0 ? this.currentGame.moves[idx - 1].fen : null;
+        const prevEval = prevFen ? this.boardMgr.evalCache[prevFen]?.evaluation : null;
+        if (prevEval != null) {
+          const cpLoss = Math.max(0, prevEval - evaluation);
+          const accuracy = EloEngine.movAccuracy(cpLoss);
+          const classification = EloEngine.classify(accuracy);
+          this.currentGame.moves[idx] = {
+            ...this.currentGame.moves[idx],
+            cpLoss, accuracy_score: parseFloat(accuracy.toFixed(1)), classification,
+          };
+          this._updateMoveItem(idx, this.currentGame.moves[idx]);
+        }
+      }
+    }
+  }
+
+  _updateMoveItem(index, move) {
+    const el = document.querySelector(`[data-move-index="${index}"]`);
+    if (!el) return;
+    const colorVar = {
+      book:"var(--text-muted)",
+      brilliant:"var(--col-brilliant)", excellent:"var(--col-excellent)",
+      good:"var(--col-good)", inaccuracy:"var(--col-inaccuracy)",
+      mistake:"var(--col-mistake)", blunder:"var(--col-blunder)",
+    };
+    const icons = { book:"", brilliant:"✦", excellent:"!", good:"", inaccuracy:"?!", mistake:"?", blunder:"??" };
+    const col  = colorVar[move.classification] || "var(--text-muted)";
+    const icon = icons[move.classification] ?? "";
+    el.style.borderLeftColor = col;
+    const iconEl = el.querySelector(".move-icon");
+    if (iconEl) { iconEl.textContent = icon; iconEl.style.color = col; }
+  }
+
+  // ─── Rendu UI ───────────────────────────────────────────────────
+
+  _renderAll() {
+    const { xp, level } = XPSystem.get();
+    this._renderXP(xp, level);
+    this._renderStreak(StreakSystem.get());
+    this._renderStats();
+    const saved = Store.get(STORAGE_KEYS.GAMES, []);
+    if (this.recentGames.length) this._renderGamesList(this.recentGames);
+  }
+
+  _renderXP(xp, level) {
+    const needed = XP_PER_LEVEL(level);
+    const pct    = Math.min(100, (xp / needed) * 100);
+    const xpEl   = document.getElementById("xp-display");
+    const lvlEl  = document.getElementById("level-display");
+    const barEl  = document.getElementById("xp-bar");
+    if (xpEl)  xpEl.textContent  = `${xp} XP`;
+    if (lvlEl) lvlEl.textContent = `Niv. ${level}`;
+    if (barEl) barEl.style.width = `${pct}%`;
+  }
+
+  _renderStreak(streak) {
+    const el = document.getElementById("streak-display");
+    if (el) el.innerHTML = `🔥 <strong>${streak}</strong>`;
+  }
+
+  _renderStats() {
+    const games     = Store.get(STORAGE_KEYS.GAMES, []);
+    const totalEl   = document.getElementById("stat-games");
+    const accEl     = document.getElementById("stat-accuracy");
+    const blEl      = document.getElementById("stat-blunders");
+    if (totalEl) totalEl.textContent = games.length;
+    if (games.length) {
+      const avg = games.reduce((s, g) => s + (g.accuracy || 0), 0) / games.length;
+      if (accEl) accEl.textContent = `${avg.toFixed(1)}%`;
+      const tot = games.reduce((s, g) => s + (g.blunders_count || 0), 0);
+      if (blEl)  blEl.textContent  = tot;
+    }
+  }
+
+  _renderGamesList(games) {
+    const list = document.getElementById("games-list");
+    if (!list) return;
+    if (!games || !games.length) {
+      list.innerHTML = `<p class="empty-state">Aucune partie trouvée.</p>`; return;
+    }
+    list.innerHTML = games.map((g) => {
+      const myColor  = g.white?.username?.toLowerCase() === this.username?.toLowerCase() ? "white" : "black";
+      const me       = myColor === "white" ? g.white : g.black;
+      const opp      = myColor === "white" ? g.black : g.white;
+      const result   = me?.result;
+      const isWin    = result === "win";
+      const isDraw   = ["agreed","stalemate","repetition","insufficient","50move","timevsinsufficient"].includes(result);
+      const cls      = isWin ? "win" : isDraw ? "draw" : "loss";
+      const icon     = isWin ? "V"  : isDraw ? "½"   : "L";
+      const oppName  = opp?.username || "Adversaire";
+      const rating   = me?.rating || "?";
+      const ts       = g.end_time ? new Date(g.end_time * 1000).toLocaleDateString("fr-FR") : "";
+      const timeClass = { bullet:"⚡", blitz:"🔥", rapid:"⏱", daily:"📅" }[g.time_class] || g.time_class || "";
+      const pgn      = (g.pgn || "").replace(/"/g, "&quot;");
+      return `<div class="game-item ${cls}-item" data-pgn="${pgn}">
+        <div class="game-result-badge ${cls}">${icon}</div>
+        <div class="game-info">
+          <span class="game-opponent">vs ${oppName}</span>
+          <div class="game-meta-row"><span>${ts}</span><span>${timeClass}</span></div>
+        </div>
+        <div class="game-right">
+          <span class="game-rating">${rating}</span>
+          <span class="game-type">${g.time_class || ""}</span>
+        </div>
+      </div>`;
+    }).join("");
+  }
+
+  _renderMovesList(moves) {
+    const list = document.getElementById("moves-list");
+    if (!list) return;
+    const colorVar = {
+      book: "var(--text-muted)", unknown: "var(--text-muted)",
+      brilliant: "var(--col-brilliant)", excellent: "var(--col-excellent)",
+      good: "var(--col-good)", inaccuracy: "var(--col-inaccuracy)",
+      mistake: "var(--col-mistake)", blunder: "var(--col-blunder)",
+    };
+    const icons = { book:"", unknown:"", brilliant:"✦", excellent:"!", good:"", inaccuracy:"?!", mistake:"?", blunder:"??" };
+
+    const fmtClk = (s) => {
+      if (s == null) return "";
+      return `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, "0")}`;
+    };
+    const clkCls = (s) => s != null && s < 10 ? " critical" : s != null && s < 30 ? " low" : "";
+
+    // Layout 2 colonnes : blanc | noir par rangée
+    let html = "";
+    for (let i = 0; i < moves.length; i++) {
+      const m    = moves[i];
+      const col  = colorVar[m.classification] || "var(--text-muted)";
+      const icon = icons[m.classification] || "";
+      const clkStr = fmtClk(m.clock);
+      const clkEl  = clkStr ? `<span class="move-clock${clkCls(m.clock)}">${clkStr}</span>` : "";
+      const num    = i % 2 === 0 ? `${Math.floor(i / 2) + 1}.` : "";
+      html += `<div class="move-item" data-move-index="${i}" style="border-left-color:${col}">
+        <span class="move-number">${num}</span>
+        <span class="move-san">${m.san}</span>
+        <span class="move-icon" style="color:${col}">${icon}</span>
+        ${clkEl}
+      </div>`;
+    }
+    list.innerHTML = html;
+  }
+
+  _renderGameStats(analysis) {
+    const el = document.getElementById("game-stats");
+    if (el) {
+      const acc = analysis.accuracy != null ? `${analysis.accuracy}%` : "— (Stockfish requis)";
+      const elo = analysis.estimated_elo != null ? analysis.estimated_elo : "—";
+      el.innerHTML = `
+        <div class="stat-chip accuracy">Précision <strong>${acc}</strong></div>
+        <div class="stat-chip elo">Elo estimé <strong>${elo}</strong></div>
+        <div class="stat-chip blunders">Gaffes <strong>${analysis.blunders_count}</strong></div>`;
+    }
+
+    // Accuracy bar — visible seulement si valeur connue
+    const bar  = document.getElementById("accuracy-bar");
+    const fill = document.getElementById("accuracy-fill");
+    const val  = document.getElementById("accuracy-value");
+    if (analysis.accuracy != null) {
+      if (bar)  bar.hidden = false;
+      if (val)  val.textContent = `${analysis.accuracy}%`;
+      if (fill) setTimeout(() => { fill.style.width = `${analysis.accuracy}%`; }, 50);
+    } else {
+      if (bar) bar.hidden = true;
+    }
+
+    // Les noms sont mis à jour par _updatePlayerBars (géré avec l'orientation)
+  }
+
+  // ─── Utilitaires ────────────────────────────────────────────────
+
+  _showSection(id) {
+    ["section-dashboard","section-pgn","section-board"].forEach((s) => {
+      const el = document.getElementById(s);
+      if (el) el.hidden = s !== id;
+    });
+    // Chessboard.js lit offsetWidth — appel synchrone APRÈS hidden=false pour forcer le reflow
+    if (id === "section-board" && this.boardMgr?.board) {
+      this.boardMgr.board.resize();
+    }
+  }
+
+  _setModePill(label) {
+    document.querySelectorAll(".mode-pill").forEach((el) => {
+      el.classList.toggle("active", el.textContent.trim() === label);
+    });
+  }
+
+  _setLoading(on, msg = "") {
+    const el = document.getElementById("loading-overlay");
+    if (!el) return;
+    el.hidden = !on;
+    const m = el.querySelector(".loading-message");
+    if (m) m.textContent = msg;
+  }
+
+  _toast(message, type = "info") {
+    const container = document.getElementById("toast-container");
+    if (!container) return;
+    const t = document.createElement("div");
+    t.className = `toast toast-${type}`;
+    t.textContent = message;
+    container.appendChild(t);
+    requestAnimationFrame(() => t.classList.add("visible"));
+    setTimeout(() => { t.classList.remove("visible"); setTimeout(() => t.remove(), 300); }, 3500);
+  }
+}
+
+// ─── Bootstrap ──────────────────────────────────────────────────────
+document.addEventListener("DOMContentLoaded", () => { window.app = new ChessImproverApp(); });

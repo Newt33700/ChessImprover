@@ -1,0 +1,4 @@
+[tool.mutmut]
+paths_to_mutate = ["app/domain/"]
+runner = "python -m pytest tests/ -x -q"
+tests_dir = "tests/"

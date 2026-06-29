@@ -1,0 +1,36 @@
+{
+    "exit_code_by_key": {
+        "src.elo_calculator.move_accuracy__mutmut_1": null,
+        "src.elo_calculator.move_accuracy__mutmut_2": null,
+        "src.elo_calculator.move_accuracy__mutmut_3": null,
+        "src.elo_calculator.move_accuracy__mutmut_4": null,
+        "src.elo_calculator.move_accuracy__mutmut_5": null,
+        "src.elo_calculator.move_accuracy__mutmut_6": null,
+        "src.elo_calculator.move_accuracy__mutmut_7": null,
+        "src.elo_calculator.game_accuracy__mutmut_1": null,
+        "src.elo_calculator.game_accuracy__mutmut_2": null,
+        "src.elo_calculator.game_accuracy__mutmut_3": null,
+        "src.elo_calculator.game_accuracy__mutmut_4": null,
+        "src.elo_calculator.estimate_elo__mutmut_1": null,
+        "src.elo_calculator.estimate_elo__mutmut_2": null,
+        "src.elo_calculator.estimate_elo__mutmut_3": null,
+        "src.elo_calculator.estimate_elo__mutmut_4": null,
+        "src.elo_calculator.estimate_elo__mutmut_5": null,
+        "src.elo_calculator.estimate_elo__mutmut_6": null,
+        "src.elo_calculator.estimate_elo__mutmut_7": null,
+        "src.elo_calculator.estimate_elo__mutmut_8": null,
+        "src.elo_calculator.estimate_elo__mutmut_9": null,
+        "src.elo_calculator.estimate_elo__mutmut_10": null,
+        "src.elo_calculator.estimate_elo__mutmut_11": null,
+        "src.elo_calculator.estimate_elo__mutmut_12": null,
+        "src.elo_calculator.estimate_elo__mutmut_13": null,
+        "src.elo_calculator.estimate_elo__mutmut_14": null,
+        "src.elo_calculator.classify_move__mutmut_1": null
+    },
+    "hash_by_function_name": {
+        "move_accuracy": "8bfb1cede12b6caf0b66a1070eef3722",
+        "game_accuracy": "37003a079b0f672d4336971a52d023a8",
+        "estimate_elo": "add246f004879ba46ebb6ef305be65c8",
+        "classify_move": "4a0b50d21ee66fba9c1a7359ed9ed4e9"
+    }
+}
