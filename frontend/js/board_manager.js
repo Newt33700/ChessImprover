@@ -68,21 +68,23 @@ class BoardManager {
   }
 
   _initWorker() {
-    this._tryWorker("js/stockfish.js");
+    this._tryWorker("js/engine_worker_wasm.js");
   }
 
   _tryWorker(url) {
     try {
       const worker = new Worker(url);
       worker.onmessage = (e) => {
-        const raw  = e.data;
-        const line = typeof raw === "string" ? raw
-                   : (typeof raw === "object" && raw !== null)
-                     ? String(raw.data || raw.line || raw.output || "")
-                     : "";
-        const trimmed = line.trim();
-        if (!trimmed || trimmed.startsWith("[")) return;
-        this._handleWorkerUCI(trimmed);
+        const data = e.data;
+        if (data && typeof data === "object" && data.type) {
+          this._handleWorkerMsg(data);
+        } else {
+          // Fallback : ancien format texte brut
+          const line = typeof data === "string" ? data : String(data || "");
+          const trimmed = line.trim();
+          if (!trimmed || trimmed.startsWith("[")) return;
+          this._handleWorkerUCILegacy(trimmed);
+        }
       };
       worker.onerror = (err) => {
         console.error("[Stockfish] erreur worker:", err.message);
@@ -90,16 +92,77 @@ class BoardManager {
         this.worker = null;
       };
       this.worker = worker;
-      worker.postMessage("uci");
       setTimeout(() => {
-        if (!this.workerReady) console.error("[Stockfish] timeout — uciok jamais reçu.");
-      }, 8000);
+        if (!this.workerReady) {
+          console.warn("[Stockfish] timeout WASM — fallback asm.js");
+          this._tryWorkerLegacy("js/stockfish.js");
+        }
+      }, 10000);
     } catch (err) {
-      console.error("[Stockfish] création worker échouée:", err.message);
+      console.error("[Stockfish] création worker WASM échouée:", err.message);
+      this._tryWorkerLegacy("js/stockfish.js");
     }
   }
 
-  _handleWorkerUCI(line) {
+  _tryWorkerLegacy(url) {
+    if (this.workerReady) return;
+    try {
+      const worker = new Worker(url);
+      worker.onmessage = (e) => {
+        const line = typeof e.data === "string" ? e.data : String(e.data || "");
+        const trimmed = line.trim();
+        if (!trimmed || trimmed.startsWith("[")) return;
+        this._handleWorkerUCILegacy(trimmed);
+      };
+      worker.onerror = () => {};
+      if (this.worker) this.worker.terminate();
+      this.worker = worker;
+      worker.postMessage("uci");
+    } catch {}
+  }
+
+  _handleWorkerMsg(msg) {
+    switch (msg.type) {
+      case "ready":
+        this.worker.postMessage("ucinewgame");
+        this.workerReady = true;
+        this._processQueue();
+        break;
+
+      case "info": {
+        const { evaluation, pv, fen } = msg;
+        if (evaluation === null || evaluation === undefined) return;
+        const f = fen || this.currentFen;
+        if (f) {
+          this.evalCache[f] = this.evalCache[f] || {};
+          this.evalCache[f].evaluation = evaluation;
+          if (pv && pv.length) this.evalCache[f].pv = pv;
+          this._tryUpdateMoveAccuracy(f, evaluation);
+        }
+        if (this.onAnalysis) this.onAnalysis({ evaluation, fen: f });
+        break;
+      }
+
+      case "bestmove": {
+        const { move, pv, fen } = msg;
+        const f = fen || this.currentFen;
+        if (f) {
+          this.evalCache[f] = this.evalCache[f] || {};
+          if (move) this.evalCache[f].bestMove = move;
+          if (pv && pv.length) this.evalCache[f].pv = pv;
+        }
+        this.isAnalyzing = false;
+        this._processQueue();
+        break;
+      }
+
+      case "error":
+        console.error("[Stockfish]", msg.message);
+        break;
+    }
+  }
+
+  _handleWorkerUCILegacy(line) {
     if (!line || line.startsWith("[WF")) return;
 
     if (line === "uciok") {
@@ -133,17 +196,20 @@ class BoardManager {
       const depthM = line.match(/depth\s+(\d+)/);
       const cpM    = line.match(/score cp\s+(-?\d+)/);
       const mateM  = line.match(/score mate\s+(-?\d+)/);
+      const pvM    = line.match(/ pv (.+)$/);
       const depth  = depthM ? parseInt(depthM[1], 10) : 0;
       if (depth < 3) return;
 
       const evaluation = cpM
         ? parseInt(cpM[1], 10)
-        : (mateM ? (parseInt(mateM[1], 10) > 0 ? 30000 : -30000) : 0);
+        : (mateM ? (parseInt(mateM[1], 10) > 0 ? 10000 : -10000) : 0);
+      const pv = pvM ? pvM[1].trim().split(/\s+/).slice(0, 5) : [];
       const fen = this.currentFen;
 
       if (fen) {
         this.evalCache[fen] = this.evalCache[fen] || {};
         this.evalCache[fen].evaluation = evaluation;
+        if (pv.length) this.evalCache[fen].pv = pv;
         this._tryUpdateMoveAccuracy(fen, evaluation);
       }
       if (this.onAnalysis) this.onAnalysis({ evaluation, fen });
@@ -162,7 +228,8 @@ class BoardManager {
     this.isAnalyzing = true;
     this.currentFen = this.analysisQueue.shift();
     this.worker.postMessage("position fen " + this.currentFen);
-    this.worker.postMessage("go depth 5");
+    // Min depth 15 and min 500ms – enforced by engine_worker_wasm; legacy worker uses depth 15 directly
+    this.worker.postMessage("go depth 15 movetime 500");
   }
 
   _tryUpdateMoveAccuracy(fen, evalAfter) {

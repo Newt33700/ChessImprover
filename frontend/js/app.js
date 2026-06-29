@@ -178,6 +178,7 @@ const SRS = {
     const idx = cards.findIndex((c) => c.id === card.id);
     if (idx >= 0) cards[idx] = card; else cards.push(card);
     this.save(cards);
+    if (window.ChessDB) ChessDB.saveCard(card).catch(() => {});
   },
 };
 
@@ -347,10 +348,13 @@ class ChessImproverApp {
           time_panic_count:   0,
         };
 
-        // Sauvegarde
+        // Sauvegarde localStorage (compat) + IndexedDB
         const saved = Store.get(STORAGE_KEYS.GAMES, []);
         saved.unshift(analysis);
         Store.set(STORAGE_KEYS.GAMES, saved.slice(0, 100));
+        if (window.ChessDB) {
+          ChessDB.saveGame({ ...analysis, date: new Date().toISOString() }).catch(() => {});
+        }
 
         StreakSystem.record();
         const { xp, level } = XPSystem.add(XP_PER_GAME);
@@ -949,4 +953,11 @@ class ChessImproverApp {
 }
 
 // ─── Bootstrap ──────────────────────────────────────────────────────
-document.addEventListener("DOMContentLoaded", () => { window.app = new ChessImproverApp(); });
+document.addEventListener("DOMContentLoaded", async () => {
+  // Migrate localStorage → IndexedDB silently before app starts
+  if (window.ChessDB) {
+    await ChessDB.open();
+    await ChessDB.migrateFromLocalStorage();
+  }
+  window.app = new ChessImproverApp();
+});
