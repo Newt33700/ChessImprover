@@ -7,7 +7,7 @@ Ces modèles sont purs et sérialisables ; aucun comportement métier ici.
 from __future__ import annotations
 
 from enum import Enum
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel, Field
 
@@ -130,3 +130,45 @@ class ExerciseResult(BaseModel):
     correct: bool
     played_move: str
     solution_move: str
+
+
+# ---------------------------------------------------------------------------
+# Auth & Sync (US 7)
+# ---------------------------------------------------------------------------
+
+class UserCreate(BaseModel):
+    """Demande d'inscription."""
+    email: str = Field(..., min_length=5, description="Adresse email")
+    username: str = Field(..., min_length=2, max_length=32, description="Pseudo unique")
+    password: str = Field(..., min_length=6, description="Mot de passe (min 6 caractères)")
+
+
+class UserLogin(BaseModel):
+    """Demande de connexion."""
+    email: str = Field(...)
+    password: str = Field(...)
+
+
+class UserProfile(BaseModel):
+    """Profil utilisateur public."""
+    id: str
+    email: str
+    username: str
+
+
+class AuthResponse(BaseModel):
+    """Réponse d'authentification avec JWT."""
+    token: str
+    user: UserProfile
+
+
+class SyncRequest(BaseModel):
+    """Données à synchroniser vers le serveur (stratégie Client Wins)."""
+    games: List[Dict[str, Any]] = Field(default_factory=list)
+    srs_cards: List[Dict[str, Any]] = Field(default_factory=list)
+
+
+class SyncResponse(BaseModel):
+    """Données fusionnées retournées par le serveur."""
+    games: List[Dict[str, Any]] = Field(default_factory=list)
+    srs_cards: List[Dict[str, Any]] = Field(default_factory=list)

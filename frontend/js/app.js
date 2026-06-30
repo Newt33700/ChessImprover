@@ -49,9 +49,10 @@ const EloEngine = {
   },
 
   estimateElo(accuracy, opponentElo) {
-    // Calibré : 79% précision ≈ 1100 Elo, 90% ≈ 1700 Elo
-    const raw = accuracy * 10 + opponentElo * 0.3;
-    return Math.round(Math.max(400, Math.min(2800, raw)));
+    // Formule logistique : expectedScore → différence Elo → Elo estimé
+    const es  = Math.max(0.001, Math.min(0.999, accuracy / 100));
+    const adv = 400 * Math.log10(es / (1 - es));
+    return Math.round(Math.max(400, Math.min(2800, opponentElo + adv)));
   },
 
   classify(score) {
@@ -178,6 +179,7 @@ const SRS = {
     const idx = cards.findIndex((c) => c.id === card.id);
     if (idx >= 0) cards[idx] = card; else cards.push(card);
     this.save(cards);
+    if (window.ChessDB) ChessDB.saveCard(card).catch(() => {});
   },
 };
 
@@ -300,6 +302,24 @@ class ChessImproverApp {
     document.getElementById("btn-to-pgn")?.addEventListener("click", () => this._showSection("section-pgn"));
     document.getElementById("btn-back-dashboard")?.addEventListener("click", () => this._showSection("section-dashboard"));
     document.getElementById("btn-back-board")?.addEventListener("click", () => this._showSection("section-dashboard"));
+
+    // US 1 – Bilan panel dans section-board
+    // (géré via _showBilan appelé par le pill)
+
+    // Tabs Dashboard (US 2, 5, 6)
+    document.getElementById("btn-open-tabs")?.addEventListener("click", () => this._openTabs());
+    document.querySelectorAll(".tab-btn").forEach((btn) => {
+      btn.addEventListener("click", () => this._switchTab(btn.dataset.tab));
+    });
+
+    // Period selectors pour stats
+    document.querySelectorAll(".period-btn2").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        document.querySelectorAll(".period-btn2").forEach((b) => b.classList.remove("active"));
+        btn.classList.add("active");
+        if (window.StatsDashboard) StatsDashboard.render(parseInt(btn.dataset.days));
+      });
+    });
   }
 
   // ─── Connexion Chess.com ────────────────────────────────────────
@@ -347,10 +367,13 @@ class ChessImproverApp {
           time_panic_count:   0,
         };
 
-        // Sauvegarde
+        // Sauvegarde localStorage (compat) + IndexedDB
         const saved = Store.get(STORAGE_KEYS.GAMES, []);
         saved.unshift(analysis);
         Store.set(STORAGE_KEYS.GAMES, saved.slice(0, 100));
+        if (window.ChessDB) {
+          ChessDB.saveGame({ ...analysis, date: new Date().toISOString() }).catch(() => {});
+        }
 
         StreakSystem.record();
         const { xp, level } = XPSystem.add(XP_PER_GAME);
@@ -369,6 +392,7 @@ class ChessImproverApp {
   // ─── Mode Review ────────────────────────────────────────────────
 
   _enterReviewMode(analysis) {
+    this._hideBoardPanels();
     this.currentGame = analysis;
 
     // Détecter la couleur du joueur depuis les headers PGN
@@ -599,26 +623,40 @@ class ChessImproverApp {
 
   // ─── Mode Exercice ──────────────────────────────────────────────
 
-  _startExercise() {
-    const due = SRS.getDue(SRS.load());
+  async _startExercise() {
+    let due = [];
+    if (window.ChessDB) {
+      due = await ChessDB.getDueCards().catch(() => []);
+    }
+    if (!due.length) {
+      due = SRS.getDue(SRS.load());
+    }
     if (!due.length) { this._toast("✅ Aucune révision aujourd'hui !", "info"); return; }
     const card = due[0];
+    this._hideBoardPanels();
     this._showSection("section-board");
     this._setModePill("Exercice");
-    this.boardMgr.startExercise(card.fen, card.solution, "w");
+
+    // PV peut être un tableau UCI (US 4) ou une chaîne SAN (ancien format)
+    const pv = card.solution;
+    const chess = new Chess();
+    let playerColor = "w";
+    try { chess.load(card.fen); playerColor = chess.turn(); } catch {}
+
+    this.boardMgr.startExercise(card.fen, pv, playerColor);
     const prompt = document.getElementById("exercise-prompt");
     if (prompt) { prompt.textContent = "🎯 Trouvez le meilleur coup !"; prompt.hidden = false; }
     this._currentCard = card;
   }
 
-  _onExerciseResult({ correct, played, solution }) {
-    const prompt = document.getElementById("exercise-prompt");
+  _onExerciseResult({ correct, played, solution, quality }) {
+    const q = quality !== undefined ? quality : (correct ? 5 : 1);
     if (correct) {
-      this._toast("✅ Excellent !", "success");
-      const { xp, level } = XPSystem.add(XP_PER_EXERCISE);
+      this._toast(q >= 5 ? "✅ Excellent !" : "👍 Bien joué !", "success");
+      const { xp, level } = XPSystem.add(q >= 5 ? XP_PER_EXERCISE : Math.round(XP_PER_EXERCISE / 2));
       this._renderXP(xp, level);
       if (this._currentCard) {
-        SRS.saveCard(SRS.review(this._currentCard, 5));
+        SRS.saveCard(SRS.review(this._currentCard, q));
       }
     } else {
       this._toast(`❌ Raté. La solution était ${solution}`, "error");
@@ -628,14 +666,37 @@ class ChessImproverApp {
 
   // ─── Précision Stockfish ────────────────────────────────────────
 
-  _onMoveAccuracy({ moveIdx, cpLoss, book }) {
+  _onMoveAccuracy({ moveIdx, cpLoss, book, evalCp }) {
     const game = this.currentGame;
     if (!game?.moves[moveIdx]) return;
     const classification = book ? "book" : EloEngine.classify(EloEngine.movAccuracy(cpLoss));
     const accuracy_score = book ? 100 : parseFloat(EloEngine.movAccuracy(cpLoss).toFixed(1));
     game.moves[moveIdx]  = { ...game.moves[moveIdx], cpLoss, accuracy_score, classification };
+
+    // Stocker l'évaluation absolue (cp du point de vue des Blancs) pour le graphe WP
+    if (evalCp !== undefined && evalCp !== null) {
+      game.moves[moveIdx].evalCp = evalCp;
+      if (window.WPChart) WPChart.updateMove(moveIdx, evalCp);
+    }
+
     this._updateMoveItem(moveIdx, game.moves[moveIdx]);
     this._updateGameAccuracy();
+
+    // US 4 : créer automatiquement une carte SRS pour les gaffes
+    if (classification === "blunder" && moveIdx > 0) {
+      const prevFen  = game.moves[moveIdx - 1].fen;
+      const prevFenEntry = this.boardMgr?.evalCache?.[prevFen];
+      const pv = prevFenEntry?.pv || [];
+      if (pv.length >= 1) {
+        const cardId = `blunder_${game.game_id || Date.now()}_${moveIdx}`;
+        const existing = SRS.load().find((c) => c.id === cardId);
+        if (!existing) {
+          const card = SRS.createCard(cardId, prevFen, pv);
+          SRS.saveCard(card);
+        }
+      }
+    }
+
     // Sync reviewMoves pour que la navigation garde la bonne classification
     if (this.boardMgr?.reviewMoves?.[moveIdx]) {
       this.boardMgr.reviewMoves[moveIdx].classification = classification;
@@ -715,6 +776,67 @@ class ChessImproverApp {
       StreakSystem.record();
     } else {
       this._toast(`👻 Raté — éval finale : ${(evaluation/100).toFixed(2)}`, "error");
+    }
+  }
+
+  // ─── US 1 : Bilan (WP Chart) ────────────────────────────────────
+
+  _showBilan() {
+    // Masquer board-layout, afficher panel-bilan dans la même section-board
+    const boardLayout = document.querySelector(".board-layout");
+    const allPanels   = document.querySelectorAll(".analysis-panel");
+    const bilanPanel  = document.getElementById("panel-bilan");
+
+    allPanels.forEach((p) => { p.hidden = true; });
+    if (boardLayout) boardLayout.hidden = true;
+    if (bilanPanel) bilanPanel.hidden = false;
+
+    this._setModePill("Bilan");
+
+    if (!this.currentGame || !window.WPChart) return;
+
+    const moves = this.currentGame.moves || [];
+    WPChart.render("wp-chart-canvas", moves, (idx) => {
+      if (boardLayout) boardLayout.hidden = false;
+      bilanPanel.hidden = true;
+      this._enterReviewMode(this.currentGame);
+      setTimeout(() => this.boardMgr.goToMove(idx), 100);
+    });
+  }
+
+  _hideBoardPanels() {
+    document.querySelectorAll(".analysis-panel").forEach((p) => { p.hidden = true; });
+    const boardLayout = document.querySelector(".board-layout");
+    if (boardLayout) boardLayout.hidden = false;
+  }
+
+  // ─── Tabs Dashboard (US 2, 5, 6) ────────────────────────────────
+
+  _openTabs() {
+    const sections = ["section-dashboard","section-pgn","section-board","section-tabs"];
+    sections.forEach((id) => {
+      const el = document.getElementById(id);
+      if (el) el.hidden = id !== "section-tabs";
+    });
+    this._switchTab("tab-openings");
+  }
+
+  _switchTab(tabId) {
+    document.querySelectorAll(".tab-btn").forEach((b) => {
+      b.classList.toggle("active", b.dataset.tab === tabId);
+    });
+    document.querySelectorAll(".tab-content").forEach((c) => {
+      c.hidden = c.id !== tabId;
+    });
+
+    if (tabId === "tab-openings" && window.OpeningsStats) {
+      OpeningsStats.render("openings-global-container");
+    }
+    if (tabId === "tab-stats" && window.StatsDashboard) {
+      StatsDashboard.render(7, "elo-chart-canvas2", "acc-chart-canvas2");
+    }
+    if (tabId === "tab-coach" && window.PersonalCoach) {
+      PersonalCoach.render("coach-diagnosis2");
     }
   }
 
@@ -912,7 +1034,7 @@ class ChessImproverApp {
   // ─── Utilitaires ────────────────────────────────────────────────
 
   _showSection(id) {
-    ["section-dashboard","section-pgn","section-board"].forEach((s) => {
+    ["section-dashboard","section-pgn","section-board","section-tabs"].forEach((s) => {
       const el = document.getElementById(s);
       if (el) el.hidden = s !== id;
     });
@@ -949,4 +1071,11 @@ class ChessImproverApp {
 }
 
 // ─── Bootstrap ──────────────────────────────────────────────────────
-document.addEventListener("DOMContentLoaded", () => { window.app = new ChessImproverApp(); });
+document.addEventListener("DOMContentLoaded", async () => {
+  // Migrate localStorage → IndexedDB silently before app starts
+  if (window.ChessDB) {
+    await ChessDB.open();
+    await ChessDB.migrateFromLocalStorage();
+  }
+  window.app = new ChessImproverApp();
+});

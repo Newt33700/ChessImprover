@@ -37,5 +37,11 @@ logs/
 .env.local
 .env.*.local
 
+# Node.js
+node_modules/
+coverage/
+*.tgz
+.npm/
+
 # Claude internal
 .claude/projects/
