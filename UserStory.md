@@ -310,6 +310,28 @@ En tant qu'équipe, nous voulons que chaque modification de `supabase/migrations
 
 **Statut :** ✅ Implémenté (`backend/app/domain/move_class.py`, `tests/test_move_class.py`)
 
-## US 1.1 / 1.2 / 4.1 / 4.2 : Ingestion async, persistance, matrice UI
+## US 4.1 : Tableau matriciel global des Statistiques Avancées
 
-**Statut :** ⏳ À faire (prochaine itération) — endpoints async `POST /api/v1/games/analyze` (202), tables Supabase `games`/`game_moves`, endpoint d'agrégation `GET /api/v1/stats/summary`, matrice UI mobile + vues détaillées.
+**Description :** matrice cadence × catégorie d'Elo virtuel, mobile-optimized, zéro calcul client.
+
+**Règles de gestion :**
+- Lignes Bullet/Blitz/Rapide × colonnes Classement/Ouvertures/Tactique/Stratégie/Finales.
+- Cellule = Elo virtuel ; couleur désaturée verte si > classement actuel, orange/rouge si inférieur (intensité selon l'écart, seuil fort à 150).
+- Le frontend appelle `GET /api/v1/stats/summary?period=` (zéro calcul client) ; fallback sur données de démo tant que l'EPIC 1 n'est pas branché.
+
+**Statut :** ✅ Implémenté côté frontend (`frontend/js/advanced_stats.js`, vue plein écran `#advstats-col`, `tests/advanced_stats.test.js`). ⏳ Endpoint d'agrégation backend à brancher (EPIC 1).
+
+## US 4.2 : Vues détaillées par catégorie (Deep Dive mobile)
+
+**Description :** détail par catégorie adapté au mobile (gauge Héros + deltas par phase + métriques Finales/Tactiques).
+
+**Règles de gestion :**
+- Onglets de cadence + carte « Héros » (niveau estimé + gauge) + liste « Détail par phase » (Elo + delta coloré vs classement).
+- Finales : tuiles Taux de conversion (avantage ≥ +1.50) et Taux de résilience (position perdante ≤ −1.50).
+- Tactiques : carte rating de puzzles (à réviser / résolus / série).
+
+**Statut :** ✅ Implémenté côté frontend (mêmes fichiers). ⏳ Données réelles à fournir par le backend.
+
+## US 1.1 / 1.2 : Ingestion async & persistance
+
+**Statut :** ⏳ À faire — endpoints async `POST /api/v1/games/analyze` (202 + UUID + `BackgroundTask`), tables Supabase `games`/`game_moves` (bulk insert), endpoint d'agrégation `GET /api/v1/stats/summary`.
