@@ -293,18 +293,31 @@ class ChessImproverApp {
     document.getElementById("btn-flip")?.addEventListener("click",     () => this.boardMgr.flipBoard());
     document.getElementById("games-list")?.addEventListener("click",   (e) => {
       const item = e.target.closest("[data-pgn]");
-      if (item) { document.getElementById("pgn-input").value = item.dataset.pgn; this._showSection("section-pgn"); }
+      if (item) { document.getElementById("pgn-input").value = item.dataset.pgn; this._openPgnModal(); }
     });
     document.getElementById("moves-list")?.addEventListener("click", (e) => {
       const item = e.target.closest("[data-move-index]");
       if (item) this.boardMgr.goToMove(parseInt(item.dataset.moveIndex, 10));
     });
-    document.getElementById("btn-to-pgn")?.addEventListener("click", () => this._showSection("section-pgn"));
-    document.getElementById("btn-back-dashboard")?.addEventListener("click", () => this._showSection("section-dashboard"));
-    document.getElementById("btn-back-board")?.addEventListener("click", () => this._showSection("section-dashboard"));
 
-    // US 1 – Bilan panel dans section-board
-    // (géré via _showBilan appelé par le pill)
+    // PGN modal
+    document.getElementById("btn-to-pgn")?.addEventListener("click",    () => this._openPgnModal());
+    document.getElementById("btn-to-pgn-2")?.addEventListener("click",  () => this._openPgnModal());
+    document.getElementById("btn-close-pgn")?.addEventListener("click", () => this._closePgnModal());
+    document.getElementById("pgn-modal")?.addEventListener("click", (e) => {
+      if (e.target === e.currentTarget) this._closePgnModal();
+    });
+
+    // Launch review from match card
+    document.getElementById("btn-launch-review")?.addEventListener("click", () => {
+      if (this.currentGame) this._enterReviewMode(this.currentGame);
+    });
+
+    // Auto-analyze button
+    document.getElementById("btn-auto-analyze")?.addEventListener("click", () => this._showBilan());
+
+    // Legacy back buttons
+    document.getElementById("btn-back-dashboard")?.addEventListener("click", () => this._goHome());
 
     // Tabs Dashboard (US 2, 5, 6)
     document.getElementById("btn-open-tabs")?.addEventListener("click", () => this._openTabs());
@@ -332,7 +345,7 @@ class ChessImproverApp {
       });
     });
 
-    // Fermer le modal en cliquant sur l'overlay
+    // Fermer le modal auth en cliquant sur l'overlay
     document.getElementById("auth-modal")?.addEventListener("click", (e) => {
       if (e.target === e.currentTarget) this._closeAuthModal();
     });
@@ -351,6 +364,7 @@ class ChessImproverApp {
       const games = await ChessComClient.getRecentGames(username, 20);
       this.recentGames = games;
       this._renderGamesList(games);
+      this._renderReviewCard(games);
       this._toast(`${games.length} parties chargées ✓`, "success");
     } catch (err) {
       this._toast("Impossible de contacter Chess.com", "error");
@@ -396,6 +410,7 @@ class ChessImproverApp {
         this._renderXP(xp, level);
 
         this.currentGame = analysis;
+        this._closePgnModal();
         this._enterReviewMode(analysis);
       } catch (err) {
         this._toast(`Erreur d'analyse : ${err.message}`, "error");
@@ -414,7 +429,7 @@ class ChessImproverApp {
     // Détecter la couleur du joueur depuis les headers PGN
     this.playerColor = this._detectPlayerColor(analysis.pgn);
 
-    this._showSection("section-board");
+    this._showBoardActive();
     this._setModePill("Review");
     const prompt = document.getElementById("exercise-prompt");
     if (prompt) prompt.hidden = true;
@@ -653,7 +668,7 @@ class ChessImproverApp {
     if (!due.length) { this._toast("✅ Aucune révision aujourd'hui !", "info"); return; }
     const card = due[0];
     this._hideBoardPanels();
-    this._showSection("section-board");
+    this._showBoardActive();
     this._setModePill("Exercice");
 
     // PV peut être un tableau UCI (US 4) ou une chaîne SAN (ancien format)
@@ -777,7 +792,7 @@ class ChessImproverApp {
       }
     }
 
-    this._showSection("section-board");
+    this._showBoardActive();
     this._setModePill("Ghost");
     this.boardMgr.startGhost(startFen, opponentMoves, playerColor);
 
@@ -801,6 +816,7 @@ class ChessImproverApp {
   // ─── US 1 : Bilan (WP Chart) ────────────────────────────────────
 
   _showBilan() {
+    this._showBoardActive();
     // Masquer board-layout, afficher panel-bilan dans la même section-board
     const boardLayout = document.querySelector(".board-layout");
     const allPanels   = document.querySelectorAll(".analysis-panel");
@@ -832,6 +848,7 @@ class ChessImproverApp {
   // ─── US 3 : Finales ─────────────────────────────────────────────
 
   _showEndgame() {
+    this._showBoardActive();
     const boardLayout  = document.querySelector(".board-layout");
     const allPanels    = document.querySelectorAll(".analysis-panel");
     const endgamePanel = document.getElementById("panel-endgame");
@@ -1096,13 +1113,141 @@ class ChessImproverApp {
 
   // ─── Rendu UI ───────────────────────────────────────────────────
 
+  _renderReviewCard(games) {
+    if (!games || !games.length) return;
+    const last = games[0];
+    const myColor = last.white?.username?.toLowerCase() === this.username?.toLowerCase() ? "white" : "black";
+    const me  = myColor === "white" ? last.white : last.black;
+    const opp = myColor === "white" ? last.black : last.white;
+
+    const result = me?.result;
+    const isWin  = result === "win";
+    const isDraw = ["agreed","stalemate","repetition","insufficient","50move","timevsinsufficient"].includes(result);
+    const score  = isWin ? (myColor === "white" ? "1–0" : "0–1") : isDraw ? "½–½" : (myColor === "white" ? "0–1" : "1–0");
+
+    const myName  = me?.username  || (myColor === "white" ? "Blancs" : "Noirs");
+    const oppName = opp?.username || (myColor === "white" ? "Noirs"  : "Blancs");
+    const myAcc   = me?.accuracy  ?? null;
+    const oppAcc  = opp?.accuracy ?? null;
+
+    // Set match card fields
+    const el = (id) => document.getElementById(id);
+    if (el("name-white"))    el("name-white").textContent    = myColor === "white" ? myName  : oppName;
+    if (el("name-black"))    el("name-black").textContent    = myColor === "white" ? oppName : myName;
+    if (el("match-score"))   el("match-score").textContent   = score;
+    if (el("prec-bar-white")) el("prec-bar-white").style.width = `${myColor === "white" ? (myAcc ?? 0) : (oppAcc ?? 0)}%`;
+    if (el("prec-bar-black")) el("prec-bar-black").style.width = `${myColor === "white" ? (oppAcc ?? 0) : (myAcc ?? 0)}%`;
+    if (el("prec-val-white")) el("prec-val-white").textContent = myColor === "white" ? (myAcc != null ? `${myAcc}%` : "—") : (oppAcc != null ? `${oppAcc}%` : "—");
+    if (el("prec-val-black")) el("prec-val-black").textContent = myColor === "white" ? (oppAcc != null ? `${oppAcc}%` : "—") : (myAcc != null ? `${myAcc}%` : "—");
+
+    // Pre-load PGN so "Lancer la Révision" works immediately
+    if (last.pgn) {
+      const analysis = PGNAnalyzer.analyze(last.pgn);
+      if (analysis.moves.length) {
+        this.currentGame = { game_id: last.uuid || `chess_${Date.now()}`, pgn: last.pgn, ...analysis, blunders_count: 0, accuracy: null, estimated_elo: null };
+      }
+    }
+
+    // Show the match card, hide connect prompt
+    const prompt = document.getElementById("connect-prompt");
+    const preview = document.getElementById("last-game-preview");
+    if (prompt)  prompt.hidden  = true;
+    if (preview) preview.hidden = false;
+  }
+
+  async _renderExerciseCard() {
+    const container = document.getElementById("exercise-preview-card");
+    if (!container) return;
+    let due = [];
+    if (window.ChessDB) due = await ChessDB.getDueCards().catch(() => []);
+    if (!due.length) due = SRS.getDue(SRS.load());
+    if (!due.length) {
+      container.innerHTML = `<p class="empty-state">Aucun exercice disponible. Analysez des parties pour en générer.</p>`;
+      return;
+    }
+    container.innerHTML = `
+      <div class="exercise-preview-inner">
+        <span class="exercise-theme-badge">SRS</span>
+        <p class="exercise-preview-label"><strong>${due.length}</strong> révision${due.length > 1 ? "s" : ""} en attente</p>
+        <button class="btn btn--accent btn--full" onclick="window.app?._startExercise()">Résoudre</button>
+      </div>`;
+  }
+
+  _renderBilanChart(mode = "progress") {
+    const canvas = document.getElementById("bilan-canvas");
+    if (!canvas || !window.Chart) return;
+
+    // Update toggle buttons
+    document.getElementById("bilan-btn-progress")?.classList.toggle("active", mode === "progress");
+    document.getElementById("bilan-btn-elo")?.classList.toggle("active", mode === "elo");
+
+    const games = Store.get(STORAGE_KEYS.GAMES, []).slice(0, 10).reverse();
+    if (!games.length) return;
+
+    if (this._bilanChart) { this._bilanChart.destroy(); this._bilanChart = null; }
+
+    const labels = games.map((_, i) => `P${i + 1}`);
+
+    let datasets;
+    if (mode === "progress") {
+      datasets = [
+        {
+          label: "Gaffes",
+          data: games.map((g) => g.blunders_count || 0),
+          borderColor: "#e04444",
+          backgroundColor: "rgba(224,68,68,0.12)",
+          tension: 0.3,
+          fill: true,
+        },
+        {
+          label: "Coups manqués",
+          data: games.map((g) => g.missed_forks_count || 0),
+          borderColor: "#e09a44",
+          backgroundColor: "rgba(224,154,68,0.10)",
+          tension: 0.3,
+          fill: true,
+        },
+      ];
+    } else {
+      datasets = [
+        {
+          label: "Elo estimé",
+          data: games.map((g) => g.estimated_elo || null),
+          borderColor: "#81b64c",
+          backgroundColor: "rgba(129,182,76,0.12)",
+          tension: 0.3,
+          fill: true,
+        },
+      ];
+    }
+
+    this._bilanChart = new Chart(canvas, {
+      type: "line",
+      data: { labels, datasets },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: { legend: { display: false } },
+        scales: {
+          x: { grid: { color: "rgba(255,255,255,0.04)" }, ticks: { color: "#888", font: { size: 10 } } },
+          y: { grid: { color: "rgba(255,255,255,0.04)" }, ticks: { color: "#888", font: { size: 10 } } },
+        },
+      },
+    });
+  }
+
   _renderAll() {
     const { xp, level } = XPSystem.get();
     this._renderXP(xp, level);
     this._renderStreak(StreakSystem.get());
     this._renderStats();
-    const saved = Store.get(STORAGE_KEYS.GAMES, []);
-    if (this.recentGames.length) this._renderGamesList(this.recentGames);
+    this._renderAuthState();
+    this._renderBilanChart("progress");
+    this._renderExerciseCard();
+    if (this.recentGames.length) {
+      this._renderGamesList(this.recentGames);
+      this._renderReviewCard(this.recentGames);
+    }
   }
 
   _renderXP(xp, level) {
@@ -1234,14 +1379,46 @@ class ChessImproverApp {
   // ─── Utilitaires ────────────────────────────────────────────────
 
   _showSection(id) {
-    ["section-dashboard","section-pgn","section-board","section-tabs"].forEach((s) => {
-      const el = document.getElementById(s);
-      if (el) el.hidden = s !== id;
-    });
-    // Chessboard.js lit offsetWidth — appel synchrone APRÈS hidden=false pour forcer le reflow
-    if (id === "section-board" && this.boardMgr?.board) {
-      this.boardMgr.board.resize();
+    // New layout: section-dashboard is always the container
+    // Map legacy section IDs to the new panel system
+    if (id === "section-board") {
+      this._showBoardActive();
+    } else if (id === "section-pgn") {
+      this._openPgnModal();
+    } else if (id === "section-dashboard") {
+      this._goHome();
     }
+    // section-tabs stays always hidden (content moved to dashboard cards)
+  }
+
+  _showBoardActive() {
+    const empty  = document.getElementById("board-col-empty");
+    const active = document.getElementById("board-active");
+    if (empty)  empty.hidden  = true;
+    if (active) active.hidden = false;
+    document.body.classList.add("board-active-mobile");
+    // Chessboard.js lit offsetWidth — forcer le reflow après que l'élément soit visible
+    if (this.boardMgr?.board) {
+      requestAnimationFrame(() => this.boardMgr.board.resize());
+    }
+  }
+
+  _goHome() {
+    const empty  = document.getElementById("board-col-empty");
+    const active = document.getElementById("board-active");
+    if (empty)  empty.hidden  = false;
+    if (active) active.hidden = true;
+    document.body.classList.remove("board-active-mobile");
+  }
+
+  _openPgnModal() {
+    const modal = document.getElementById("pgn-modal");
+    if (modal) modal.hidden = false;
+  }
+
+  _closePgnModal() {
+    const modal = document.getElementById("pgn-modal");
+    if (modal) modal.hidden = true;
   }
 
   _setModePill(label) {
