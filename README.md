@@ -106,6 +106,7 @@ ChessImprover/
 │   │   ├── endgame_detector.js         # Détection finales + Syzygy Lichess (US 3)
 │   │   ├── stats_dashboard.js          # Dashboard Elo/Précision lissé (US 5)
 │   │   ├── personal_coach.js           # Coach arbre de décision offline (US 6)
+│   │   ├── advanced_stats.js           # Stats Avancées : matrice + deep-dive (US 4.1/4.2)
 │   │   └── auth.js                     # Auth JWT frontend (US 7) — chargé dans index.html
 │   └── tests/
 │       ├── setup.js                    # Mocks globaux : IDBFactory, localStorage, Chart, document
@@ -115,7 +116,8 @@ ChessImprover/
 │       ├── endgame_detector.test.js    # Tests EndgameDetector + mock Syzygy
 │       ├── srs_sm2.test.js             # Tests algorithme SM-2
 │       ├── stats_dashboard.test.js     # Tests StatsDashboard (Elo logistique + render)
-│       └── personal_coach.test.js      # Tests PersonalCoach (toutes les branches)
+│       ├── personal_coach.test.js      # Tests PersonalCoach (toutes les branches)
+│       └── advanced_stats.test.js      # Tests AdvancedStats (couleurs, deltas, gauge, fallback API)
 │
 ├── backend/
 │   ├── requirements.txt                # fastapi, uvicorn, httpx, pydantic, python-chess, bcrypt
@@ -701,6 +703,30 @@ _renderBilanChart(mode)   // crée Chart.js dans #bilan-canvas (mode 'progress' 
 
 ---
 
+### 3.16 Statistiques Avancées — matrice & deep-dive (US 4.1 / 4.2)
+
+**Fichiers :** `js/advanced_stats.js`, `index.html` (`#advstats-col`), `css/style.css`, `app.js`
+
+Vue plein écran (« type Chess.com Premium ») ouverte depuis la carte BILAN (bouton « Statistiques Avancées → ») via `body.advstats-active` (masque `.dash-grid` et `.board-col`). Retour par `_hideAdvStats()`.
+
+**API publique de `AdvancedStats` (IIFE, exposée en `window.AdvancedStats` + `module.exports`) :**
+
+| Fonction | Rôle |
+|---|---|
+| `fetchSummary(period, base?)` | `GET {base}/api/v1/stats/summary?period=` ; **fallback `MOCK_SUMMARY`** sur erreur réseau/HTTP (zéro calcul client) |
+| `cellClass(elo, current)` | `pos` / `pos-strong` / `neg` / `neg-strong` / `neutral` (seuil fort = 150) |
+| `phaseDelta(elo, current)`, `formatDelta(d)` | écart signé + format `+150` / `-50` |
+| `deepDiveFor(summary, cadence)` | `{estimated, phases:[{key,label,sub,icon,elo,delta}]}` |
+| `gaugeAngle(value, min, max)` | angle d'aiguille −90°…+90° (borné) |
+| `matrixRows(summary)` | lignes prêtes au rendu (cadence × 4 catégories classées) |
+| `renderMatrix/renderDeepDive/renderFinalesTiles/renderTacticsCard/renderAcplChart/renderGaffeDonut/mount` | glue DOM/Chart.js |
+
+**Câblage `app.js` :** `_showAdvStats()` (ajoute la classe + `_loadAdvStats()`), `_loadAdvStats()` (fetch + `renderMatrix/DeepDive/FinalesTiles/TacticsCard` + 2 graphes Chart.js détruits/recréés), onglets de cadence (re-render deep-dive) et sélecteur de période (re-fetch).
+
+> **Câblage données :** ✅ vue + rendu opérationnels ; ⏳ alimentés par `MOCK_SUMMARY` tant que l'endpoint d'agrégation backend (EPIC 1) n'existe pas. La logique pure est testée (`tests/advanced_stats.test.js`, 17 TUs) ; les fonctions `render*` (glue DOM) ne sont pas dans `collectCoverageFrom`, comme `app.js`.
+
+---
+
 ### 3.14 Système XP / Niveaux / Streaks
 
 **Fichier :** `app.js` — `XPSystem`, `StreakSystem`
@@ -962,6 +988,9 @@ npm run test:mutation # Stryker
 | `srs_sm2.test.js` | SRS (extrait de app.js) | createCard, SM-2 quality=5/3/1, EF clamp, due date |
 | `stats_dashboard.test.js` | StatsDashboard | wpFromCp, estimateEloLogistic, movingAverage, filterByDays, buildChartData, render (Chart mock) |
 | `personal_coach.test.js` | PersonalCoach | computeMetrics, diagnose (toutes les 6 branches), renderHTML, _detectResult, _detectUserColor, _extractOpening |
+| `advanced_stats.test.js` | AdvancedStats | cellClass (5 cas), phaseDelta/formatDelta, deepDiveFor (deltas maquette), gaugeAngle (bornes), matrixRows, fetchSummary (succès + 2 fallbacks) — **17 TUs** |
+
+> `advanced_stats.js` n'est pas dans `collectCoverageFrom` (comme `app.js`, `auth.js`, `board_manager.js`) : seules ses fonctions pures sont testées, les `render*` sont de la glue DOM.
 
 **Mocks globaux (`tests/setup.js`) :**
 - `global.indexedDB = new IDBFactory()` (fake-indexeddb, réinitialisé dans `beforeEach`)
@@ -1123,6 +1152,7 @@ UNIQUE (user_id)
 | **Bilan Chart dashboard** | `app.js:_renderBilanChart()` | Graphe Progrès/Elo sur les 10 dernières parties |
 | **Modal PGN overlay** | `index.html` + `app.js` | Remplace section-pgn ; `_openPgnModal()/_closePgnModal()` |
 | **Mobile / bascule Review** | CSS `body.board-active` | `.dash-grid` masquée / `.board-col` plein écran via classe `body` |
+| **Vue Statistiques Avancées** (US 4.1/4.2) | `advanced_stats.js` + `index.html` + `app.js` | Plein écran `body.advstats-active` : matrice colorée + gauge Héros + deep-dive + tuiles Finales + carte Tactiques (données `MOCK_SUMMARY`) |
 
 ### ❌ Non câblé ou incomplet
 
