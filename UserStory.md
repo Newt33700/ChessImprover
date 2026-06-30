@@ -170,3 +170,88 @@ En tant qu'utilisateur, je veux que l'application croise toutes mes statistiques
 - Mutation testing.
 
 **Statut :** ✅ Implémenté
+
+---
+
+## US 7 : Authentification, Profil & Persistance Cloud
+
+**Titre :** Création de compte, connexion JWT et synchronisation des données vers Supabase
+
+**Description métier :**
+En tant qu'utilisateur, je veux créer un compte et retrouver mes parties, mes cartes SRS et mes statistiques sur n'importe quel appareil.
+
+**Règles de gestion & Architecture :**
+- **Backend FastAPI** : endpoints `POST /auth/signup`, `POST /auth/login`, `GET /auth/me`, `POST /sync`.
+- **Mots de passe** : hashés via bcrypt (facteur de coût 12).
+- **Tokens JWT** : HS256, expiration 30 jours. Stockés en localStorage côté client.
+- **Base de données** : Supabase/PostgreSQL avec tables `profiles` et `user_data` (JSONB). Row Level Security activée.
+- **Stratégie de synchronisation** : "Client Wins" — les données du client écrasent le serveur en cas de conflit sur un même `game_id` ou `card_id`.
+- **Frontend** : module `auth.js` avec `signup()`, `login()`, `logout()`, `autoConnect()`, `syncData()`.
+
+**Exemples :**
+- Un utilisateur s'inscrit → token JWT reçu → stocké en `localStorage["ci_jwt"]`.
+- Au rechargement, `autoConnect()` valide le token via `GET /auth/me` et restaure la session.
+- `POST /sync` avec 5 parties → serveur les stocke et retourne la liste complète fusionnée.
+
+**Schéma SQL (Supabase) :**
+```sql
+profiles   : id UUID, email TEXT UNIQUE, username TEXT UNIQUE, password_hash TEXT, created_at
+user_data  : id UUID, user_id UUID FK→profiles, games JSONB, srs_cards JSONB, updated_at
+```
+
+**Exigences de Qualité :**
+- Tests pytest couvrant : hash/verify, JWT create/decode, signup, login, me, sync (24 TUs).
+- Mutation testing via mutmut sur `backend/app/domain/auth.py`.
+
+**Statut :** ✅ Implémenté
+
+---
+
+## CI/CD 1 : Pipeline Frontend (Vercel)
+
+**Titre :** Déploiement automatique du frontend sur Vercel via GitHub Actions
+
+**Description métier :**
+En tant qu'équipe, nous voulons que chaque push sur `main` affectant `frontend/**` déploie automatiquement l'application sur Vercel, après validation des tests.
+
+**Règles de gestion :**
+- Déclencheur : push ou PR sur `main`, filtre `frontend/**`.
+- Job `test-frontend` : `npm ci` + `npm test -- --coverage` (seuils 80%).
+- Job `deploy-frontend` (main seulement) : `vercel deploy --prod` via VERCEL_TOKEN.
+- Secrets requis : `VERCEL_TOKEN`, `VERCEL_ORG_ID`, `VERCEL_PROJECT_ID`.
+
+**Statut :** ✅ Implémenté (`.github/workflows/deploy-frontend.yml`)
+
+---
+
+## CI/CD 2 : Pipeline Backend (Render)
+
+**Titre :** Déploiement automatique du backend FastAPI sur Render via GitHub Actions
+
+**Description métier :**
+En tant qu'équipe, nous voulons que chaque push sur `main` affectant `backend/**` déploie automatiquement l'API sur Render, après validation des tests.
+
+**Règles de gestion :**
+- Déclencheur : push ou PR sur `main`, filtre `backend/**`.
+- Job `test-backend` : `pip install -r requirements.txt` + `pytest tests/ -v`.
+- Job `deploy-backend` (main seulement) : `curl -X POST $RENDER_DEPLOY_HOOK`.
+- Secrets requis : `RENDER_DEPLOY_HOOK`, `JWT_SECRET`.
+
+**Statut :** ✅ Implémenté (`.github/workflows/deploy-backend.yml`)
+
+---
+
+## CI/CD 3 : Pipeline Database (Supabase)
+
+**Titre :** Application automatique des migrations SQL sur Supabase via GitHub Actions
+
+**Description métier :**
+En tant qu'équipe, nous voulons que chaque modification de `supabase/migrations/**` pousse automatiquement la migration vers Supabase en production.
+
+**Règles de gestion :**
+- Déclencheur : push ou PR sur `main`, filtre `supabase/migrations/**`.
+- Job `lint-migrations` : `sqlfluff lint` avec dialecte `postgres`.
+- Job `push-migrations` (main seulement) : `supabase db push` via CLI.
+- Secrets requis : `SUPABASE_ACCESS_TOKEN`, `SUPABASE_DB_PASSWORD`, `SUPABASE_PROJECT_ID`.
+
+**Statut :** ✅ Implémenté (`.github/workflows/deploy-database.yml`)

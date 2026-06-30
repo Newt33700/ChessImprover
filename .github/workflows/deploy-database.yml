@@ -1,0 +1,54 @@
+# CI/CD 3 – Database : Lint SQL + push migrations Supabase
+name: Deploy Database Migrations
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "supabase/migrations/**"
+  pull_request:
+    branches: [main]
+    paths:
+      - "supabase/migrations/**"
+
+jobs:
+  # ── Lint des migrations SQL ─────────────────────────────────────────────────
+  lint-migrations:
+    name: Lint SQL migrations
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install sqlfluff
+        run: pip install sqlfluff
+
+      - name: Lint SQL files
+        run: |
+          sqlfluff lint supabase/migrations/ \
+            --dialect postgres \
+            --exclude-rules LT12,AM06
+
+  # ── Déploiement des migrations (main seulement) ─────────────────────────────
+  push-migrations:
+    name: Push migrations to Supabase
+    needs: lint-migrations
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Supabase CLI
+        uses: supabase/setup-cli@v1
+        with:
+          version: latest
+
+      - name: Push database migrations
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
+          SUPABASE_PROJECT_ID: ${{ secrets.SUPABASE_PROJECT_ID }}
+        run: |
+          supabase link --project-ref "$SUPABASE_PROJECT_ID"
+          supabase db push --password "$SUPABASE_DB_PASSWORD"

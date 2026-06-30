@@ -27,6 +27,8 @@ from app.domain.models import (
 )
 from app.domain.srs_engine import review_card
 from app.infrastructure.chess_com_client import ChessComClient
+from app.routers import auth as auth_router
+from app.routers import sync as sync_router
 
 # ---------------------------------------------------------------------------
 # Lifespan (remplace les événements on_startup / on_shutdown dépréciés)
@@ -61,6 +63,9 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+app.include_router(auth_router.router)
+app.include_router(sync_router.router)
 
 
 # ---------------------------------------------------------------------------

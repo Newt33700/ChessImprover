@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import List, Optional
+
 from pydantic import BaseSettings
 
 
@@ -14,7 +16,14 @@ class Settings(BaseSettings):
     user_agent: str = "ChessImprover/0.1 (contact: chess-improver@example.com)"
 
     # CORS — séparées par des virgules dans .env
-    allowed_origins: list[str] = ["http://localhost:8080", "http://127.0.0.1:8080"]
+    allowed_origins: List[str] = ["http://localhost:8080", "http://127.0.0.1:8080"]
+
+    # Auth JWT (US 7)
+    jwt_secret: str = "dev-secret-change-in-production"
+    jwt_expiry_days: int = 30
+
+    # Database (Supabase/PostgreSQL — laisser vide pour mode in-memory)
+    database_url: Optional[str] = None
 
     class Config:
         env_file = ".env"
