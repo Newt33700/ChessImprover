@@ -1,50 +1,16 @@
 /**
- * Tests unitaires – ChessDB (IndexedDB wrapper)
- * Utilise fake-indexeddb pour simuler l'environnement navigateur.
+ * Tests unitaires – ChessDB (IndexedDB wrapper) – US 0
  */
 
-const { IDBFactory, IDBKeyRange } = require("fake-indexeddb");
-
-// Injecter fake-indexeddb dans l'environnement global
-global.indexedDB = new IDBFactory();
-global.IDBKeyRange = IDBKeyRange;
-
-// Charger le module après avoir injecté les globals
-const fs = require("fs");
-const path = require("path");
-
-// Charge db.js et expose ChessDB
-function loadChessDB() {
-  const code = fs.readFileSync(
-    path.resolve(__dirname, "../js/db.js"),
-    "utf8"
-  );
-  // Remplacer `window.ChessDB = ChessDB` par module.exports
-  const adapted = code.replace("window.ChessDB = ChessDB;", "module.exports = ChessDB;");
-  const m = { exports: {} };
-  // Fournir un global.localStorage mock
-  global.localStorage = {
-    _store: {},
-    getItem(k)    { return this._store[k] ?? null; },
-    setItem(k, v) { this._store[k] = v; },
-    removeItem(k) { delete this._store[k]; },
-  };
-  // eslint-disable-next-line no-new-func
-  new Function("module", "exports", adapted)(m, m.exports);
-  return m.exports;
-}
-
-let ChessDB;
+const ChessDB = require("../js/db.js");
 
 beforeEach(() => {
-  // Réinitialiser une nouvelle instance IDB par test
-  global.indexedDB = new IDBFactory();
-  ChessDB = loadChessDB();
+  ChessDB._reset();
 });
 
 // ── Ouverture ──────────────────────────────────────────────────────
 
-test("open() retourne une DB valide", async () => {
+test("open() retourne une DB valide avec les 3 object stores", async () => {
   const db = await ChessDB.open();
   expect(db).toBeTruthy();
   expect(db.objectStoreNames.contains("games")).toBe(true);
@@ -78,7 +44,7 @@ test("getAllGames() trie par date décroissante", async () => {
   expect(all[1].game_id).toBe("old");
 });
 
-test("saveGame() met à jour une partie existante", async () => {
+test("saveGame() met à jour une partie existante (upsert)", async () => {
   await ChessDB.saveGame({ game_id: "g3", accuracy: 50 });
   await ChessDB.saveGame({ game_id: "g3", accuracy: 80 });
   const all = await ChessDB.getAllGames();
@@ -97,7 +63,7 @@ test("saveCard() puis getAllCards() retourne la carte", async () => {
 });
 
 test("getDueCards() ne retourne que les cartes dues aujourd'hui ou avant", async () => {
-  const today = new Date().toISOString().split("T")[0];
+  const today    = new Date().toISOString().split("T")[0];
   const tomorrow = new Date(Date.now() + 86400000).toISOString().split("T")[0];
   await ChessDB.saveCard({ id: "past",   due: "2020-01-01" });
   await ChessDB.saveCard({ id: "today",  due: today });

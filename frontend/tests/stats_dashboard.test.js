@@ -2,22 +2,7 @@
  * Tests unitaires – StatsDashboard (US 5)
  */
 
-const fs   = require("fs");
-const path = require("path");
-
-function loadStatsDashboard() {
-  const code = fs.readFileSync(
-    path.resolve(__dirname, "../js/stats_dashboard.js"),
-    "utf8"
-  );
-  const adapted = code.replace("window.StatsDashboard = StatsDashboard;", "module.exports = StatsDashboard;");
-  const m = { exports: {} };
-  // eslint-disable-next-line no-new-func
-  new Function("module", "exports", adapted)(m, m.exports);
-  return m.exports;
-}
-
-const SD = loadStatsDashboard();
+const SD = require("../js/stats_dashboard.js");
 
 // ── estimateEloLogistic ───────────────────────────────────────────
 
@@ -136,4 +121,30 @@ test("buildChartData retourne null pour accuracy manquante", () => {
   const games = [{ date: new Date(now - 1 * 86400000).toISOString(), accuracy: null }];
   const data  = SD.buildChartData(games, 7);
   expect(data.rawAcc[0]).toBeNull();
+});
+
+// ── wpFromCp ──────────────────────────────────────────────────────
+
+test("wpFromCp(0) = 50", () => {
+  expect(SD.wpFromCp(0)).toBeCloseTo(50, 5);
+});
+
+test("wpFromCp clamp : résultat identique pour cp=20000 et cp=10000", () => {
+  expect(SD.wpFromCp(20000)).toBeCloseTo(SD.wpFromCp(10000), 5);
+});
+
+// ── render (renderCharts via render) ─────────────────────────────
+
+test("render avec localStorage vide retourne données vides", async () => {
+  const data = await SD.render(7, "elo-canvas", "acc-canvas");
+  expect(data.labels).toHaveLength(0);
+});
+
+test("render avec parties en localStorage crée les graphiques", async () => {
+  localStorage.setItem("ci_games", JSON.stringify([
+    { date: new Date(Date.now() - 86400000).toISOString(), accuracy: 75, opponent_elo: 1000 },
+  ]));
+  const data = await SD.render(30, "elo-canvas", "acc-canvas");
+  expect(data.labels).toHaveLength(1);
+  expect(global.Chart).toHaveBeenCalled();
 });

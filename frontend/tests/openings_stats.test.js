@@ -2,24 +2,7 @@
  * Tests unitaires – OpeningsStats (US 2)
  */
 
-const fs   = require("fs");
-const path = require("path");
-
-function loadOpeningsStats() {
-  const code = fs.readFileSync(
-    path.resolve(__dirname, "../js/openings_stats.js"),
-    "utf8"
-  );
-  const adapted = code.replace("window.OpeningsStats = OpeningsStats;", "module.exports = OpeningsStats;");
-  const m = { exports: {} };
-  // eslint-disable-next-line no-new-func
-  new Function("module", "exports", adapted)(m, m.exports);
-  return m.exports;
-}
-
-const OS = loadOpeningsStats();
-
-// ── Fixtures ──────────────────────────────────────────────────────
+const OS = require("../js/openings_stats.js");
 
 function makeGame(opening, white, black, result) {
   const pgn = `[White "${white}"][Black "${black}"][Opening "${opening}"][Result "*"]`;
@@ -101,8 +84,8 @@ test("aggregate regroupe correctement les victoires/nuls/défaites", () => {
 
 test("aggregate distingue Blanc et Noir pour la même ouverture", () => {
   const games = [
-    makeGame("Italienne", "alice", "bob",   "w"),  // alice blanc
-    makeGame("Italienne", "carol", "alice", "b"),  // alice noir gagne
+    makeGame("Italienne", "alice", "bob",   "w"),
+    makeGame("Italienne", "carol", "alice", "b"),
   ];
   const entries = OS.aggregate(games, "alice");
   expect(entries).toHaveLength(2);
@@ -149,4 +132,48 @@ test("computeRates sum ≈ 100 pour 10/2/8", () => {
   const e = { wins: 10, draws: 2, losses: 8, total: 20 };
   const { winPct, drawPct, lossPct } = OS.computeRates(e);
   expect(winPct + drawPct + lossPct).toBeCloseTo(100, 0);
+});
+
+// ── renderTable (interne) ─────────────────────────────────────────
+
+test("_renderTable retourne empty-state si aucune entrée", () => {
+  const html = OS._renderTable([]);
+  expect(html).toContain("empty-state");
+});
+
+test("_renderTable génère une ligne par entrée", () => {
+  const entries = [
+    { opening: "Sicilienne", color: "Blanc", wins: 5, draws: 2, losses: 3, total: 10 },
+  ];
+  const html = OS._renderTable(entries);
+  expect(html).toContain("Sicilienne");
+  expect(html).toContain("wdl-gauge");
+  expect(html).toContain("Blanc");
+});
+
+// ── escapeHtml ────────────────────────────────────────────────────
+
+test("_escapeHtml échappe les caractères HTML", () => {
+  const escaped = OS._escapeHtml('<Test & "World">');
+  expect(escaped).toContain("&lt;");
+  expect(escaped).toContain("&amp;");
+  expect(escaped).toContain("&quot;");
+  expect(escaped).toContain("&gt;");
+});
+
+// ── render (point d'entrée public) ────────────────────────────────
+
+test("render avec localStorage vide ne plante pas", async () => {
+  await expect(OS.render("test-container")).resolves.toBeUndefined();
+});
+
+test("render avec parties en localStorage affiche le tableau", async () => {
+  const games = [
+    { pgn: '[Opening "Italienne"][White "alice"][Black "bob"]',
+      white: { username: "alice", result: "win" },
+      black: { username: "bob",   result: "checkmated" } },
+  ];
+  localStorage.setItem("ci_username", JSON.stringify("alice"));
+  localStorage.setItem("ci_games", JSON.stringify(games));
+  await expect(OS.render("test-container")).resolves.toBeUndefined();
 });

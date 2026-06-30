@@ -145,6 +145,8 @@ const ChessDB = (() => {
     }
   }
 
+  function _reset() { _db = null; }
+
   return {
     open,
     saveGame,
@@ -160,7 +162,9 @@ const ChessDB = (() => {
     _get: get,
     _getAll: getAll,
     _remove: remove,
+    _reset,
   };
 })();
 
-window.ChessDB = ChessDB;
+if (typeof window !== "undefined") window.ChessDB = ChessDB;
+if (typeof module !== "undefined" && module.exports != null) module.exports = ChessDB;

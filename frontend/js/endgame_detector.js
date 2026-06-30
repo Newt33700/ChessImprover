@@ -42,12 +42,13 @@ const EndgameDetector = (() => {
 
   // ── API Syzygy (Lichess) ───────────────────────────────────────────
 
-  async function querySyzygy(fen) {
+  // _querySyzygy is a mutable reference so tests can override via ED.querySyzygy = mock
+  let _querySyzygy = async function querySyzygy(fen) {
     const url = `${SYZYGY_API}?fen=${encodeURIComponent(fen)}`;
     const res = await fetch(url);
     if (!res.ok) throw new Error(`Syzygy API error ${res.status}`);
     return res.json();
-  }
+  };
 
   function classifyCategory(syzygyData) {
     const cat = syzygyData?.category;
@@ -88,7 +89,7 @@ const EndgameDetector = (() => {
 
       if (isEligibleForSyzygy(move.fen)) {
         try {
-          const data = await querySyzygy(move.fen);
+          const data = await _querySyzygy(move.fen);
           const category = classifyCategory(data);
 
           if (onProgress) onProgress({ index: i, category });
@@ -151,10 +152,12 @@ const EndgameDetector = (() => {
     classifyCategory,
     analyzeGame,
     renderStats,
-    querySyzygy,
+    get querySyzygy() { return _querySyzygy; },
+    set querySyzygy(fn) { _querySyzygy = fn; },
     _ENDGAME_THRESHOLD: ENDGAME_THRESHOLD,
     _MAX_PIECES_SYZYGY: MAX_PIECES_SYZYGY,
   };
 })();
 
-window.EndgameDetector = EndgameDetector;
+if (typeof window !== "undefined") window.EndgameDetector = EndgameDetector;
+if (typeof module !== "undefined" && module.exports != null) module.exports = EndgameDetector;

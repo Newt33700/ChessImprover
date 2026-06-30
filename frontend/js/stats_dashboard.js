@@ -201,4 +201,5 @@ const StatsDashboard = (() => {
   };
 })();
 
-window.StatsDashboard = StatsDashboard;
+if (typeof window !== "undefined") window.StatsDashboard = StatsDashboard;
+if (typeof module !== "undefined" && module.exports != null) module.exports = StatsDashboard;

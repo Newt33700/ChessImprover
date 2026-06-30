@@ -158,4 +158,5 @@ const WPChart = (() => {
   return { cpToWP, evalToWP, buildDataset, render, updateMove, highlightMove, destroy };
 })();
 
-window.WPChart = WPChart;
+if (typeof window !== "undefined") window.WPChart = WPChart;
+if (typeof module !== "undefined" && module.exports != null) module.exports = WPChart;

@@ -1,25 +1,8 @@
 /**
- * Tests unitaires – WPChart (Win Probability Chart)
- * Teste la formule de conversion centipions → probabilité, et la construction du dataset.
+ * Tests unitaires – WPChart (Win Probability Chart) – US 1
  */
 
-const fs   = require("fs");
-const path = require("path");
-
-// Charger wp_chart.js en mode module CommonJS
-function loadWPChart() {
-  const code = fs.readFileSync(
-    path.resolve(__dirname, "../js/wp_chart.js"),
-    "utf8"
-  );
-  const adapted = code.replace("window.WPChart = WPChart;", "module.exports = WPChart;");
-  const m = { exports: {} };
-  // eslint-disable-next-line no-new-func
-  new Function("module", "exports", adapted)(m, m.exports);
-  return m.exports;
-}
-
-const WPChart = loadWPChart();
+const WPChart = require("../js/wp_chart.js");
 
 // ── cpToWP ────────────────────────────────────────────────────────
 
@@ -45,7 +28,7 @@ test("cpToWP(-1000) est proche de 0%", () => {
   expect(WPChart.cpToWP(-1000)).toBeGreaterThanOrEqual(0);
 });
 
-test("cpToWP est symmétrique : cpToWP(x) + cpToWP(-x) = 100", () => {
+test("cpToWP est symétrique : cpToWP(x) + cpToWP(-x) = 100", () => {
   expect(WPChart.cpToWP(300) + WPChart.cpToWP(-300)).toBeCloseTo(100, 4);
   expect(WPChart.cpToWP(100) + WPChart.cpToWP(-100)).toBeCloseTo(100, 4);
 });
@@ -88,8 +71,8 @@ test("buildDataset crée un label par coup + 'Début'", () => {
     { san: "e5", color: "b", evalCp: -10 },
     { san: "Nf3", color: "w", evalCp: 30 },
   ];
-  const { labels, data } = WPChart.buildDataset(moves);
-  expect(labels).toHaveLength(4); // Début + 3 coups
+  const { labels } = WPChart.buildDataset(moves);
+  expect(labels).toHaveLength(4);
   expect(labels[0]).toBe("Début");
   expect(labels[1]).toContain("e4");
   expect(labels[2]).toContain("e5");
@@ -115,9 +98,55 @@ test("buildDataset numérote les coups correctement", () => {
     { san: "d6",  color: "b", evalCp: -20 },
   ];
   const { labels } = WPChart.buildDataset(moves);
-  // Coup 1 blanc → "1.B e4", coup 1 noir → "1.N c5"
   expect(labels[1]).toMatch(/1\.B/);
   expect(labels[2]).toMatch(/1\.N/);
   expect(labels[3]).toMatch(/2\.B/);
   expect(labels[4]).toMatch(/2\.N/);
+});
+
+// ── render / updateMove / highlightMove / destroy ─────────────────
+
+test("render crée un graphique Chart.js", () => {
+  const moves = [{ san: "e4", color: "w", evalCp: 20 }];
+  WPChart.render("test-canvas", moves);
+  expect(global.Chart).toHaveBeenCalledTimes(1);
+});
+
+test("render ne plante pas si canvas absent", () => {
+  global.document.getElementById.mockReturnValueOnce(null);
+  expect(() => WPChart.render("missing-canvas", [])).not.toThrow();
+  expect(global.Chart).not.toHaveBeenCalled();
+});
+
+test("render avec onPointClick ne plante pas sur le click", () => {
+  const onPoint = jest.fn();
+  WPChart.render("test-canvas", [{ san: "e4", color: "w", evalCp: 10 }], onPoint);
+  expect(global.Chart).toHaveBeenCalledTimes(1);
+});
+
+test("updateMove met à jour les données après render", () => {
+  WPChart.render("test-canvas", [{ san: "e4", color: "w", evalCp: 0 }]);
+  expect(() => WPChart.updateMove(0, 100)).not.toThrow();
+});
+
+test("updateMove ne plante pas si pas de graphique", () => {
+  WPChart.destroy(); // assure qu'il n'y a pas de chart
+  expect(() => WPChart.updateMove(0, 100)).not.toThrow();
+});
+
+test("highlightMove met en évidence un point", () => {
+  WPChart.render("test-canvas", [{ san: "e4", color: "w", evalCp: 0 }]);
+  expect(() => WPChart.highlightMove(0)).not.toThrow();
+});
+
+test("highlightMove ne plante pas sans graphique", () => {
+  WPChart.destroy();
+  expect(() => WPChart.highlightMove(0)).not.toThrow();
+});
+
+test("destroy supprime l'instance du graphique", () => {
+  WPChart.render("test-canvas", []);
+  WPChart.destroy();
+  // après destroy, updateMove ne plante pas (graphique null)
+  expect(() => WPChart.updateMove(0, 50)).not.toThrow();
 });

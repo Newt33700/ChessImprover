@@ -179,4 +179,5 @@ const OpeningsStats = (() => {
   };
 })();
 
-window.OpeningsStats = OpeningsStats;
+if (typeof window !== "undefined") window.OpeningsStats = OpeningsStats;
+if (typeof module !== "undefined" && module.exports != null) module.exports = OpeningsStats;
