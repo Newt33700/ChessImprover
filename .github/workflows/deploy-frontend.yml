@@ -64,6 +64,11 @@ jobs:
           VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
           VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
         run: |
+          if [ -z "$VERCEL_TOKEN" ]; then
+            echo "⚠️  VERCEL_TOKEN not configured — skipping deployment."
+            echo "Add VERCEL_TOKEN, VERCEL_ORG_ID and VERCEL_PROJECT_ID to your GitHub repository secrets."
+            exit 0
+          fi
           npm install -g vercel
           vercel pull --yes --environment=production --token=$VERCEL_TOKEN
           vercel build --prod --token=$VERCEL_TOKEN
