@@ -1132,8 +1132,12 @@ class ChessImproverApp {
 
     // Set match card fields
     const el = (id) => document.getElementById(id);
-    if (el("name-white"))    el("name-white").textContent    = myColor === "white" ? myName  : oppName;
-    if (el("name-black"))    el("name-black").textContent    = myColor === "white" ? oppName : myName;
+    const whiteName = myColor === "white" ? myName  : oppName;
+    const blackName = myColor === "white" ? oppName : myName;
+    if (el("name-white"))      el("name-white").textContent      = whiteName;
+    if (el("name-black"))      el("name-black").textContent      = blackName;
+    if (el("head-name-white")) el("head-name-white").textContent = whiteName;
+    if (el("head-name-black")) el("head-name-black").textContent = blackName;
     if (el("match-score"))   el("match-score").textContent   = score;
     if (el("prec-bar-white")) el("prec-bar-white").style.width = `${myColor === "white" ? (myAcc ?? 0) : (oppAcc ?? 0)}%`;
     if (el("prec-bar-black")) el("prec-bar-black").style.width = `${myColor === "white" ? (oppAcc ?? 0) : (myAcc ?? 0)}%`;
@@ -1396,7 +1400,7 @@ class ChessImproverApp {
     const active = document.getElementById("board-active");
     if (empty)  empty.hidden  = true;
     if (active) active.hidden = false;
-    document.body.classList.add("board-active-mobile");
+    document.body.classList.add("board-active");
     // Chessboard.js lit offsetWidth — forcer le reflow après que l'élément soit visible
     if (this.boardMgr?.board) {
       requestAnimationFrame(() => this.boardMgr.board.resize());
@@ -1408,7 +1412,7 @@ class ChessImproverApp {
     const active = document.getElementById("board-active");
     if (empty)  empty.hidden  = false;
     if (active) active.hidden = true;
-    document.body.classList.remove("board-active-mobile");
+    document.body.classList.remove("board-active");
   }
 
   _openPgnModal() {
