@@ -316,6 +316,28 @@ class ChessImproverApp {
     // Auto-analyze button
     document.getElementById("btn-auto-analyze")?.addEventListener("click", () => this._showBilan());
 
+    // Statistiques Avancées (EPIC 4) — cadence, période, deep-dive
+    this._advCadence = "blitz";
+    this._advPeriod = "30d";
+    document.querySelectorAll("#adv-cadence-tabs .adv-cad-tab").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        document.querySelectorAll("#adv-cadence-tabs .adv-cad-tab").forEach((b) => b.classList.remove("active"));
+        btn.classList.add("active");
+        this._advCadence = btn.dataset.cad;
+        if (window.AdvancedStats && this._advSummary) {
+          AdvancedStats.renderDeepDive(document.getElementById("adv-deepdive"), this._advSummary, this._advCadence);
+        }
+      });
+    });
+    document.querySelectorAll("#adv-period .adv-period-btn").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        document.querySelectorAll("#adv-period .adv-period-btn").forEach((b) => b.classList.remove("active"));
+        btn.classList.add("active");
+        this._advPeriod = btn.dataset.period;
+        this._loadAdvStats();
+      });
+    });
+
     // Legacy back buttons
     document.getElementById("btn-back-dashboard")?.addEventListener("click", () => this._goHome());
 
@@ -1413,6 +1435,44 @@ class ChessImproverApp {
     if (empty)  empty.hidden  = false;
     if (active) active.hidden = true;
     document.body.classList.remove("board-active");
+  }
+
+  async _showAdvStats() {
+    document.body.classList.add("advstats-active");
+    await this._loadAdvStats();
+  }
+
+  _hideAdvStats() {
+    document.body.classList.remove("advstats-active");
+    if (this._advCharts) {
+      this._advCharts.forEach((c) => c && c.destroy && c.destroy());
+      this._advCharts = null;
+    }
+  }
+
+  async _loadAdvStats() {
+    if (!window.AdvancedStats) return;
+    // Détruire les graphes existants avant re-rendu (évite les fuites Chart.js).
+    if (this._advCharts) {
+      this._advCharts.forEach((c) => c && c.destroy && c.destroy());
+    }
+    this._advSummary = await AdvancedStats.fetchSummary(this._advPeriod);
+    const refs = {
+      matrix:      document.getElementById("adv-matrix"),
+      deepDive:    document.getElementById("adv-deepdive"),
+      finales:     document.getElementById("adv-finales-tiles"),
+      tactics:     document.getElementById("adv-tactics"),
+      acplCanvas:  document.getElementById("adv-acpl-canvas"),
+      donutCanvas: document.getElementById("adv-donut-canvas"),
+    };
+    AdvancedStats.renderMatrix(refs.matrix, this._advSummary);
+    AdvancedStats.renderDeepDive(refs.deepDive, this._advSummary, this._advCadence);
+    AdvancedStats.renderFinalesTiles(refs.finales, this._advSummary);
+    AdvancedStats.renderTacticsCard(refs.tactics, this._advSummary);
+    this._advCharts = [
+      AdvancedStats.renderAcplChart(refs.acplCanvas, this._advSummary),
+      AdvancedStats.renderGaffeDonut(refs.donutCanvas, this._advSummary),
+    ];
   }
 
   _openPgnModal() {
