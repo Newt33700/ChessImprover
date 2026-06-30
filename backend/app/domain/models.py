@@ -46,6 +46,13 @@ class BoardMode(str, Enum):
     GHOST = "ghost"
 
 
+class Phase(str, Enum):
+    """Phase de jeu détectée (US 2.1)."""
+    OPENING = "opening"
+    MIDDLEGAME = "middlegame"
+    ENDGAME = "endgame"
+
+
 # ---------------------------------------------------------------------------
 # Analyse d'un coup
 # ---------------------------------------------------------------------------

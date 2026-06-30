@@ -25,6 +25,11 @@ class Settings(BaseSettings):
     # Database (Supabase/PostgreSQL — laisser vide pour mode in-memory)
     database_url: Optional[str] = None
 
+    # Moteur d'analyse (EPIC 2) — binaire Stockfish natif optionnel sur Render.
+    # Laisser vide pour utiliser les évaluations fournies par le client (navigateur).
+    stockfish_path: Optional[str] = None
+    engine_depth: int = 14
+
     class Config:
         env_file = ".env"
         env_file_encoding = "utf-8"
