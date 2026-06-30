@@ -134,14 +134,18 @@ ChessImprover/
 │       │   ├── acpl.py                 # US 2.2 : perte de centipions (CPL/ACPL) par phase
 │       │   ├── virtual_elo.py          # US 3.1 : mapping ACPL → Elo virtuel + bonus cadence
 │       │   ├── move_class.py           # US 3.2 : tactique vs stratégie + Elos virtuels
+│       │   ├── cadence.py              # time_control Chess.com → TimeClass (EPIC 1)
+│       │   ├── analysis_pipeline.py    # Worker : PGN → métriques par coup (US 1.2)
+│       │   ├── stats_aggregator.py     # Agrégation → résumé /stats/summary (US 4.1)
 │       │   └── srs_engine.py           # Algorithme SM-2 côté backend
 │       ├── infrastructure/
 │       │   ├── chess_com_client.py     # Proxy httpx vers Chess.com API
 │       │   ├── engine.py               # EngineProvider (évals client / Stockfish natif) — EPIC 2
-│       │   └── db_client.py            # Store in-memory (dev/test) + interface Supabase (US 7)
+│       │   └── db_client.py            # Store in-memory : users, user_data, games, game_moves
 │       ├── routers/
 │       │   ├── auth.py                 # POST /auth/signup /auth/login GET /auth/me (US 7)
-│       │   └── sync.py                 # POST /sync — stratégie Client Wins (US 7)
+│       │   ├── sync.py                 # POST /sync — stratégie Client Wins (US 7)
+│       │   └── games.py                # POST /api/v1/games/analyze (202), GET stats/summary (EPIC 1)
 │       ├── tests/
 │       │   ├── test_auth.py            # 24 TUs auth : hash, JWT, signup, login, me, sync
 │       │   ├── test_analyzer.py
@@ -151,12 +155,18 @@ ChessImprover/
 │       │   ├── test_engine.py          # Abstraction moteur
 │       │   ├── test_virtual_elo.py     # US 3.1
 │       │   ├── test_move_class.py      # US 3.2
+│       │   ├── test_cadence.py         # EPIC 1 : classification cadence
+│       │   ├── test_db_games.py        # EPIC 1 : store games/game_moves
+│       │   ├── test_analysis_pipeline.py # US 1.2 : worker d'analyse
+│       │   ├── test_stats_aggregator.py  # US 4.1 : agrégation
+│       │   ├── test_games_api.py       # US 1.1 : routes + worker async
 │       │   └── test_srs.py
 │       └── mutants/                    # Mutation testing mutmut
 │
 ├── supabase/
 │   └── migrations/
-│       └── 20260630000000_init_auth.sql  # Tables profiles + user_data, RLS, trigger updated_at
+│       ├── 20260630000000_init_auth.sql      # Tables profiles + user_data, RLS (US 7)
+│       └── 20260701000000_advanced_stats.sql # Tables games + game_moves, RLS (EPIC 1)
 │
 └── .github/
     └── workflows/
@@ -819,7 +829,27 @@ Modules **purs** (couche domaine), entièrement testés, indépendants de l'infr
 
 **`domain/move_class.py` (US 3.2)** — API : `classify_position(line_scores) → PositionType` (`tactical`/`strategic`/`neutral`), `tactic_outcome(played_cpl) → TacticOutcome`, `tactical_success_ratio(outcomes)`, `tactical_elo(ratio)`, `strategic_elo(calm_cpls, time_class=None)`.
 
-> **Câblage :** ❌ ces modules ne sont pas encore exposés via une route ni appelés par le frontend (voir §9). Ils constituent le socle des US 1.x (ingestion async + persistance `game_moves`) et 4.x (matrice UI) à venir.
+> **Câblage :** ✅ ces modules sont désormais exposés via l'EPIC 1 (cf. §4.6) : le worker `analysis_pipeline` les orchestre, `stats_aggregator` les agrège, et `routers/games.py` les sert. La vue frontend Stats Avancées les consomme via `GET /api/v1/stats/summary`.
+
+### 4.6 EPIC 1 — Ingestion async & persistance (US 1.1 / 1.2)
+
+**Fichiers :** `routers/games.py`, `domain/analysis_pipeline.py`, `domain/stats_aggregator.py`, `domain/cadence.py`, `infrastructure/db_client.py`, `supabase/migrations/20260701000000_advanced_stats.sql`
+
+**Routes :**
+
+| Route | Méthode | Comportement |
+|---|---|---|
+| `/api/v1/games/analyze` | POST | US 1.1 — crée la partie (`status=processing`), répond **202** + UUID, délègue à une `BackgroundTask`. Corps : `pgn` **ou** `game_ids`, + `user_id`, `user_color`, `time_control`, `evals` (multipv client optionnel). |
+| `/api/v1/games/{game_id}` | GET | Statut de la partie + métriques par coup. `404` si inconnue. |
+| `/api/v1/stats/summary` | GET | US 4.1 — résumé agrégé (`?period=`, `?user_id=`). |
+
+**Worker (`run_analysis`)** : choisit la source d'évals (client > Stockfish natif `STOCKFISH_PATH` > aucune), appelle `analysis_pipeline.analyze_pgn`, **bulk-insert** des coups (US 1.2), puis `status=completed` (`failed` sur exception).
+
+**`analysis_pipeline.analyze_pgn(pgn, engine=None)`** → `{result, moves:[…]}` : pour chaque coup, `phase` (US 2.1), `eval_before`/`eval_after`/`score_cp`, `cpl` plafonné (US 2.2), `is_mate`/`mate_in`, `position_type` (US 3.2). `build_client_engine(evals)` adapte les évals navigateur (`{fen: [[uci, cp, is_mate?, mate_in?], …]}`).
+
+**`stats_aggregator.build_summary(entries, ratings=None, period)`** → résumé attendu par le frontend : matrice `rows` (Elo virtuel par cadence × catégorie, défaut 1200), `acplTrend`, `gaffeRate` par phase, `finales` (conversion/résilience), `tactics`.
+
+> **Persistance :** en dev/test, `db_client` stocke `games`/`game_moves` en mémoire (resetable). La connexion Supabase réelle reste à brancher (§10.1).
 
 ---
 
@@ -958,6 +988,27 @@ Stratégie  : (best − 3e) < 40 cp         # position calme
    Elo_stratégie = mapping_US3.1( ACPL des positions calmes )
 ```
 
+### 5.13 Classification de cadence (EPIC 1)
+
+```
+temps_estimé = base + 40 × incrément           # "180+2" → 260 s
+daily ("1/…")              → DAILY
+temps_estimé < 180 s       → BULLET
+180 s ≤ temps_estimé < 600 → BLITZ
+≥ 600 s                    → RAPID
+```
+
+### 5.14 Agrégation Stats (EPIC 1 / US 4.1)
+
+```
+catégorie Elo : openings/endgames = mapping_US3.1(ACPL de la phase, cadence)
+                strategy           = Elo_stratégie ; tactics = Elo_tactique
+current        = classement réel fourni, sinon moyenne des catégories (défaut 1200)
+gaffe          = cpl ≥ 200 ;  coup manqué = 100 ≤ cpl < 200
+Finales : conversion = % victoires si entrée en finale avec éval ≥ +150
+          résilience = % nulles/victoires si entrée en finale avec éval ≤ −150
+```
+
 ---
 
 ## 6. Tests & Qualité
@@ -1019,9 +1070,14 @@ JWT_SECRET=ci-test-secret pytest tests/ -v
 | `test_engine.py` | PositionEval, ClientProvidedEngine, NativeStockfishEngine | Abstraction moteur |
 | `test_virtual_elo.py` | Anchors, Interpolation, CadenceBonus, AcplToElo | US 3.1 |
 | `test_move_class.py` | ClassifyPosition, TacticOutcome, SuccessRatio, TacticalElo, StrategicElo | US 3.2 |
+| `test_cadence.py` | EstimateSeconds, ClassifyCadence (bornes Bullet/Blitz/Rapide/Daily) | EPIC 1 |
+| `test_db_games.py` | create/get/update/completed games, bulk/clear moves | EPIC 1 |
+| `test_analysis_pipeline.py` | sans moteur (phases/SAN), avec moteur (CPL, plafond, tactique/stratégie), mat | US 1.2 |
+| `test_stats_aggregator.py` | user_outcome, build_summary (catégories, ratings, couleur), gaffeRate, finales, acplTrend | US 4.1 |
+| `test_games_api.py` | POST analyze (202, 400), worker→completed, réanalyse, GET game (404), stats/summary | US 1.1 |
 | `test_srs.py` | — | SM-2 backend |
 
-**Couverture backend :** 272 TUs au total, couverture globale **85 %** ; modules du cœur Stats Avancées à 97–100 % (`acpl`, `move_class`, `virtual_elo`, `engine`, `models` à 100 %, `phases` 97 %).
+**Couverture backend :** 325 TUs au total, couverture globale **89 %** ; cœur Stats Avancées + EPIC 1 à 90–100 % (`stats_aggregator`, `cadence`, `models`, `engine` à 100 %, `analysis_pipeline` 90 %, `routers/games` 94 %).
 
 **Architecture de test `test_auth.py` :**
 - App de test minimale (`FastAPI()` + routers auth/sync uniquement) pour éviter la dépendance `python-chess`
@@ -1136,6 +1192,7 @@ UNIQUE (user_id)
 | **Dashboard Stats Elo/Précision** (US 5) | `stats_dashboard.js` | Câblé dans `_switchTab("tab-stats")` |
 | **Coach Personnel** (US 6) | `personal_coach.js` | Câblé dans `_switchTab("tab-coach")` |
 | Backend auth/sync (US 7) | `routers/auth.py` + `routers/sync.py` | API opérationnelle |
+| **Backend EPIC 1 — analyse async + stats** | `routers/games.py` + `analysis_pipeline.py` + `stats_aggregator.py` | `POST /api/v1/games/analyze` (202 + BackgroundTask), `GET /api/v1/stats/summary`. Persistance in-memory (Supabase à brancher). |
 | **Analyse Finale** (US 3) | `endgame_detector.js` + `app.js` | Câblé via `_runEndgameAnalysis()` dans `_enterReviewMode()` |
 | **UI Auth — Modal login/signup** (US 7) | `auth.js` + `index.html` + `app.js` | Modal overlay câblée, `Auth.autoConnect()` au boot |
 | **Auto-connect Chess.com depuis profil** (US 7) | `app.js:_onAuthSuccess()` | Appelle `_connectUser(username)` après login |
@@ -1159,7 +1216,8 @@ UNIQUE (user_id)
 | Fonctionnalité | Problème | Priorité |
 |---|---|---|
 | **Connexion Supabase réelle** (US 7) | `db_client.py` utilise un dict in-memory. La connexion à Supabase via `DATABASE_URL` n'est pas implémentée. | 🔴 Critique |
-| **Moteur Stats Avancées (EPIC 2 & 3)** | `phases.py`, `acpl.py`, `virtual_elo.py`, `move_class.py`, `engine.py` sont implémentés et testés mais **non exposés** : aucune route ne les appelle, aucune table `game_moves` ne les persiste, le frontend ne les consomme pas. | 🔴 Critique (prochaine étape) |
+| **Stockfish réel non branché** | Le worker EPIC 1 accepte des évals client (`evals`) ou un binaire natif (`STOCKFISH_PATH`), mais aucune des deux sources n'est encore alimentée en prod : le frontend ne POST pas encore le PGN + évals, et aucun binaire n'est déployé sur Render. Tant que c'est le cas, `cpl`/`position_type` restent `None` et la vue affiche `MOCK_SUMMARY`. | 🔴 Critique |
+| **Frontend → backend stats** | La vue Stats Avancées appelle `GET /api/v1/stats/summary` mais retombe sur `MOCK_SUMMARY` faute de `window.STATS_API_BASE` configuré et de parties analysées. | 🟡 Important |
 | **Cache livre d'ouvertures** | Re-téléchargé à chaque refresh (~5 req. réseau, ~2s de parsing) | 🟡 Important |
 | **Qualité SRS nuancée** | Seul `quality=5` (succès) et `quality=1` (raté) sont utilisés. `quality=3` (correct mais non optimal) n'est jamais émis. | 🟢 Optionnel |
 
@@ -1183,13 +1241,13 @@ Le `PersonalCoach` lit `game.endgame_accuracy` pour évaluer la technique de fin
 
 **Dans `db_client.py` :** implémenter la connexion PostgreSQL via `psycopg2` ou `asyncpg` quand `settings.database_url` est défini. L'interface (`find_user_by_email`, `create_user`, etc.) reste identique — seul le backend de stockage change.
 
-### 10.1bis 🔴 CRITIQUE — Brancher le moteur Stats Avancées (EPIC 1 & 4)
+### 10.1bis 🔴 CRITIQUE — Finaliser la chaîne Stats Avancées
 
-Le cœur algorithmique (EPIC 2 & 3) est prêt et testé mais isolé. Reste à :
-- **US 1.1** : `POST /api/v1/games/analyze` → crée une ligne `games` (`status='processing'`), répond `202` + UUID, lance une `BackgroundTask` qui orchestre `segment_phases` → `centipawn_loss`/`acpl_by_phase` → `virtual_elo`/`move_class`.
-- **US 1.2** : table Supabase `game_moves` (bulk insert des métriques par coup), passage `status='completed'`.
-- **US 4.1** : endpoint d'agrégation `GET /api/v1/stats/summary?period=30d` (zéro calcul client) + matrice UI mobile (lignes Bullet/Blitz/Rapide × colonnes Classement/Ouvertures/Tactique/Stratégie/Finales).
-- **US 4.2** : vues détaillées par onglet (Ouvertures top 3 ECO, taux de réussite tactique, taux de conversion/résilience en finale).
+EPIC 2, 3, 4 (frontend) et **EPIC 1** (routes async + agrégation) sont implémentés et testés. Reste à brancher le **bout-à-bout réel** :
+- **Source d'évals** : faire poster par le frontend le PGN + les évaluations de son Stockfish WASM vers `POST /api/v1/games/analyze` (champ `evals`), **ou** déployer un binaire Stockfish sur Render (`STOCKFISH_PATH`).
+- **Supabase** : remplacer le store in-memory de `db_client` (games/game_moves) par des écritures Postgres réelles (cf. §10.1) ; appliquer la migration `20260701000000_advanced_stats.sql`.
+- **Frontend** : configurer `window.STATS_API_BASE` pour que la vue Stats Avancées lise les vraies données au lieu de `MOCK_SUMMARY`.
+- **US 4.2 (reste)** : top 3 ouvertures par code ECO dans l'onglet détaillé Ouvertures.
 
 ### 10.2 🟡 IMPORTANT — Cache du livre d'ouvertures
 
