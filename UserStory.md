@@ -332,6 +332,27 @@ En tant qu'équipe, nous voulons que chaque modification de `supabase/migrations
 
 **Statut :** ✅ Implémenté côté frontend (mêmes fichiers). ⏳ Données réelles à fournir par le backend.
 
-## US 1.1 / 1.2 : Ingestion async & persistance
+## US 1.1 : Soumission asynchrone de PGN
 
-**Statut :** ⏳ À faire — endpoints async `POST /api/v1/games/analyze` (202 + UUID + `BackgroundTask`), tables Supabase `games`/`game_moves` (bulk insert), endpoint d'agrégation `GET /api/v1/stats/summary`.
+**Description :** envoyer un PGN au serveur qui crée une ligne `games` et délègue l'analyse à un worker async (évite les timeouts Render).
+
+**Règles de gestion :**
+- `POST /api/v1/games/analyze` accepte un `pgn` ou une liste `game_ids`.
+- Crée la ligne `games` au statut `processing`, répond immédiatement en `202` + UUID.
+- Tâche de fond (`BackgroundTasks` FastAPI) lance le parsing + l'analyse.
+
+**Statut :** ✅ Implémenté (`backend/app/routers/games.py`, `supabase/migrations/20260701000000_advanced_stats.sql`, `tests/test_games_api.py`). Mode in-memory en dev/test ; connexion Supabase réelle à brancher (cf. §10.1).
+
+## US 1.2 : Persistance des métriques par coup
+
+**Description :** stocker l'évaluation de chaque coup dans `game_moves` pour recalculer les stats sans réanalyser.
+
+**Règles de gestion :**
+- Table `game_moves` liée à `games` : `move_number`, `color`, `move_san`, `eval_before`, `eval_after`, `score_cp`, `cpl`, `is_mate`, `mate_in`, `phase`, `position_type`.
+- Insertion groupée (bulk) en fin d'analyse, puis `games.status = 'completed'`.
+
+**Statut :** ✅ Implémenté (`backend/app/domain/analysis_pipeline.py`, `infrastructure/db_client.py`, `tests/test_analysis_pipeline.py`, `tests/test_db_games.py`).
+
+## Endpoint d'agrégation `GET /api/v1/stats/summary` (US 4.1)
+
+**Statut :** ✅ Implémenté (`backend/app/domain/stats_aggregator.py`, `tests/test_stats_aggregator.py`) — alimente la matrice/le deep-dive du frontend ; le frontend bascule du mock au réel en pointant `window.STATS_API_BASE`.
