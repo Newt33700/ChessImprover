@@ -226,6 +226,7 @@
               <span><span class="bilan-legend-dot bilan-legend-dot--blunders"></span> Gaffes</span>
               <span><span class="bilan-legend-dot bilan-legend-dot--missed"></span> Coups manqués</span>
             </div>
+            <button id="btn-advstats" class="btn btn--accent btn--full btn--sm" onclick="window.app?._showAdvStats()">Statistiques Avancées →</button>
           </div>
         </div>
 
@@ -418,6 +419,85 @@
       </div><!-- /#board-active -->
     </div><!-- /.board-col -->
 
+    <!-- ── STATISTIQUES AVANCÉES (EPIC 4 — plein écran, body.advstats-active) ── -->
+    <div class="advstats-col" id="advstats-col">
+      <div class="advstats-topbar">
+        <button class="btn-icon" aria-label="Retour" onclick="window.app?._hideAdvStats()">←</button>
+        <h2 class="advstats-title">Statistiques Avancées</h2>
+        <div class="adv-period" id="adv-period">
+          <button class="adv-period-btn" data-period="7d">7j</button>
+          <button class="adv-period-btn active" data-period="30d">30j</button>
+          <button class="adv-period-btn" data-period="90d">90j</button>
+        </div>
+      </div>
+
+      <div class="adv-cadence-tabs" id="adv-cadence-tabs">
+        <button class="adv-cad-tab" data-cad="bullet">BULLET</button>
+        <button class="adv-cad-tab active" data-cad="blitz">BLITZ</button>
+        <button class="adv-cad-tab" data-cad="rapid">RAPIDE</button>
+      </div>
+
+      <div class="advstats-grid">
+        <div class="advstats-main">
+          <div class="db-card">
+            <div class="db-card-head">
+              <div class="db-card-heading">
+                <h2 class="db-card-title">BILAN</h2>
+                <p class="db-card-sub">Average Centipawn Loss (ACPL)</p>
+              </div>
+            </div>
+            <div class="db-card-body">
+              <div class="adv-chart-wrap"><canvas id="adv-acpl-canvas"></canvas></div>
+              <div class="bilan-legend">
+                <span><span class="bilan-legend-dot" style="background:#e09a44"></span> Gaffes</span>
+                <span><span class="bilan-legend-dot" style="background:#81b64c"></span> Coups manqués</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="db-card">
+            <div class="db-card-head">
+              <div class="db-card-heading">
+                <h2 class="db-card-title">MATRICE</h2>
+                <p class="db-card-sub">Elo virtuel par cadence &amp; catégorie</p>
+              </div>
+            </div>
+            <div class="db-card-body">
+              <div class="advm-scroll" id="adv-matrix"></div>
+            </div>
+          </div>
+
+          <div class="db-card">
+            <div class="db-card-head">
+              <div class="db-card-heading">
+                <h2 class="db-card-title">GAFFES</h2>
+                <p class="db-card-sub">Répartition par phase</p>
+              </div>
+            </div>
+            <div class="db-card-body">
+              <div class="adv-donut-wrap"><canvas id="adv-donut-canvas"></canvas></div>
+            </div>
+          </div>
+        </div>
+
+        <div class="advstats-side">
+          <div class="db-card adv-hero-card">
+            <div class="db-card-body" id="adv-deepdive"></div>
+          </div>
+          <div class="adv-tiles" id="adv-finales-tiles"></div>
+          <div class="db-card">
+            <div class="db-card-head">
+              <div class="db-card-heading">
+                <h2 class="db-card-title">TACTIQUES</h2>
+                <p class="db-card-sub">Entraînement</p>
+              </div>
+            </div>
+            <div class="db-card-body adv-tactics-body" id="adv-tactics"></div>
+          </div>
+        </div>
+      </div>
+    </div><!-- /.advstats-col -->
+
   </section><!-- /#section-dashboard -->
 
   <!-- ── HIDDEN COMPAT CONTAINERS (legacy JS IDs) ── -->
@@ -475,6 +555,7 @@
 <script src="js/endgame_detector.js"></script>
 <script src="js/stats_dashboard.js"></script>
 <script src="js/personal_coach.js"></script>
+<script src="js/advanced_stats.js"></script>
 <script src="js/auth.js"></script>
 <script src="js/app.js"></script>
 </body>
