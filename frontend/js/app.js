@@ -320,13 +320,29 @@ class ChessImproverApp {
         if (window.StatsDashboard) StatsDashboard.render(parseInt(btn.dataset.days));
       });
     });
+
+    // Auth modal — switch Login/Signup tabs
+    document.querySelectorAll(".auth-tab").forEach((tab) => {
+      tab.addEventListener("click", () => {
+        document.querySelectorAll(".auth-tab").forEach((t) => t.classList.remove("active"));
+        tab.classList.add("active");
+        document.querySelectorAll(".auth-form").forEach((f) => { f.hidden = true; });
+        const target = document.getElementById(tab.dataset.form);
+        if (target) target.hidden = false;
+      });
+    });
+
+    // Fermer le modal en cliquant sur l'overlay
+    document.getElementById("auth-modal")?.addEventListener("click", (e) => {
+      if (e.target === e.currentTarget) this._closeAuthModal();
+    });
   }
 
   // ─── Connexion Chess.com ────────────────────────────────────────
 
-  async _connectUser() {
+  async _connectUser(forceUsername) {
     const input = document.getElementById("username-input");
-    const username = input?.value.trim();
+    const username = forceUsername || input?.value.trim();
     if (!username) return;
     this.username = username;
     Store.set(STORAGE_KEYS.USERNAME, username);
@@ -420,6 +436,9 @@ class ChessImproverApp {
     } else {
       this._updatePlayerBars(this.boardMgr.flipped);
     }
+
+    // US 3 : analyse de finale asynchrone (ne bloque pas l'UI)
+    this._runEndgameAnalysis(analysis);
   }
 
   _buildOpeningBook() {
@@ -736,8 +755,8 @@ class ChessImproverApp {
     const chess = new Chess();
     const moves = game.moves;
 
-    // Déterminer la couleur du joueur (blanc par défaut)
-    const playerColor = "w";
+    // Couleur du joueur détectée depuis les headers PGN (corrige le bug hardcodé)
+    const playerColor = this.playerColor || "w";
 
     // FEN 3 coups avant le blunder (min index 0)
     const startIndex = Math.max(0, blunderIndex - 3);
@@ -810,6 +829,181 @@ class ChessImproverApp {
     if (boardLayout) boardLayout.hidden = false;
   }
 
+  // ─── US 3 : Finales ─────────────────────────────────────────────
+
+  _showEndgame() {
+    const boardLayout  = document.querySelector(".board-layout");
+    const allPanels    = document.querySelectorAll(".analysis-panel");
+    const endgamePanel = document.getElementById("panel-endgame");
+    allPanels.forEach((p) => { p.hidden = true; });
+    if (boardLayout)  boardLayout.hidden  = true;
+    if (endgamePanel) endgamePanel.hidden = false;
+    this._setModePill("Finales");
+  }
+
+  async _runEndgameAnalysis(analysis) {
+    if (!window.EndgameDetector || !analysis?.moves?.length) return;
+    try {
+      const results = await EndgameDetector.analyzeGame(
+        analysis.moves,
+        this.playerColor || "w",
+      );
+      analysis.endgame_accuracy = results.endgameAvgAccuracy;
+      if (results.syzygyBlunders?.length) {
+        analysis.syzygy_blunders = results.syzygyBlunders.length;
+      }
+      if (window.ChessDB && analysis.game_id) {
+        ChessDB.saveGame({ ...analysis, date: analysis.date || new Date().toISOString() }).catch(() => {});
+      }
+      // Peupler le panel si actuellement affiché
+      const panel = document.getElementById("panel-endgame");
+      if (panel && !panel.hidden) {
+        EndgameDetector.renderStats(results, "endgame-stats-container");
+      }
+    } catch { /* Syzygy indisponible, on continue */ }
+  }
+
+  async _renderEndgameTab() {
+    const container = document.getElementById("endgame-global-container");
+    if (!container) return;
+    let games = [];
+    try {
+      games = window.ChessDB
+        ? await ChessDB.getAllGames()
+        : JSON.parse(localStorage.getItem("ci_games") || "[]");
+    } catch {}
+    const withData = games.filter((g) => g.endgame_accuracy != null);
+    if (!withData.length) {
+      container.innerHTML = `<p class="empty-state">Aucune donnée de finale disponible.<br>Analysez des parties pour obtenir vos statistiques.</p>`;
+      return;
+    }
+    const avgAcc   = withData.reduce((s, g) => s + g.endgame_accuracy, 0) / withData.length;
+    const blunders = games.reduce((s, g) => s + (g.syzygy_blunders || 0), 0);
+    container.innerHTML = `
+      <div class="stats-grid">
+        <div class="stat-card"><div class="stat-value">${avgAcc.toFixed(1)}%</div><div class="stat-label">Précision finale (moy.)</div></div>
+        <div class="stat-card"><div class="stat-value">${withData.length}</div><div class="stat-label">Parties analysées</div></div>
+        <div class="stat-card"><div class="stat-value">${blunders}</div><div class="stat-label">Gaffes Syzygy</div></div>
+      </div>
+      <p class="empty-state" style="margin-top:var(--space-md)">L'analyse Syzygy se lance automatiquement lors de la revue d'une partie.</p>`;
+  }
+
+  async _renderPuzzleTab() {
+    const container = document.getElementById("puzzle-tab-container");
+    if (!container) return;
+    let due = [];
+    if (window.ChessDB) due = await ChessDB.getDueCards().catch(() => []);
+    if (!due.length)    due = SRS.getDue(SRS.load());
+    if (!due.length) {
+      container.innerHTML = `
+        <div class="empty-state">
+          <p>✅ Aucune révision en attente !</p>
+          <p style="margin-top:var(--space-sm);color:var(--text-muted)">Les puzzles sont créés automatiquement à partir de vos gaffes.</p>
+        </div>`;
+      return;
+    }
+    container.innerHTML = `
+      <div class="puzzle-tab-header">
+        <p><strong>${due.length}</strong> révision${due.length > 1 ? "s" : ""} en attente</p>
+        <button class="btn btn--accent" id="btn-start-puzzle">🧠 Commencer</button>
+      </div>
+      <div class="puzzle-list">
+        ${due.slice(0, 8).map((c, i) => `
+          <div class="puzzle-item">
+            <span class="puzzle-num">#${i + 1}</span>
+            <span class="puzzle-due">Due : ${c.due || "maintenant"}</span>
+          </div>`).join("")}
+      </div>`;
+    document.getElementById("btn-start-puzzle")?.addEventListener("click", () => {
+      this._startExercise();
+      this._showSection("section-board");
+    });
+  }
+
+  // ─── Auth (US 7) ────────────────────────────────────────────────
+
+  _renderAuthState() {
+    const el = document.getElementById("current-user");
+    if (!el) return;
+    const user = window.Auth?.getUser();
+    if (user) {
+      el.innerHTML = `<span class="auth-username">${user.username}</span>
+        <button class="btn btn--sm btn--ghost auth-logout-btn">Déconnexion</button>`;
+      el.querySelector(".auth-logout-btn")?.addEventListener("click", () => this._onAuthLogout());
+    } else {
+      el.innerHTML = `<button class="btn btn--sm btn--secondary" id="btn-open-auth">Connexion</button>`;
+      el.querySelector("#btn-open-auth")?.addEventListener("click", () => this._openAuthModal());
+    }
+  }
+
+  _openAuthModal() {
+    const modal = document.getElementById("auth-modal");
+    if (modal) modal.hidden = false;
+  }
+
+  _closeAuthModal() {
+    const modal = document.getElementById("auth-modal");
+    if (modal) modal.hidden = true;
+    ["login-error", "signup-error"].forEach((id) => {
+      const el = document.getElementById(id);
+      if (el) { el.textContent = ""; el.hidden = true; }
+    });
+  }
+
+  async _submitLogin(event) {
+    event.preventDefault();
+    if (!window.Auth) return;
+    const email    = document.getElementById("login-email")?.value.trim();
+    const password = document.getElementById("login-password")?.value;
+    try {
+      const data = await Auth.login(email, password);
+      this._onAuthSuccess(data.user);
+    } catch (err) {
+      const el = document.getElementById("login-error");
+      if (el) { el.textContent = err.message; el.hidden = false; }
+    }
+  }
+
+  async _submitSignup(event) {
+    event.preventDefault();
+    if (!window.Auth) return;
+    const email       = document.getElementById("signup-email")?.value.trim();
+    const username    = document.getElementById("signup-username")?.value.trim();
+    const chessUser   = document.getElementById("signup-chess-username")?.value.trim();
+    const password    = document.getElementById("signup-password")?.value;
+    try {
+      const data = await Auth.signup(email, username, password);
+      if (chessUser) {
+        Store.set(STORAGE_KEYS.USERNAME, chessUser);
+        this.username = chessUser;
+        const input = document.getElementById("username-input");
+        if (input) input.value = chessUser;
+      }
+      this._onAuthSuccess(data.user);
+    } catch (err) {
+      const el = document.getElementById("signup-error");
+      if (el) { el.textContent = err.message; el.hidden = false; }
+    }
+  }
+
+  _onAuthSuccess(user) {
+    this._closeAuthModal();
+    this._toast(`Bienvenue ${user.username} !`, "success");
+    this._renderAuthState();
+    // Auto-charger les parties Chess.com si un username est mémorisé
+    if (this.username && !this.recentGames.length) {
+      const input = document.getElementById("username-input");
+      if (input) input.value = this.username;
+      this._connectUser(this.username);
+    }
+  }
+
+  _onAuthLogout() {
+    window.Auth?.logout();
+    this._renderAuthState();
+    this._toast("Déconnecté", "info");
+  }
+
   // ─── Tabs Dashboard (US 2, 5, 6) ────────────────────────────────
 
   _openTabs() {
@@ -837,6 +1031,12 @@ class ChessImproverApp {
     }
     if (tabId === "tab-coach" && window.PersonalCoach) {
       PersonalCoach.render("coach-diagnosis2");
+    }
+    if (tabId === "tab-endgame") {
+      this._renderEndgameTab();
+    }
+    if (tabId === "tab-puzzle") {
+      this._renderPuzzleTab();
     }
   }
 
@@ -1078,4 +1278,11 @@ document.addEventListener("DOMContentLoaded", async () => {
     await ChessDB.migrateFromLocalStorage();
   }
   window.app = new ChessImproverApp();
+
+  // US 7 : restaurer la session auth si un token existe
+  if (window.Auth) {
+    const user = await Auth.autoConnect();
+    if (user) window.app._onAuthSuccess(user);
+    else      window.app._renderAuthState();
+  }
 });

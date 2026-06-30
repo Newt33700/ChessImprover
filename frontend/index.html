@@ -17,6 +17,51 @@
 <!-- Toasts -->
 <div id="toast-container" aria-live="polite"></div>
 
+<!-- ══════════════════ AUTH MODAL ══════════════════ -->
+<div id="auth-modal" class="auth-overlay" hidden aria-modal="true" role="dialog" aria-label="Authentification">
+  <div class="auth-card card">
+    <button class="auth-close btn-icon" aria-label="Fermer" onclick="window.app?._closeAuthModal()">✕</button>
+    <div class="auth-tabs">
+      <button class="auth-tab active" data-form="login-form">Connexion</button>
+      <button class="auth-tab" data-form="signup-form">Inscription</button>
+    </div>
+
+    <form id="login-form" class="auth-form" onsubmit="window.app?._submitLogin(event)">
+      <div class="form-group">
+        <label class="form-label" for="login-email">Email</label>
+        <input class="text-input" type="email" id="login-email" required autocomplete="email" placeholder="vous@exemple.com"/>
+      </div>
+      <div class="form-group">
+        <label class="form-label" for="login-password">Mot de passe</label>
+        <input class="text-input" type="password" id="login-password" required autocomplete="current-password" placeholder="••••••"/>
+      </div>
+      <button type="submit" class="btn btn--primary btn--full">Se connecter</button>
+      <p id="login-error" class="auth-error" hidden></p>
+    </form>
+
+    <form id="signup-form" class="auth-form" hidden onsubmit="window.app?._submitSignup(event)">
+      <div class="form-group">
+        <label class="form-label" for="signup-email">Email</label>
+        <input class="text-input" type="email" id="signup-email" required autocomplete="email" placeholder="vous@exemple.com"/>
+      </div>
+      <div class="form-group">
+        <label class="form-label" for="signup-username">Pseudo</label>
+        <input class="text-input" type="text" id="signup-username" required minlength="2" maxlength="32" autocomplete="username" placeholder="MonPseudo"/>
+      </div>
+      <div class="form-group">
+        <label class="form-label" for="signup-chess-username">Pseudo Chess.com <span class="form-label-hint">(optionnel)</span></label>
+        <input class="text-input" type="text" id="signup-chess-username" autocomplete="off" placeholder="VotrePseudoChessCom"/>
+      </div>
+      <div class="form-group">
+        <label class="form-label" for="signup-password">Mot de passe <span class="form-label-hint">(min. 6 car.)</span></label>
+        <input class="text-input" type="password" id="signup-password" required minlength="6" autocomplete="new-password" placeholder="••••••"/>
+      </div>
+      <button type="submit" class="btn btn--primary btn--full">Créer mon compte</button>
+      <p id="signup-error" class="auth-error" hidden></p>
+    </form>
+  </div>
+</div>
+
 <!-- Loading -->
 <div id="loading-overlay" hidden role="status">
   <div class="loading-spinner"></div>
@@ -103,6 +148,7 @@
         <button class="mode-pill active" onclick="window.app?.currentGame && window.app._enterReviewMode(window.app.currentGame)">Review</button>
         <button class="mode-pill" onclick="window.app?._startExercise()">Exercice</button>
         <button class="mode-pill" onclick="window.app?._showBilan()">Bilan</button>
+        <button class="mode-pill" onclick="window.app?._showEndgame()">Finales</button>
       </div>
       <div id="engine-eval" class="engine-eval">…</div>
     </div>
@@ -208,11 +254,23 @@
   <section id="section-tabs" class="section" hidden>
     <div class="tabs-header">
       <button class="tab-btn active" data-tab="tab-openings">Ouvertures</button>
+      <button class="tab-btn" data-tab="tab-endgame">Finales</button>
+      <button class="tab-btn" data-tab="tab-puzzle">Puzzle</button>
       <button class="tab-btn" data-tab="tab-stats">Statistiques</button>
       <button class="tab-btn" data-tab="tab-coach">Coach</button>
     </div>
     <div id="tab-openings" class="tab-content">
       <div id="openings-global-container">
+        <p class="empty-state">Chargement…</p>
+      </div>
+    </div>
+    <div id="tab-endgame" class="tab-content" hidden>
+      <div id="endgame-global-container">
+        <p class="empty-state">Analysez des parties pour voir vos statistiques de finale.</p>
+      </div>
+    </div>
+    <div id="tab-puzzle" class="tab-content" hidden>
+      <div id="puzzle-tab-container">
         <p class="empty-state">Chargement…</p>
       </div>
     </div>
@@ -252,6 +310,7 @@
 <script src="js/endgame_detector.js"></script>
 <script src="js/stats_dashboard.js"></script>
 <script src="js/personal_coach.js"></script>
+<script src="js/auth.js"></script>
 <script src="js/app.js"></script>
 </body>
 </html>
