@@ -28,6 +28,7 @@ from app.domain.models import (
 from app.domain.srs_engine import review_card
 from app.infrastructure.chess_com_client import ChessComClient
 from app.routers import auth as auth_router
+from app.routers import games as games_router
 from app.routers import sync as sync_router
 
 # ---------------------------------------------------------------------------
@@ -66,6 +67,7 @@ app.add_middleware(
 
 app.include_router(auth_router.router)
 app.include_router(sync_router.router)
+app.include_router(games_router.router)
 
 
 # ---------------------------------------------------------------------------

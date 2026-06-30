@@ -179,3 +179,65 @@ class SyncResponse(BaseModel):
     """Données fusionnées retournées par le serveur."""
     games: List[Dict[str, Any]] = Field(default_factory=list)
     srs_cards: List[Dict[str, Any]] = Field(default_factory=list)
+
+
+# ---------------------------------------------------------------------------
+# EPIC 1 — Ingestion async & persistance (US 1.1 / 1.2)
+# ---------------------------------------------------------------------------
+
+class GameStatus(str, Enum):
+    """Statut d'analyse d'une partie."""
+    PROCESSING = "processing"
+    COMPLETED = "completed"
+    FAILED = "failed"
+
+
+class AnalyzeGamesRequest(BaseModel):
+    """Demande d'analyse asynchrone (US 1.1) — PGN ou liste d'IDs de parties."""
+    pgn: Optional[str] = Field(None, description="PGN d'une partie à analyser")
+    game_ids: Optional[List[str]] = Field(None, description="IDs de parties déjà persistées à (ré)analyser")
+    user_id: Optional[str] = Field(None, description="Propriétaire de la partie")
+    user_color: str = Field("white", description="Couleur du joueur analysé (white|black)")
+    time_control: Optional[str] = Field(None, description="Cadence Chess.com (ex. '600', '180+2')")
+    evals: Optional[Dict[str, List[List[Any]]]] = Field(
+        None,
+        description="Évaluations multipv par FEN : {fen: [[uci, score_cp, is_mate, mate_in], ...]}",
+    )
+
+
+class AnalyzeAcceptedItem(BaseModel):
+    """Accusé de prise en charge d'une partie."""
+    game_id: str
+    status: GameStatus = GameStatus.PROCESSING
+
+
+class AnalyzeAccepted(BaseModel):
+    """Réponse 202 de POST /api/v1/games/analyze."""
+    accepted: List[AnalyzeAcceptedItem] = Field(default_factory=list)
+
+
+class GameMoveRecord(BaseModel):
+    """Métriques persistées d'un coup (US 1.2)."""
+    move_number: int
+    color: str
+    move_san: str
+    eval_before: Optional[int] = None
+    eval_after: Optional[int] = None
+    score_cp: Optional[int] = None
+    cpl: Optional[int] = None
+    is_mate: bool = False
+    mate_in: Optional[int] = None
+    phase: Phase = Phase.MIDDLEGAME
+    position_type: str = "neutral"
+
+
+class GameRecord(BaseModel):
+    """Ligne de la table `games`."""
+    id: str
+    user_id: Optional[str] = None
+    pgn: str
+    time_control: Optional[str] = None
+    user_color: str = "white"
+    result: Optional[str] = None
+    status: GameStatus = GameStatus.PROCESSING
+    created_at: str
