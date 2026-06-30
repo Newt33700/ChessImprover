@@ -91,12 +91,12 @@ ChessImprover/
 ├── .gitignore
 │
 ├── frontend/
-│   ├── index.html                      # SPA unique (sections/panels cachés/affichés)
+│   ├── index.html                      # SPA — layout deux-colonnes (dashboard + board), PGN modal overlay, logo SVG
 │   ├── css/style.css                   # Thème sombre, variables CSS, responsive
 │   ├── serve.py                        # Serveur HTTP dev (python3 serve.py)
 │   ├── package.json                    # Jest, fake-indexeddb, Stryker config
 │   ├── js/
-│   │   ├── app.js                      # Logique principale (~1000 lignes) — point d'entrée
+│   │   ├── app.js                      # Logique principale (~1450 lignes) — point d'entrée
 │   │   ├── board_manager.js            # Échiquier, Worker Stockfish, modes Review/Ghost/Exercice
 │   │   ├── engine_worker_wasm.js       # Web Worker UCI : WASM primary + asm.js fallback
 │   │   ├── stockfish.js                # Stockfish.js v10 asm.js (fallback local)
@@ -593,6 +593,94 @@ Auth.getUser()                          // → {id, email, username, chessUserna
 
 ---
 
+### 3.15 Refonte UX — Layout deux colonnes & nouvelles cartes dashboard
+
+**Fichiers :** `index.html`, `css/style.css`, `app.js`
+
+#### Structure de la page
+
+```
+<header>  logo SVG patte musclée + gamification bar + auth chip
+<main>
+  #section-dashboard
+    .dashboard-layout (CSS grid 380px | 1fr)
+      .dashboard-col (gauche)         .board-col (droite, sticky)
+        #card-review                    #board-col-empty  (placeholder)
+        #card-exercise                  #board-active     (section-board intégrée)
+        .stats-row-db (3 stats)
+        #card-bilan (Chart.js)
+        #card-finales
+  #pgn-modal (overlay fixe)
+  #auth-modal (overlay fixe)
+```
+
+#### Carte RÉVISION (`#card-review`)
+
+- **Prompt de connexion** (`#connect-prompt`) : affiché par défaut — champ pseudo + bouton "Charger" + lien "Coller un PGN"
+- **Aperçu dernière partie** (`#last-game-preview`) : affiché après `_renderReviewCard(games)` :
+  - `.match-card` : avatars ♔/♚, noms joueurs, barres de précision (blanc/vert), score (1–0 / 0–1 / ½–½)
+  - Bouton "Lancer la Révision" → `_enterReviewMode(this.currentGame)`
+  - Lien "Coller un PGN" → `_openPgnModal()`
+
+#### Carte EXERCICE (`#card-exercise`)
+
+- Affiche le nombre de révisions SRS en attente + badge thème + bouton "Résoudre"
+- Peuplée par `async _renderExerciseCard()` → lit ChessDB ou localStorage
+
+#### Stats inline (`.stats-row-db`)
+
+- 3 cases : PARTIES / PRÉCISION / GAFFES — mêmes IDs que l'ancien dashboard (`stat-games`, `stat-accuracy`, `stat-blunders`)
+
+#### Carte BILAN (`#card-bilan`)
+
+- Toggle **Progrès** / **Elo** → `_renderBilanChart(mode)`
+- Progrès : lignes Gaffes (#e04444) + Coups Manqués (#e09a44) sur les 10 dernières parties
+- Elo : ligne Elo estimé (#81b64c)
+- Instance Chart.js stockée dans `this._bilanChart` (détruite/recréée à chaque rendu)
+
+#### Carte FINALES (`#card-finales`)
+
+- Liste `.finale-list` avec items "Tour vs. Pion" et "Opposition de Rois" → `_showEndgame()`
+
+#### Colonne Board (droite)
+
+- `#board-col-empty` : placeholder affiché quand aucune partie n'est chargée
+- `#board-active` : contient tout l'ancien `section-board` (topbar + board-layout + analysis panels)
+- Transition : `_showBoardActive()` / `_goHome()`
+
+#### Modal PGN (`#pgn-modal`)
+
+- Overlay fixe (`position: fixed; inset: 0`) remplace `section-pgn`
+- `_openPgnModal()` / `_closePgnModal()` — clic sur l'overlay ou `✕` pour fermer
+- Après analyse réussie : `_closePgnModal()` + `_enterReviewMode()`
+
+#### Logo SVG (patte musclée)
+
+- SVG inline dans `<header>` : pion vert (#81b64c) avec bras fléchis, base (#4f7128), brillance blanche
+- Remplace l'emoji ♞ ; `aria-hidden="true"`, taille 32×36px
+
+#### Mobile (`max-width: 900px`)
+
+- `.board-col` masquée par défaut (`display: none`)
+- `body.board-active-mobile` → affiche `.board-col`, masque `.dashboard-col`
+- `.board-back-mobile` → `←` visible uniquement en mobile (appelle `_goHome()`)
+
+#### Nouvelles méthodes app.js
+
+```js
+_showBoardActive()        // Affiche #board-active, masque #board-col-empty, add class mobile
+_goHome()                 // Affiche #board-col-empty, masque #board-active, remove class mobile
+_openPgnModal()           // retire hidden sur #pgn-modal
+_closePgnModal()          // ajoute hidden sur #pgn-modal
+_renderReviewCard(games)  // peuple .match-card avec la dernière partie (noms, scores, précision)
+async _renderExerciseCard()   // peuple #exercise-preview-card (count SRS)
+_renderBilanChart(mode)   // crée Chart.js dans #bilan-canvas (mode 'progress' ou 'elo')
+```
+
+`_showSection(id)` est conservé mais redirige : `"section-board"` → `_showBoardActive()`, `"section-pgn"` → `_openPgnModal()`, `"section-dashboard"` → `_goHome()`.
+
+---
+
 ### 3.14 Système XP / Niveaux / Streaks
 
 **Fichier :** `app.js` — `XPSystem`, `StreakSystem`
@@ -835,14 +923,11 @@ Job 1 : test-frontend (ubuntu-latest, Node 20)
   → npm ci
   → npm test -- --coverage --coverageReporters=text --coverageReporters=lcov
   → upload artifact "frontend-coverage"
-
-Job 2 : deploy-frontend (main seulement, dépend de test-frontend)
-  → vercel pull --yes --environment=production --token=$VERCEL_TOKEN
-  → vercel build --prod --token=$VERCEL_TOKEN
-  → vercel deploy --prebuilt --prod --token=$VERCEL_TOKEN
 ```
 
-**Secrets requis :** `VERCEL_TOKEN`, `VERCEL_ORG_ID`, `VERCEL_PROJECT_ID`
+**Note déploiement :** le déploiement Vercel est géré par **l'intégration GitHub App Vercel** (configurée côté Vercel), pas par la CI GitHub Actions. Le job `deploy-frontend` a été supprimé car il nécessitait `VERCEL_TOKEN` non configuré — l'intégration native Vercel déclenche le déploiement directement sur push vers `main`.
+
+**Secrets requis :** aucun (tests uniquement)
 
 ### 7.2 Pipeline Backend → Render
 
@@ -937,6 +1022,13 @@ UNIQUE (user_id)
 | XP + niveaux + streaks | `app.js` | Persisté localStorage |
 | Stats dashboard basique | `app.js:_renderStats()` | Total parties, précision, gaffes |
 | Flip auto/manuel | `board_manager.js` | Joueur analysé en bas |
+| **Refonte UX — layout deux colonnes** | `index.html` + `style.css` + `app.js` | Dashboard gauche + board droit sticky |
+| **Logo SVG pion musclé** | `index.html` | SVG inline vert #81b64c |
+| **Carte RÉVISION + match card** | `app.js:_renderReviewCard()` | Dernière partie avec barres de précision |
+| **Carte EXERCICE SRS** | `app.js:_renderExerciseCard()` | Count révisions en attente + bouton |
+| **Bilan Chart dashboard** | `app.js:_renderBilanChart()` | Graphe Progrès/Elo sur les 10 dernières parties |
+| **Modal PGN overlay** | `index.html` + `app.js` | Remplace section-pgn ; `_openPgnModal()/_closePgnModal()` |
+| **Mobile board slide-in** | CSS `body.board-active-mobile` | `.dashboard-col` / `.board-col` swap via CSS class |
 
 ### ❌ Non câblé ou incomplet
 
@@ -977,6 +1069,10 @@ Actuellement `quality=5` ou `quality=1`. Ajouter `quality=3` si le joueur joue u
 ### 10.4 🟢 OPTIONNEL — Indicateur chargement livre d'ouvertures
 
 L'utilisateur ne voit pas que le livre ECO se télécharge (~2s). Ajouter un spinner ou un message dans l'UI pendant ce chargement.
+
+### 10.5 🟢 OPTIONNEL — Précisions Chess.com dans la carte RÉVISION
+
+L'API Chess.com retourne `g.accuracies.white/black`. Les afficher dans les barres de précision de la `.match-card` au lieu de `null` (les barres restent à 0% si Stockfish n'a pas encore analysé la partie).
 
 ---
 
