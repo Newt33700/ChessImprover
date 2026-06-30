@@ -38,7 +38,7 @@ Chess.com API  ──► Frontend JS
                        ├── US 4  : Puzzles SRS auto-générés (SM-2)
                        ├── US 5  : Dashboard Elo/Précision (lissage 5 parties)
                        ├── US 6  : Coach Personnel (arbre de décision offline)
-                       ├── US 7  : Auth JWT + sync cloud (auth.js ← non câblé UI)
+                       ├── US 7  : Auth JWT + sync cloud + modal auth UI câblée
                        ├──        Mode Review (navigation + badges)
                        ├──        Mode Ghost (replay blunder depuis n-3)
                        └──        Mode Exercice SRS + XP/Streaks
@@ -106,7 +106,7 @@ ChessImprover/
 │   │   ├── endgame_detector.js         # Détection finales + Syzygy Lichess (US 3)
 │   │   ├── stats_dashboard.js          # Dashboard Elo/Précision lissé (US 5)
 │   │   ├── personal_coach.js           # Coach arbre de décision offline (US 6)
-│   │   └── auth.js                     # Auth JWT frontend (US 7) ⚠ non chargé dans index.html
+│   │   └── auth.js                     # Auth JWT frontend (US 7) — chargé dans index.html
 │   └── tests/
 │       ├── setup.js                    # Mocks globaux : IDBFactory, localStorage, Chart, document
 │       ├── db.test.js                  # Tests IndexedDB (ChessDB)
@@ -287,7 +287,7 @@ OpeningsStats.render(containerId)          // Lit IDB/localStorage et peuple le 
 ### 3.4 US 3 — Finales & Syzygy Tablebases
 
 **Fichier :** `js/endgame_detector.js`  
-**Câblage :** module implémenté et chargé dans `index.html` — `EndgameDetector.analyzeGame()` **non appelé** dans `app.js` ❌
+**Câblage :** ✅ `EndgameDetector.analyzeGame()` appelé depuis `app.js:_runEndgameAnalysis()` au démarrage de `_enterReviewMode()`. Résultats peuplent `#panel-endgame` et `#endgame-stats-container` (onglet Finales). `game.endgame_accuracy` sauvegardé dans IndexedDB.
 
 **Détection de la phase de finale :**
 ```
@@ -451,7 +451,7 @@ Joueur se trompe → quality=1
 - Succès si `playerEval > 0` (position gagnante pour le joueur)
 - Récompense : `XP_PER_EXERCISE × 2` + streak
 
-**Limitation connue :** `playerColor` hardcodé à `"w"` dans `app.js:_startGhost()`. Le mode ne fonctionne pas si le joueur est Noir.
+**Correction appliquée :** `playerColor` utilisait `"w"` hardcodé dans `app.js:_startGhost()`. Corrigé en `this.playerColor || "w"` — le mode fonctionne désormais pour les Blancs et les Noirs.
 
 ---
 
@@ -537,12 +537,46 @@ PersonalCoach.render(containerId)             // Lit IDB/localStorage et peuple 
 
 ---
 
-### 3.13 US 7 — Auth Frontend
+### 3.13 US 7 — Auth Frontend + UI Modal
 
-**Fichier :** `js/auth.js`  
-**Statut :** module implémenté, **non chargé dans `index.html`**, **pas de UI d'auth dans le HTML** ❌
+**Fichiers :** `js/auth.js` (logique), `index.html` (modal), `js/app.js` (câblage)  
+**Statut :** ✅ chargé dans `index.html`, modal login/signup câblée, auto-connect au boot
 
-**API publique :**
+#### Modal d'authentification (`index.html`)
+
+- Overlay fixe `#auth-modal.auth-overlay` : apparaît par-dessus toute section
+- Deux onglets : **Connexion** (email + mot de passe) et **Inscription** (email + pseudo + pseudo Chess.com optionnel + mot de passe)
+- Fermeture : bouton ✕ ou clic sur le fond de l'overlay
+- Formulaires : `onsubmit` → `window.app._submitLogin(event)` / `_submitSignup(event)`
+
+#### Méthodes app.js câblées
+
+```js
+_renderAuthState()          // Peuple #current-user : chip username + bouton Déconnexion
+_openAuthModal()            // Retire l'attribut hidden sur #auth-modal
+_closeAuthModal()           // Cache #auth-modal + réinitialise messages d'erreur
+async _submitLogin(event)   // Appelle Auth.login() → _onAuthSuccess() ou affiche l'erreur
+async _submitSignup(event)  // Appelle Auth.signup() → _onAuthSuccess() ou affiche l'erreur
+_onAuthSuccess(user)        // Ferme modal, toast bienvenue, renderAuthState, auto-connect Chess.com
+_onAuthLogout()             // Auth.logout() + renderAuthState()
+```
+
+#### Auto-connect Chess.com depuis profil
+
+Au démarrage, si `Auth.autoConnect()` retourne un utilisateur avec `chessUsername` enregistré ET que `this.recentGames` est vide, `_onAuthSuccess()` appelle automatiquement `_connectUser(chessUsername)` pour charger les parties sans interaction.
+
+`_connectUser(forceUsername?)` accepte un paramètre optionnel pour les appels programmatiques (contourne l'input DOM).
+
+#### Boot
+
+```js
+const user = await Auth.autoConnect();
+if (user) window.app._onAuthSuccess(user);
+else      window.app._renderAuthState();   // affiche bouton "Connexion"
+```
+
+#### API publique `Auth` (`js/auth.js`)
+
 ```js
 Auth.signup(email, username, password)  // POST /auth/signup → sauvegarde token + user
 Auth.login(email, password)             // POST /auth/login  → sauvegarde token + user
@@ -551,7 +585,7 @@ Auth.autoConnect()                      // GET /auth/me → valide le token au r
 Auth.syncData(games, srsCards)          // POST /sync → stratégie Client Wins
 Auth.isLoggedIn()                       // → boolean
 Auth.getToken()                         // → string | null
-Auth.getUser()                          // → {id, email, username} | null
+Auth.getUser()                          // → {id, email, username, chessUsername} | null
 ```
 
 **Stockage :** `localStorage["ci_jwt"]` (token), `localStorage["ci_user"]` (profil JSON).  
@@ -894,7 +928,11 @@ UNIQUE (user_id)
 | **Dashboard Stats Elo/Précision** (US 5) | `stats_dashboard.js` | Câblé dans `_switchTab("tab-stats")` |
 | **Coach Personnel** (US 6) | `personal_coach.js` | Câblé dans `_switchTab("tab-coach")` |
 | Backend auth/sync (US 7) | `routers/auth.py` + `routers/sync.py` | API opérationnelle |
-| Mode Ghost | `board_manager.js` + `app.js` | Replay depuis n-3 (bug Noirs, voir §9) |
+| **Analyse Finale** (US 3) | `endgame_detector.js` + `app.js` | Câblé via `_runEndgameAnalysis()` dans `_enterReviewMode()` |
+| **UI Auth — Modal login/signup** (US 7) | `auth.js` + `index.html` + `app.js` | Modal overlay câblée, `Auth.autoConnect()` au boot |
+| **Auto-connect Chess.com depuis profil** (US 7) | `app.js:_onAuthSuccess()` | Appelle `_connectUser(username)` après login |
+| **Ghost playerColor** | `app.js:_startGhost()` | Corrigé : `this.playerColor \|\| "w"` au lieu de `"w"` hardcodé |
+| Mode Ghost | `board_manager.js` + `app.js` | Replay depuis n-3 (fonctionne Blancs + Noirs) |
 | Mode Review | `board_manager.js` + `app.js` | Navigation + badges temps réel |
 | XP + niveaux + streaks | `app.js` | Persisté localStorage |
 | Stats dashboard basique | `app.js:_renderStats()` | Total parties, précision, gaffes |
@@ -904,97 +942,39 @@ UNIQUE (user_id)
 
 | Fonctionnalité | Problème | Priorité |
 |---|---|---|
-| **EndgameDetector côté app.js** (US 3) | `EndgameDetector.analyzeGame()` jamais appelé dans `app.js`. Le panel `#panel-endgame` est en HTML mais jamais peuplé. | 🔴 Critique |
-| **auth.js dans index.html** (US 7) | `auth.js` n'est pas chargé dans les scripts de `index.html`. Pas de balise `<script src="js/auth.js">`. | 🔴 Critique |
-| **UI Auth** (US 7) | Pas de formulaire d'inscription/connexion dans `index.html`. Le div `#current-user` dans le header est vide. | 🔴 Critique |
 | **Connexion Supabase réelle** (US 7) | `db_client.py` utilise un dict in-memory. La connexion à Supabase via `DATABASE_URL` n'est pas implémentée. | 🔴 Critique |
-| **Ghost côté Noir** | `playerColor` hardcodé `"w"` dans `app.js:_startGhost()` | 🟡 Important |
 | **Cache livre d'ouvertures** | Re-téléchargé à chaque refresh (~5 req. réseau, ~2s de parsing) | 🟡 Important |
-| **`game.endgame_accuracy`** | La précision en finale n'est jamais écrite dans l'objet game (EndgameDetector non câblé). PersonalCoach ne reçoit donc jamais de données finales. | 🟡 Important |
 | **Qualité SRS nuancée** | Seul `quality=5` (succès) et `quality=1` (raté) sont utilisés. `quality=3` (correct mais non optimal) n'est jamais émis. | 🟢 Optionnel |
 
 ---
 
 ## 9. Code mort & non câblé
 
-### 9.1 `frontend/js/auth.js` — chargé nulle part
-
-Le fichier est complet et testé mais absent de `index.html`. Il faut :
-1. Ajouter `<script src="js/auth.js"></script>` avant `app.js`
-2. Créer une UI de connexion/inscription (modal ou section dédiée)
-3. Appeler `Auth.autoConnect()` au démarrage dans `app.js`
-4. Appeler `Auth.syncData(games, cards)` après chaque analyse
-
-### 9.2 `backend/app/routers/sync.py` + `auth.py` — non atteints depuis le frontend
-
-Le backend tourne et ses tests passent, mais aucun appel HTTP n'est émis depuis `app.js` ou `board_manager.js` (puisque `auth.js` n'est pas chargé).
-
-### 9.3 `EndgameDetector.analyzeGame()` — jamais appelé
-
-`endgame_detector.js` est chargé dans `index.html` et `window.EndgameDetector` est défini. Mais dans `app.js`, il n'y a aucun appel à `EndgameDetector.analyzeGame()` ni à `EndgameDetector.renderStats()`. Le panel HTML `#panel-endgame` reste toujours vide avec son texte par défaut.
-
-### 9.4 `/analyze`, `/games/{username}`, `/srs/review/full` — backend non utilisé
+### 9.1 `/analyze`, `/games/{username}`, `/srs/review/full` — backend non utilisé
 
 Le frontend appelle Chess.com directement (CORS autorisé). L'analyse Stockfish est côté client. Ces routes backend fonctionnent mais ne sont jamais appelées par le frontend actuel.
 
-### 9.5 `#current-user` dans le header HTML — toujours vide
+### 9.2 `game.endgame_accuracy` — alimentation différée
 
-Le div `<div id="current-user"></div>` dans le header est présent dans `index.html` mais jamais peuplé. Aucun code dans `app.js` ne le renseigne.
-
-### 9.6 `game.endgame_accuracy` — champ jamais écrit
-
-Le `PersonalCoach` lit `game.endgame_accuracy` pour évaluer la technique de finale, mais ce champ n'est jamais calculé ni sauvegardé dans l'objet game (EndgameDetector non câblé). La règle `avgEndgameAcc < 60%` du coach ne se déclenche donc jamais.
+Le `PersonalCoach` lit `game.endgame_accuracy` pour évaluer la technique de finale. Ce champ est désormais calculé par `_runEndgameAnalysis()` et sauvegardé dans IndexedDB, mais uniquement pour les parties analysées *après* le câblage de l'EndgameDetector (commit `96e223c`). Les parties déjà sauvegardées avant ce commit auront `endgame_accuracy = undefined` et la règle coach `avgEndgameAcc < 60%` ne se déclenchera pas pour elles.
 
 ---
 
 ## 10. Ce qui reste à développer
 
-### 10.1 🔴 CRITIQUE — Câbler auth.js dans index.html + UI d'auth
-
-**Étapes :**
-1. Ajouter `<script src="js/auth.js"></script>` dans `index.html`
-2. Créer un modal ou section HTML avec formulaires signup/login
-3. Dans `app.js` au démarrage : `await Auth.autoConnect()` → remplir `#current-user`
-4. Après analyse complète : `Auth.syncData(allGames, allCards)` (optionnel si connecté)
-5. Bouton logout dans le header
-
-### 10.2 🔴 CRITIQUE — Câbler EndgameDetector dans app.js
-
-**Dans `_enterReviewMode()` ou après analyse complète :**
-```js
-if (window.EndgameDetector && this.currentGame) {
-  const results = await EndgameDetector.analyzeGame(
-    this.currentGame.moves,
-    this.currentGame.playerColor
-  );
-  this.currentGame.endgame_accuracy = results.endgameAvgAccuracy;
-  EndgameDetector.renderStats(results, "endgame-stats-container");
-  await ChessDB.saveGame(this.currentGame);
-}
-```
-
-### 10.3 🔴 CRITIQUE — Connexion Supabase réelle
+### 10.1 🔴 CRITIQUE — Connexion Supabase réelle
 
 **Dans `db_client.py` :** implémenter la connexion PostgreSQL via `psycopg2` ou `asyncpg` quand `settings.database_url` est défini. L'interface (`find_user_by_email`, `create_user`, etc.) reste identique — seul le backend de stockage change.
 
-### 10.4 🟡 IMPORTANT — Corriger Ghost côté Noir
-
-**Fichier :** `app.js`, fonction `_startGhost()`  
-Remplacer `playerColor = "w"` hardcodé par `this.currentGame?.playerColor || "w"`.
-
-### 10.5 🟡 IMPORTANT — Cache du livre d'ouvertures
+### 10.2 🟡 IMPORTANT — Cache du livre d'ouvertures
 
 Sauvegarder le `Set` d'EPD dans IndexedDB (`openings_cache`) avec un TTL de 7 jours. Évite 5 requêtes réseau et ~2s de parsing chess.js à chaque refresh.
 
-### 10.6 🟡 IMPORTANT — Peuplement de `game.endgame_accuracy`
-
-Dépend de [10.2]. Une fois EndgameDetector câblé, sauvegarder `results.endgameAvgAccuracy` dans `game.endgame_accuracy` → PersonalCoach peut évaluer la technique de finale.
-
-### 10.7 🟢 OPTIONNEL — Qualité SRS nuancée
+### 10.3 🟢 OPTIONNEL — Qualité SRS nuancée
 
 Actuellement `quality=5` ou `quality=1`. Ajouter `quality=3` si le joueur joue un coup différent mais que la position reste avantageuse (`evalCp > 0` après le coup joué).
 
-### 10.8 🟢 OPTIONNEL — Indicateur chargement livre d'ouvertures
+### 10.4 🟢 OPTIONNEL — Indicateur chargement livre d'ouvertures
 
 L'utilisateur ne voit pas que le livre ECO se télécharge (~2s). Ajouter un spinner ou un message dans l'UI pendant ce chargement.
 
