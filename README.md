@@ -124,13 +124,18 @@ ChessImprover/
 │       ├── main.py                     # Routes FastAPI + inclusion routers auth/sync
 │       ├── config.py                   # Settings Pydantic (jwt_secret, allowed_origins, etc.)
 │       ├── domain/
-│       │   ├── models.py               # Pydantic models (Classification, SRSCard, UserCreate, AuthResponse…)
+│       │   ├── models.py               # Pydantic models (Classification, Phase, SRSCard, UserCreate…)
 │       │   ├── auth.py                 # hash_password, verify_password, create_token, decode_token (US 7)
 │       │   ├── analyzer.py             # Analyse géométrique PGN (blunders, fourchettes, zeitnot)
 │       │   ├── elo_calculator.py       # Formules Elo/précision (côté backend)
+│       │   ├── phases.py               # US 2.1 : segmentation Ouverture/Milieu/Finale
+│       │   ├── acpl.py                 # US 2.2 : perte de centipions (CPL/ACPL) par phase
+│       │   ├── virtual_elo.py          # US 3.1 : mapping ACPL → Elo virtuel + bonus cadence
+│       │   ├── move_class.py           # US 3.2 : tactique vs stratégie + Elos virtuels
 │       │   └── srs_engine.py           # Algorithme SM-2 côté backend
 │       ├── infrastructure/
 │       │   ├── chess_com_client.py     # Proxy httpx vers Chess.com API
+│       │   ├── engine.py               # EngineProvider (évals client / Stockfish natif) — EPIC 2
 │       │   └── db_client.py            # Store in-memory (dev/test) + interface Supabase (US 7)
 │       ├── routers/
 │       │   ├── auth.py                 # POST /auth/signup /auth/login GET /auth/me (US 7)
@@ -139,6 +144,11 @@ ChessImprover/
 │       │   ├── test_auth.py            # 24 TUs auth : hash, JWT, signup, login, me, sync
 │       │   ├── test_analyzer.py
 │       │   ├── test_elo.py
+│       │   ├── test_phases.py          # US 2.1
+│       │   ├── test_acpl.py            # US 2.2
+│       │   ├── test_engine.py          # Abstraction moteur
+│       │   ├── test_virtual_elo.py     # US 3.1
+│       │   ├── test_move_class.py      # US 3.2
 │       │   └── test_srs.py
 │       └── mutants/                    # Mutation testing mutmut
 │
@@ -765,6 +775,26 @@ _renderBilanChart(mode)   // crée Chart.js dans #bilan-canvas (mode 'progress' 
 - Signature en base64url sans padding (`=`)
 - `hmac.compare_digest()` pour la comparaison à temps constant (résistance timing attacks)
 
+### 4.5 Moteur de Statistiques Avancées (EPIC 2 & 3 — cœur algorithmique)
+
+Modules **purs** (couche domaine), entièrement testés, indépendants de l'infrastructure. La source des évaluations Stockfish (profondeur 14) est abstraite : ils consomment des centipions déjà calculés, du point de vue du camp au trait.
+
+**`infrastructure/engine.py` — `EngineProvider` :**
+- `MoveScore` (coup + score cp + mat) et `PositionEval` (lignes multipv triées meilleur→pire ; `.best`, `.score_of(uci)`).
+- `ClientProvidedEngine(evals)` : relit les évaluations calculées par le Stockfish WASM du navigateur (actif aujourd'hui). `analyse(fen, multipv)` tronque le multipv ; lève `KeyError` si la position est absente.
+- `NativeStockfishEngine(binary_path, depth=14)` : appelle un binaire Stockfish natif via `chess.engine` (import paresseux) — branchable sur Render via `STOCKFISH_PATH`.
+- `ENGINE_DEPTH = 14`.
+
+**`domain/phases.py` (US 2.1)** — API : `total_material_points(board)`, `is_endgame(board)`, `opening_end_ply(board, moves, in_book=None)`, `segment_phases(board, moves, in_book=None)`, `segment_pgn(pgn, in_book=None)`. Renvoie une `Phase` (`opening`/`middlegame`/`endgame`) par demi-coup.
+
+**`domain/acpl.py` (US 2.2)** — API : `centipawn_loss(best, played)` (plancher 0, plafond `CPL_CAP=400`), `PhasedMove(phase, cpl)`, `average_cpl(list)`, `acpl_by_phase(moves)` (dict des 3 phases, `None` si vide), `overall_acpl(moves)`.
+
+**`domain/virtual_elo.py` (US 3.1)** — API : `acpl_to_elo_base(acpl)` (interpolation des ancres, bornes 600–2800), `cadence_bonus(time_class)`, `acpl_to_elo(acpl, time_class=None)` (bornes finales 600–3000).
+
+**`domain/move_class.py` (US 3.2)** — API : `classify_position(line_scores) → PositionType` (`tactical`/`strategic`/`neutral`), `tactic_outcome(played_cpl) → TacticOutcome`, `tactical_success_ratio(outcomes)`, `tactical_elo(ratio)`, `strategic_elo(calm_cpls, time_class=None)`.
+
+> **Câblage :** ❌ ces modules ne sont pas encore exposés via une route ni appelés par le frontend (voir §9). Ils constituent le socle des US 1.x (ingestion async + persistance `game_moves`) et 4.x (matrice UI) à venir.
+
 ---
 
 ## 5. Règles métier
@@ -855,6 +885,53 @@ token   = f"{header}.{payload}.{base64url(sig)}"
 
 Validation : vérification signature en temps constant (`compare_digest`) + vérification `exp`.
 
+### 5.9 Segmentation des phases (US 2.1)
+
+Valeurs matérielles (points, Rois exclus) : Pion=1, Cavalier=3, Fou=3, Tour=5, Dame=9.
+
+```
+Ouverture  : plies [0, fin_ouverture[  où fin_ouverture = min(sortie_du_livre, 30)
+Finale     : (aucune Dame ET matériel_total ≤ 16)
+             OU (Dames présentes ET chaque camp ≤ 1 pièce lourde/mineure hors Dame)
+             → verrouillée (latch) une fois déclenchée
+Milieu     : tout le reste, entre ouverture et finale
+```
+
+### 5.10 Perte de centipions / ACPL (US 2.2)
+
+```
+CPL  = clamp(Eval_meilleurCoup − Eval_coupJoué, 0, 400)   # POV camp au trait
+ACPL = moyenne(CPL), calculée séparément par phase
+```
+
+Le plafond à 400 cp empêche une gaffe massive de ruiner la moyenne.
+
+### 5.11 Mapping ACPL → Elo virtuel (US 3.1)
+
+Interpolation linéaire des ancres empiriques, puis bonus de cadence :
+
+| ACPL | ≤10 | 20 | 35 | 50 | 75 | ≥110 |
+|------|-----|-----|-----|-----|-----|------|
+| Elo  | 2800 | 2400 | 1900 | 1500 | 1100 | 600 |
+
+```
+Elo_virtuel = clamp( base(ACPL) + bonus_cadence , 600 , 3000 )
+bonus_cadence : Bullet +200 · Blitz +100 · Rapide/Daily +0
+```
+
+### 5.12 Tactique vs Stratégie (US 3.2)
+
+```
+Tactique   : (best − 2e) > 150 cp        # un seul coup critique
+   → joué = best        → Réussie
+   → perte > 100 cp     → Loupée
+   → sinon              → Partielle
+   Elo_tactique = clamp(600 + ratio_réussite × 2400, 600, 3000)
+
+Stratégie  : (best − 3e) < 40 cp         # position calme
+   Elo_stratégie = mapping_US3.1( ACPL des positions calmes )
+```
+
 ---
 
 ## 6. Tests & Qualité
@@ -908,7 +985,14 @@ JWT_SECRET=ci-test-secret pytest tests/ -v
 | `test_auth.py` | TestPasswordHashing (5), TestJWT (4), TestSignup (4), TestLogin (4), TestMe (3), TestSync (4) | **24 TUs** |
 | `test_analyzer.py` | — | Analyse géométrique |
 | `test_elo.py` | — | Formules Elo/précision backend |
+| `test_phases.py` | Constantes, Material, IsEndgame, OpeningEndPly, SegmentPhases, SegmentPgn | US 2.1 |
+| `test_acpl.py` | CentipawnLoss, AverageCpl, AcplByPhase, OverallAcpl | US 2.2 |
+| `test_engine.py` | PositionEval, ClientProvidedEngine, NativeStockfishEngine | Abstraction moteur |
+| `test_virtual_elo.py` | Anchors, Interpolation, CadenceBonus, AcplToElo | US 3.1 |
+| `test_move_class.py` | ClassifyPosition, TacticOutcome, SuccessRatio, TacticalElo, StrategicElo | US 3.2 |
 | `test_srs.py` | — | SM-2 backend |
+
+**Couverture backend :** 272 TUs au total, couverture globale **85 %** ; modules du cœur Stats Avancées à 97–100 % (`acpl`, `move_class`, `virtual_elo`, `engine`, `models` à 100 %, `phases` 97 %).
 
 **Architecture de test `test_auth.py` :**
 - App de test minimale (`FastAPI()` + routers auth/sync uniquement) pour éviter la dépendance `python-chess`
@@ -1038,13 +1122,14 @@ UNIQUE (user_id)
 | **Carte EXERCICE SRS** | `app.js:_renderExerciseCard()` | Count révisions en attente + bouton |
 | **Bilan Chart dashboard** | `app.js:_renderBilanChart()` | Graphe Progrès/Elo sur les 10 dernières parties |
 | **Modal PGN overlay** | `index.html` + `app.js` | Remplace section-pgn ; `_openPgnModal()/_closePgnModal()` |
-| **Mobile board slide-in** | CSS `body.board-active-mobile` | `.dashboard-col` / `.board-col` swap via CSS class |
+| **Mobile / bascule Review** | CSS `body.board-active` | `.dash-grid` masquée / `.board-col` plein écran via classe `body` |
 
 ### ❌ Non câblé ou incomplet
 
 | Fonctionnalité | Problème | Priorité |
 |---|---|---|
 | **Connexion Supabase réelle** (US 7) | `db_client.py` utilise un dict in-memory. La connexion à Supabase via `DATABASE_URL` n'est pas implémentée. | 🔴 Critique |
+| **Moteur Stats Avancées (EPIC 2 & 3)** | `phases.py`, `acpl.py`, `virtual_elo.py`, `move_class.py`, `engine.py` sont implémentés et testés mais **non exposés** : aucune route ne les appelle, aucune table `game_moves` ne les persiste, le frontend ne les consomme pas. | 🔴 Critique (prochaine étape) |
 | **Cache livre d'ouvertures** | Re-téléchargé à chaque refresh (~5 req. réseau, ~2s de parsing) | 🟡 Important |
 | **Qualité SRS nuancée** | Seul `quality=5` (succès) et `quality=1` (raté) sont utilisés. `quality=3` (correct mais non optimal) n'est jamais émis. | 🟢 Optionnel |
 
@@ -1067,6 +1152,14 @@ Le `PersonalCoach` lit `game.endgame_accuracy` pour évaluer la technique de fin
 ### 10.1 🔴 CRITIQUE — Connexion Supabase réelle
 
 **Dans `db_client.py` :** implémenter la connexion PostgreSQL via `psycopg2` ou `asyncpg` quand `settings.database_url` est défini. L'interface (`find_user_by_email`, `create_user`, etc.) reste identique — seul le backend de stockage change.
+
+### 10.1bis 🔴 CRITIQUE — Brancher le moteur Stats Avancées (EPIC 1 & 4)
+
+Le cœur algorithmique (EPIC 2 & 3) est prêt et testé mais isolé. Reste à :
+- **US 1.1** : `POST /api/v1/games/analyze` → crée une ligne `games` (`status='processing'`), répond `202` + UUID, lance une `BackgroundTask` qui orchestre `segment_phases` → `centipawn_loss`/`acpl_by_phase` → `virtual_elo`/`move_class`.
+- **US 1.2** : table Supabase `game_moves` (bulk insert des métriques par coup), passage `status='completed'`.
+- **US 4.1** : endpoint d'agrégation `GET /api/v1/stats/summary?period=30d` (zéro calcul client) + matrice UI mobile (lignes Bullet/Blitz/Rapide × colonnes Classement/Ouvertures/Tactique/Stratégie/Finales).
+- **US 4.2** : vues détaillées par onglet (Ouvertures top 3 ECO, taux de réussite tactique, taux de conversion/résilience en finale).
 
 ### 10.2 🟡 IMPORTANT — Cache du livre d'ouvertures
 

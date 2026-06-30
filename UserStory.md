@@ -255,3 +255,61 @@ En tant qu'équipe, nous voulons que chaque modification de `supabase/migrations
 - Secrets requis : `SUPABASE_ACCESS_TOKEN`, `SUPABASE_DB_PASSWORD`, `SUPABASE_PROJECT_ID`.
 
 **Statut :** ✅ Implémenté (`.github/workflows/deploy-database.yml`)
+
+---
+
+# EPIC : Statistiques Avancées (type Chess.com Premium)
+
+> Fonctionnalité multi-US. Architecture : Frontend (Vercel) · Backend (Render/Python) · BDD (Supabase/Postgres).
+> Le cœur algorithmique (EPIC 2 & 3) est implémenté en premier : modules Python purs, testés à fond, indépendants de l'infrastructure. EPIC 1 (ingestion async + schéma Supabase) et EPIC 4 (matrice UI mobile) restent à faire.
+
+## US 2.1 : Segmentation automatique des phases de jeu
+
+**Description :** diviser une partie en Ouverture / Milieu de jeu / Finale pour isoler les performances par phase.
+
+**Règles de gestion :**
+- Ouverture : du coup 1 jusqu'à la sortie du livre d'ouvertures (détecteur injectable `in_book`), limite dure au coup 15 (30 demi-coups).
+- Finale (matériel cumulé des deux camps, Rois exclus, Pion=1/Cavalier=3/Fou=3/Tour=5/Dame=9) :
+  - aucune Dame ET matériel total ≤ 16 points, **OU**
+  - Dames présentes mais ≤ 1 pièce lourde/mineure par camp en plus de la Dame.
+  - Une fois déclenchée, la finale est verrouillée (latch).
+- Milieu de jeu : entre la fin de l'ouverture et le début de la finale.
+
+**Statut :** ✅ Implémenté (`backend/app/domain/phases.py`, `tests/test_phases.py`)
+
+## US 2.2 : Calcul de la perte de centipions (ACPL) calibrée
+
+**Description :** évaluer chaque coup (Stockfish profondeur 14) et calculer la perte de centipions, agrégée en ACPL par phase.
+
+**Règles de gestion :**
+- `CPL = Eval_meilleurCoup − Eval_coupJoué` (point de vue du camp au trait), plancher 0.
+- Plafonnement des gaffes : CPL plafonné à 400 centipions.
+- ACPL = moyenne des CPL, calculée séparément par phase.
+- Source des évaluations abstraite derrière `EngineProvider` : implémentation « évals fournies par le client » active ; implémentation « Stockfish natif Render » branchable.
+
+**Statut :** ✅ Implémenté (`backend/app/domain/acpl.py`, `backend/app/infrastructure/engine.py`, `tests/test_acpl.py`, `tests/test_engine.py`)
+
+## US 3.1 : Mapping ACPL → Classement Elo virtuel
+
+**Description :** transformer l'ACPL en Elo virtuel compréhensible (« vous avez joué la finale comme un 2100 »).
+
+**Règles de gestion :**
+- Échelle empirique interpolée linéairement : ACPL ≤10→2800, 20→2400, 35→1900, 50→1500, 75→1100, ≥110→600.
+- Bonus de cadence : Bullet +200, Blitz +100, Rapide/Daily +0 (à ACPL égal).
+- Bornes finales [600, 3000].
+
+**Statut :** ✅ Implémenté (`backend/app/domain/virtual_elo.py`, `tests/test_virtual_elo.py`)
+
+## US 3.2 : Isolation Tactique vs Stratégie
+
+**Description :** classer chaque position en « Tactique » ou « Stratégie » et en déduire des Elo virtuels distincts.
+
+**Règles de gestion :**
+- Tactique : 2ᵉ meilleur coup perd > 150 cp vs le meilleur. Meilleur coup joué → réussie ; perte > 100 cp → loupée. Elo tactique proportionnel au ratio de réussite (mapping linéaire 600→3000).
+- Stratégie : top 3 coups séparés de < 40 cp (position calme). Elo stratégie = ACPL exclusif des positions calmes mappé via US 3.1.
+
+**Statut :** ✅ Implémenté (`backend/app/domain/move_class.py`, `tests/test_move_class.py`)
+
+## US 1.1 / 1.2 / 4.1 / 4.2 : Ingestion async, persistance, matrice UI
+
+**Statut :** ⏳ À faire (prochaine itération) — endpoints async `POST /api/v1/games/analyze` (202), tables Supabase `games`/`game_moves`, endpoint d'agrégation `GET /api/v1/stats/summary`, matrice UI mobile + vues détaillées.
