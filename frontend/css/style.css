@@ -1120,6 +1120,433 @@ input[type="text"]::placeholder { color: var(--text-muted); }
 }
 
 /* --------------------------------------------------------------------------
+   Logo SVG pawn
+-------------------------------------------------------------------------- */
+.logo-pawn {
+  width: 32px;
+  height: 36px;
+  flex-shrink: 0;
+}
+
+/* --------------------------------------------------------------------------
+   Dashboard – two-column layout
+-------------------------------------------------------------------------- */
+.dashboard-layout {
+  display: grid;
+  grid-template-columns: 380px 1fr;
+  gap: var(--space-lg);
+  align-items: start;
+  max-width: 1400px;
+  margin: 0 auto;
+  padding: var(--space-md) var(--space-lg);
+}
+
+.dashboard-col {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+  min-width: 0;
+}
+
+/* --------------------------------------------------------------------------
+   Dashboard cards
+-------------------------------------------------------------------------- */
+.db-card {
+  background: var(--bg-800);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+
+.db-card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-700);
+}
+
+.db-card-title {
+  font-family: var(--font-mono);
+  font-size: 0.7rem;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  color: var(--text-secondary);
+  text-transform: uppercase;
+}
+
+.db-card-body {
+  padding: var(--space-md);
+}
+
+/* --------------------------------------------------------------------------
+   Connect prompt
+-------------------------------------------------------------------------- */
+.connect-prompt p {
+  font-size: 0.88rem;
+  color: var(--text-secondary);
+  margin-bottom: var(--space-md);
+  line-height: 1.5;
+}
+
+.db-link-row {
+  text-align: center;
+  margin-top: var(--space-sm);
+}
+
+.db-link {
+  background: none;
+  border: none;
+  color: var(--accent);
+  font-size: 0.85rem;
+  cursor: pointer;
+  padding: 4px 0;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.db-link:hover { color: var(--accent-hover); }
+
+/* --------------------------------------------------------------------------
+   Match card (last game preview)
+-------------------------------------------------------------------------- */
+.match-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+}
+
+.match-players-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+}
+
+.match-player {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.match-avatar {
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  background: var(--bg-600);
+  border: 2px solid var(--border);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1.4rem;
+  flex-shrink: 0;
+}
+
+.match-player-name {
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
+}
+
+.match-prec-row {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.match-prec-bar-track {
+  flex: 1;
+  height: 4px;
+  background: var(--bg-500);
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.match-prec-bar-fill {
+  height: 100%;
+  border-radius: 2px;
+  transition: width 0.4s ease;
+}
+
+.match-prec-bar--white { background: #fff; }
+.match-prec-bar--black { background: var(--accent); }
+
+.match-prec-value {
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  color: var(--text-secondary);
+  min-width: 28px;
+  text-align: right;
+}
+
+.match-score {
+  font-family: var(--font-mono);
+  font-size: 1.1rem;
+  font-weight: 700;
+  color: var(--text);
+  text-align: center;
+  padding: 0 8px;
+  flex-shrink: 0;
+}
+
+/* --------------------------------------------------------------------------
+   Exercise preview
+-------------------------------------------------------------------------- */
+.exercise-preview {
+  min-height: 60px;
+  display: flex;
+  align-items: center;
+}
+
+.exercise-preview-inner {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+  width: 100%;
+}
+
+.exercise-theme-badge {
+  display: inline-block;
+  padding: 3px 10px;
+  border-radius: 99px;
+  background: var(--accent);
+  color: #000;
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+}
+
+.exercise-preview-label {
+  font-size: 0.85rem;
+  color: var(--text-secondary);
+}
+
+/* --------------------------------------------------------------------------
+   Stats row (3 inline stats)
+-------------------------------------------------------------------------- */
+.stats-row-db {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 1px;
+  background: var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+  border: 1px solid var(--border);
+}
+
+.stat-db {
+  background: var(--bg-800);
+  padding: 14px 8px;
+  text-align: center;
+}
+
+.stat-db-value {
+  font-family: var(--font-mono);
+  font-size: 1.4rem;
+  font-weight: 700;
+  color: var(--text);
+  line-height: 1;
+}
+
+.stat-db-label {
+  font-size: 0.65rem;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  color: var(--text-secondary);
+  text-transform: uppercase;
+  margin-top: 4px;
+}
+
+/* --------------------------------------------------------------------------
+   Bilan chart
+-------------------------------------------------------------------------- */
+.bilan-toggle-group {
+  display: flex;
+  gap: 2px;
+  background: var(--bg-600);
+  border-radius: var(--radius-sm);
+  padding: 2px;
+}
+
+.bilan-toggle {
+  background: none;
+  border: none;
+  padding: 4px 12px;
+  border-radius: var(--radius-sm);
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+
+.bilan-toggle.active {
+  background: var(--bg-800);
+  color: var(--text);
+}
+
+.bilan-chart-wrap {
+  position: relative;
+  height: 160px;
+}
+
+.bilan-legend {
+  display: flex;
+  gap: var(--space-md);
+  font-size: 0.75rem;
+  color: var(--text-secondary);
+  margin-top: var(--space-sm);
+  align-items: center;
+}
+
+.bilan-legend-dot {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  margin-right: 4px;
+}
+
+.bilan-legend-dot--blunders { background: #e04444; }
+.bilan-legend-dot--missed   { background: #e09a44; }
+
+/* --------------------------------------------------------------------------
+   Finales card
+-------------------------------------------------------------------------- */
+.finale-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.finale-item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  padding: 12px 8px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.finale-item:hover { background: var(--bg-700); }
+
+.finale-icon {
+  font-size: 1.25rem;
+  width: 28px;
+  text-align: center;
+  flex-shrink: 0;
+}
+
+.finale-label {
+  flex: 1;
+  font-size: 0.9rem;
+  color: var(--text);
+}
+
+.finale-arrow {
+  color: var(--text-secondary);
+  font-size: 0.9rem;
+}
+
+/* --------------------------------------------------------------------------
+   Board column (right side)
+-------------------------------------------------------------------------- */
+.board-col {
+  position: sticky;
+  top: calc(var(--header-h, 56px) + var(--space-md));
+  min-width: 0;
+  min-height: 400px;
+  display: flex;
+  flex-direction: column;
+}
+
+.board-col-empty {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-md);
+  background: var(--bg-800);
+  border: 1px dashed var(--border);
+  border-radius: var(--radius);
+  padding: var(--space-xl);
+  min-height: 400px;
+}
+
+.board-col-empty-icon {
+  width: 64px;
+  height: 72px;
+  opacity: 0.18;
+}
+
+.board-col-empty-text {
+  font-size: 0.9rem;
+  color: var(--text-secondary);
+  text-align: center;
+  line-height: 1.6;
+}
+
+.board-active {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+}
+
+.board-back-mobile {
+  display: none;
+}
+
+/* --------------------------------------------------------------------------
+   PGN modal overlay
+-------------------------------------------------------------------------- */
+.pgn-modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.75);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 200;
+  padding: var(--space-md);
+}
+
+.pgn-modal-overlay[hidden] { display: none; }
+
+.pgn-modal-card {
+  width: 100%;
+  max-width: 560px;
+  background: var(--bg-800);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: var(--space-lg);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+}
+
+.pgn-modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.pgn-modal-title {
+  font-size: 1.1rem;
+  font-weight: 700;
+  color: var(--text);
+}
+
+/* --------------------------------------------------------------------------
    Scrollbars
 -------------------------------------------------------------------------- */
 ::-webkit-scrollbar { width: 4px; height: 4px; }
@@ -1134,6 +1561,36 @@ input[type="text"]::placeholder { color: var(--text-muted); }
   .app-main { padding: var(--space-lg) var(--space-xl); }
   .board-area { max-width: 480px; }
   .moves-list { max-height: 400px; }
+}
+
+/* --------------------------------------------------------------------------
+   Responsive – Tablet / Mobile dashboard
+-------------------------------------------------------------------------- */
+@media (max-width: 900px) {
+  .dashboard-layout {
+    grid-template-columns: 1fr;
+    padding: var(--space-sm) var(--space-md);
+    gap: var(--space-md);
+  }
+
+  .board-col {
+    position: static;
+    order: -1; /* board col on top on mobile when active */
+    display: none; /* hidden until game loaded */
+  }
+
+  /* Mobile: show board col when body has .board-active-mobile */
+  body.board-active-mobile .board-col {
+    display: flex;
+  }
+
+  body.board-active-mobile .dashboard-col {
+    display: none;
+  }
+
+  .board-back-mobile {
+    display: flex !important;
+  }
 }
 
 /* --------------------------------------------------------------------------

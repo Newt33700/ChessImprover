@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width,initial-scale=1.0,viewport-fit=cover"/>
   <meta name="theme-color" content="#0d0d0d"/>
   <meta name="description" content="Chess Improver – Analyse gratuite coup par coup"/>
-  <title>Chess Improver ♞</title>
+  <title>Chess Improver</title>
   <link rel="preconnect" href="https://fonts.googleapis.com"/>
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin/>
   <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;600&family=Inter:wght@400;500;700&display=swap" rel="stylesheet"/>
@@ -62,6 +62,19 @@
   </div>
 </div>
 
+<!-- ══════════════════ PGN MODAL ══════════════════ -->
+<div id="pgn-modal" class="pgn-modal-overlay" hidden aria-modal="true" role="dialog" aria-label="Analyser un PGN">
+  <div class="pgn-modal-card card">
+    <div class="pgn-modal-header">
+      <h2 class="pgn-modal-title">Analyser un PGN</h2>
+      <button id="btn-close-pgn" class="btn-icon" aria-label="Fermer">✕</button>
+    </div>
+    <textarea id="pgn-input" class="pgn-textarea" rows="10" spellcheck="false"
+      placeholder="Collez votre PGN ici…&#10;[Event &quot;Live Chess&quot;]&#10;[White &quot;VotreNom&quot;]&#10;..."></textarea>
+    <button id="btn-analyze" class="btn btn--primary btn--full">Analyser</button>
+  </div>
+</div>
+
 <!-- Loading -->
 <div id="loading-overlay" hidden role="status">
   <div class="loading-spinner"></div>
@@ -70,8 +83,25 @@
 
 <!-- ══════════════════ HEADER ══════════════════ -->
 <header class="app-header">
-  <button class="logo-btn" onclick="window.app?._showSection('section-dashboard')" aria-label="Accueil">
-    <span class="logo-knight">♞</span>
+  <button class="logo-btn" onclick="window.app?._goHome()" aria-label="Accueil">
+    <svg class="logo-pawn" viewBox="0 0 64 72" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+      <!-- Left arm -->
+      <path d="M21 41 C14 37 6 40 6 47 C6 53 15 54 20 50 L21 46" fill="#81b64c"/>
+      <!-- Right arm -->
+      <path d="M43 41 C50 37 58 40 58 47 C58 53 49 54 44 50 L43 46" fill="#81b64c"/>
+      <!-- Body -->
+      <path d="M22 35 C20 44 16 53 13 63 H51 C48 53 44 44 42 35 Z" fill="#81b64c"/>
+      <!-- Base -->
+      <rect x="10" y="61" width="44" height="9" rx="3" fill="#4f7128"/>
+      <!-- Neck -->
+      <rect x="28" y="28" width="8" height="8" rx="2" fill="#81b64c"/>
+      <!-- Head -->
+      <circle cx="32" cy="19" r="12" fill="#81b64c"/>
+      <!-- Shine -->
+      <circle cx="27" cy="14" r="4" fill="white" opacity="0.13"/>
+      <!-- Body highlight -->
+      <path d="M26 35 C25 44 22 53 20 63 H32 L33 35 Z" fill="white" opacity="0.06"/>
+    </svg>
     <span class="logo-text">Chess<strong>Improver</strong></span>
   </button>
 
@@ -90,191 +120,280 @@
 <!-- ══════════════════ MAIN ══════════════════ -->
 <main class="app-main">
 
-  <!-- ── DASHBOARD ── -->
+  <!-- ── DASHBOARD (two-column layout) ── -->
   <section id="section-dashboard" class="section">
+    <div class="dashboard-layout">
 
-    <div class="connect-card card">
-      <h2 class="card-title">Analysez vos parties</h2>
-      <p class="card-subtitle">Entrez votre pseudo Chess.com ou collez un PGN.</p>
-      <div class="input-row">
-        <input id="username-input" type="text" placeholder="Pseudo Chess.com"
-               autocomplete="off" autocapitalize="none" spellcheck="false" aria-label="Pseudo"/>
-        <button id="btn-connect" class="btn btn--primary">Charger</button>
-      </div>
-      <div class="or-divider"><span>ou</span></div>
-      <button id="btn-to-pgn" class="btn btn--secondary">📋 Coller un PGN</button>
-    </div>
+      <!-- LEFT: Dashboard cards -->
+      <div class="dashboard-col" id="dashboard-col">
 
-    <div class="stats-grid">
-      <div class="stat-card"><div class="stat-value" id="stat-games">0</div><div class="stat-label">Parties</div></div>
-      <div class="stat-card"><div class="stat-value" id="stat-accuracy">—</div><div class="stat-label">Précision</div></div>
-      <div class="stat-card"><div class="stat-value" id="stat-blunders">0</div><div class="stat-label">Gaffes</div></div>
-    </div>
-
-    <div class="card">
-      <div class="card-header">
-        <h3 class="card-title">Parties récentes</h3>
-        <button id="btn-exercise" class="btn btn--accent btn--sm">🧠 Révisions</button>
-      </div>
-      <div class="card-actions-row">
-        <button id="btn-open-tabs" class="btn btn--sm btn--secondary">📊 Analyses</button>
-      </div>
-      <div id="games-list" class="games-list">
-        <p class="empty-state">Connectez-vous pour voir vos parties.</p>
-      </div>
-    </div>
-
-  </section>
-
-  <!-- ── PGN INPUT ── -->
-  <section id="section-pgn" class="section" hidden>
-    <div class="card">
-      <div class="card-header">
-        <h2 class="card-title">Analyser un PGN</h2>
-        <button id="btn-back-dashboard" class="btn-icon" aria-label="Retour">←</button>
-      </div>
-      <textarea id="pgn-input" class="pgn-textarea" rows="10" spellcheck="false"
-        placeholder="Collez votre PGN ici…&#10;[Event &quot;Live Chess&quot;]&#10;[White &quot;VotreNom&quot;]&#10;..."></textarea>
-      <button id="btn-analyze" class="btn btn--primary btn--full">🔍 Analyser</button>
-    </div>
-  </section>
-
-  <!-- ── BOARD ── -->
-  <section id="section-board" class="section" hidden>
-
-    <div class="board-topbar">
-      <button id="btn-back-board" class="btn-icon" aria-label="Retour">←</button>
-      <div class="mode-pills">
-        <button class="mode-pill active" onclick="window.app?.currentGame && window.app._enterReviewMode(window.app.currentGame)">Review</button>
-        <button class="mode-pill" onclick="window.app?._startExercise()">Exercice</button>
-        <button class="mode-pill" onclick="window.app?._showBilan()">Bilan</button>
-        <button class="mode-pill" onclick="window.app?._showEndgame()">Finales</button>
-      </div>
-      <div id="engine-eval" class="engine-eval">…</div>
-    </div>
-
-    <div class="board-layout">
-      <div class="board-wrapper">
-        <div class="player-bar" id="bar-top">
-          <div class="player-piece-indicator" id="piece-top"></div>
-          <span class="player-name" id="name-top">Adversaire</span>
-          <span class="player-clock" id="clock-top">—</span>
-        </div>
-        <div class="board-area">
-          <div id="board" class="board-container"></div>
-          <div id="move-badge" class="move-badge"></div>
-        </div>
-        <div class="player-bar" id="bar-bottom">
-          <div class="player-piece-indicator" id="piece-bottom"></div>
-          <span class="player-name" id="name-bottom">Vous</span>
-          <span class="player-clock" id="clock-bottom">—</span>
-        </div>
-        <div class="board-controls">
-          <button id="btn-flip" class="btn-icon" title="Retourner">⇅</button>
-          <button id="btn-prev" class="btn-icon" title="Précédent">‹</button>
-          <button id="btn-next" class="btn-icon" title="Suivant">›</button>
-        </div>
-      </div>
-
-      <aside class="side-panel">
-        <div id="move-info" class="move-info-box"></div>
-        <div id="accuracy-bar" class="accuracy-bar-wrap" hidden>
-          <div class="accuracy-bar-label">
-            <span>Précision</span>
-            <strong id="accuracy-value">—</strong>
+        <!-- REVIEW card -->
+        <div class="db-card" id="card-review">
+          <div class="db-card-head">
+            <span class="db-card-title">RÉVISION</span>
           </div>
-          <div class="accuracy-bar-track">
-            <div id="accuracy-fill" class="accuracy-bar-fill" style="width:0%"></div>
+          <div class="db-card-body" id="db-body-review">
+            <!-- Connect prompt (default state) -->
+            <div id="connect-prompt" class="connect-prompt">
+              <p>Entrez votre pseudo Chess.com ou collez un PGN pour analyser votre dernière partie.</p>
+              <div class="input-row">
+                <input id="username-input" type="text" placeholder="Pseudo Chess.com"
+                       autocomplete="off" autocapitalize="none" spellcheck="false" aria-label="Pseudo"/>
+                <button id="btn-connect" class="btn btn--primary">Charger</button>
+              </div>
+              <div class="db-link-row">
+                <button id="btn-to-pgn" class="db-link">Coller un PGN</button>
+              </div>
+            </div>
+            <!-- Last game preview (shown after loading) -->
+            <div id="last-game-preview" class="match-card" hidden>
+              <div class="match-players-row">
+                <div class="match-player match-player--white">
+                  <div class="match-avatar" id="avatar-white">♔</div>
+                  <span class="match-player-name" id="name-white">—</span>
+                  <div class="match-prec-row">
+                    <div class="match-prec-bar-track">
+                      <div class="match-prec-bar-fill match-prec-bar--white" id="prec-bar-white" style="width:0%"></div>
+                    </div>
+                    <span class="match-prec-value" id="prec-val-white">—</span>
+                  </div>
+                </div>
+                <div class="match-score" id="match-score">½–½</div>
+                <div class="match-player match-player--black">
+                  <div class="match-avatar" id="avatar-black">♚</div>
+                  <span class="match-player-name" id="name-black">—</span>
+                  <div class="match-prec-row">
+                    <div class="match-prec-bar-track">
+                      <div class="match-prec-bar-fill match-prec-bar--black" id="prec-bar-black" style="width:0%"></div>
+                    </div>
+                    <span class="match-prec-value" id="prec-val-black">—</span>
+                  </div>
+                </div>
+              </div>
+              <button id="btn-launch-review" class="btn btn--primary btn--full">Lancer la Révision</button>
+              <div class="db-link-row">
+                <button id="btn-to-pgn-2" class="db-link">Coller un PGN</button>
+              </div>
+            </div>
           </div>
         </div>
-        <div id="game-stats" class="game-stats"></div>
-        <div id="exercise-prompt" class="exercise-prompt" hidden></div>
-        <div class="turn-indicator">Tour : <strong id="turn-indicator">Blancs</strong></div>
-        <div class="moves-panel">
-          <div class="moves-panel-header">Coups</div>
-          <div id="moves-list" class="moves-list"></div>
+
+        <!-- EXERCICE card -->
+        <div class="db-card" id="card-exercise">
+          <div class="db-card-head">
+            <span class="db-card-title">EXERCICE</span>
+            <button id="btn-exercise" class="btn btn--accent btn--sm">Révisions SRS</button>
+          </div>
+          <div class="db-card-body" id="db-body-exercise">
+            <div id="exercise-preview-card" class="exercise-preview">
+              <p class="empty-state">Aucun exercice disponible. Analysez des parties pour en générer.</p>
+            </div>
+          </div>
         </div>
-      </aside>
-    </div>
 
-    <!-- ── BILAN PANEL (US 1) ── -->
-    <div id="panel-bilan" class="analysis-panel" hidden>
-      <h3 class="panel-title">Graphe d'avantage</h3>
-      <p class="panel-subtitle">Cliquez sur un point pour naviguer vers ce coup.</p>
-      <div class="wp-chart-container">
-        <canvas id="wp-chart-canvas"></canvas>
-      </div>
-    </div>
-
-    <!-- ── OUVERTURES PANEL (US 2) ── -->
-    <div id="panel-openings" class="analysis-panel" hidden>
-      <h3 class="panel-title">Performances par ouverture</h3>
-      <div id="openings-table-container">
-        <p class="empty-state">Analysez des parties pour voir vos statistiques d'ouvertures.</p>
-      </div>
-    </div>
-
-    <!-- ── FINALES PANEL (US 3) ── -->
-    <div id="panel-endgame" class="analysis-panel" hidden>
-      <h3 class="panel-title">Analyse des finales</h3>
-      <div id="endgame-stats-container">
-        <p class="empty-state">Aucune finale détectée dans la partie actuelle.</p>
-      </div>
-    </div>
-
-    <!-- ── STATISTIQUES PANEL (US 5) ── -->
-    <div id="panel-stats" class="analysis-panel" hidden>
-      <h3 class="panel-title">Statistiques & Progression</h3>
-      <div class="stats-period-selector">
-        <button class="btn btn--sm period-btn active" data-days="7">7 jours</button>
-        <button class="btn btn--sm period-btn" data-days="30">30 jours</button>
-        <button class="btn btn--sm period-btn" data-days="90">90 jours</button>
-      </div>
-      <div class="stats-charts-grid">
-        <div class="stats-chart-wrap">
-          <div class="stats-chart-label">Elo estimé</div>
-          <canvas id="elo-chart-canvas"></canvas>
+        <!-- Stats row -->
+        <div class="stats-row-db">
+          <div class="stat-db">
+            <div class="stat-db-value" id="stat-games">0</div>
+            <div class="stat-db-label">PARTIES</div>
+          </div>
+          <div class="stat-db">
+            <div class="stat-db-value" id="stat-accuracy">—</div>
+            <div class="stat-db-label">PRÉCISION</div>
+          </div>
+          <div class="stat-db">
+            <div class="stat-db-value" id="stat-blunders">0</div>
+            <div class="stat-db-label">GAFFES</div>
+          </div>
         </div>
-        <div class="stats-chart-wrap">
-          <div class="stats-chart-label">Précision moyenne (%)</div>
-          <canvas id="acc-chart-canvas"></canvas>
+
+        <!-- BILAN card -->
+        <div class="db-card" id="card-bilan">
+          <div class="db-card-head">
+            <span class="db-card-title">BILAN</span>
+            <div class="bilan-toggle-group">
+              <button class="bilan-toggle active" id="bilan-btn-progress" onclick="window.app?._renderBilanChart('progress')">Progrès</button>
+              <button class="bilan-toggle" id="bilan-btn-elo" onclick="window.app?._renderBilanChart('elo')">Elo</button>
+            </div>
+          </div>
+          <div class="db-card-body" id="db-body-bilan">
+            <div class="bilan-chart-wrap">
+              <canvas id="bilan-canvas"></canvas>
+            </div>
+            <div class="bilan-legend">
+              <span class="bilan-legend-dot bilan-legend-dot--blunders"></span> Gaffes
+              <span class="bilan-legend-dot bilan-legend-dot--missed"></span> Coups manqués
+            </div>
+          </div>
         </div>
-      </div>
-    </div>
 
-    <!-- ── COACH PANEL (US 6) ── -->
-    <div id="panel-coach" class="analysis-panel" hidden>
-      <h3 class="panel-title">Coach Personnel</h3>
-      <div id="coach-diagnosis"></div>
-    </div>
+        <!-- FINALES card -->
+        <div class="db-card" id="card-finales">
+          <div class="db-card-head">
+            <span class="db-card-title">FINALES</span>
+          </div>
+          <div class="db-card-body" id="db-body-finales">
+            <div class="finale-list">
+              <div class="finale-item" onclick="window.app?._showEndgame()">
+                <span class="finale-icon">♖</span>
+                <span class="finale-label">Tour vs. Pion</span>
+                <span class="finale-arrow">→</span>
+              </div>
+              <div class="finale-item" onclick="window.app?._showEndgame()">
+                <span class="finale-icon">♔</span>
+                <span class="finale-label">Opposition de Rois</span>
+                <span class="finale-arrow">→</span>
+              </div>
+            </div>
+          </div>
+        </div>
 
-  </section>
+        <!-- Recent games (hidden, kept for compat) -->
+        <div id="games-list-wrap" class="db-card" hidden>
+          <div id="games-list" class="games-list"></div>
+        </div>
 
-  <!-- ── TABS DASHBOARD ── -->
-  <section id="section-tabs" class="section" hidden>
-    <div class="tabs-header">
-      <button class="tab-btn active" data-tab="tab-openings">Ouvertures</button>
-      <button class="tab-btn" data-tab="tab-endgame">Finales</button>
-      <button class="tab-btn" data-tab="tab-puzzle">Puzzle</button>
-      <button class="tab-btn" data-tab="tab-stats">Statistiques</button>
-      <button class="tab-btn" data-tab="tab-coach">Coach</button>
+      </div><!-- /.dashboard-col -->
+
+      <!-- RIGHT: Board column (always visible on desktop) -->
+      <div class="board-col" id="board-col">
+
+        <!-- Empty state (no game loaded) -->
+        <div id="board-col-empty" class="board-col-empty">
+          <svg class="board-col-empty-icon" viewBox="0 0 64 72" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+            <path d="M21 41 C14 37 6 40 6 47 C6 53 15 54 20 50 L21 46" fill="#333"/>
+            <path d="M43 41 C50 37 58 40 58 47 C58 53 49 54 44 50 L43 46" fill="#333"/>
+            <path d="M22 35 C20 44 16 53 13 63 H51 C48 53 44 44 42 35 Z" fill="#333"/>
+            <rect x="10" y="61" width="44" height="9" rx="3" fill="#222"/>
+            <rect x="28" y="28" width="8" height="8" rx="2" fill="#333"/>
+            <circle cx="32" cy="19" r="12" fill="#333"/>
+          </svg>
+          <p class="board-col-empty-text">Chargez une partie<br/>pour l'analyser ici</p>
+        </div>
+
+        <!-- Active board (shown when game loaded) -->
+        <div id="board-active" class="board-active" hidden>
+
+          <div class="board-topbar">
+            <button id="btn-back-board" class="btn-icon board-back-mobile" aria-label="Retour" onclick="window.app?._goHome()">←</button>
+            <div class="mode-pills">
+              <button class="mode-pill active" data-mode="review" onclick="window.app?.currentGame && window.app._enterReviewMode(window.app.currentGame)">Review</button>
+              <button class="mode-pill" data-mode="exercise" onclick="window.app?._startExercise()">Exercice</button>
+              <button class="mode-pill" data-mode="finales" onclick="window.app?._showEndgame()">Finales</button>
+            </div>
+            <div id="engine-eval" class="engine-eval">…</div>
+          </div>
+
+          <div class="board-layout">
+            <div class="board-wrapper">
+              <div class="player-bar" id="bar-top">
+                <div class="player-piece-indicator" id="piece-top"></div>
+                <span class="player-name" id="name-top">Adversaire</span>
+                <span class="player-clock" id="clock-top">—</span>
+              </div>
+              <div class="board-area">
+                <div id="board" class="board-container"></div>
+                <div id="move-badge" class="move-badge"></div>
+              </div>
+              <div class="player-bar" id="bar-bottom">
+                <div class="player-piece-indicator" id="piece-bottom"></div>
+                <span class="player-name" id="name-bottom">Vous</span>
+                <span class="player-clock" id="clock-bottom">—</span>
+              </div>
+              <div class="board-controls">
+                <button id="btn-flip" class="btn-icon" title="Retourner">⇅</button>
+                <button id="btn-prev" class="btn-icon" title="Précédent">‹</button>
+                <button id="btn-next" class="btn-icon" title="Suivant">›</button>
+              </div>
+            </div>
+
+            <aside class="side-panel">
+              <div id="move-info" class="move-info-box"></div>
+              <div id="accuracy-bar" class="accuracy-bar-wrap" hidden>
+                <div class="accuracy-bar-label">
+                  <span>Précision</span>
+                  <strong id="accuracy-value">—</strong>
+                </div>
+                <div class="accuracy-bar-track">
+                  <div id="accuracy-fill" class="accuracy-bar-fill" style="width:0%"></div>
+                </div>
+              </div>
+              <div id="game-stats" class="game-stats"></div>
+              <div id="exercise-prompt" class="exercise-prompt" hidden></div>
+              <div class="turn-indicator">Tour : <strong id="turn-indicator">Blancs</strong></div>
+              <div class="moves-panel">
+                <div class="moves-panel-header">Coups</div>
+                <div id="moves-list" class="moves-list"></div>
+              </div>
+              <button id="btn-auto-analyze" class="btn btn--secondary btn--full btn--sm">Analyse Auto</button>
+            </aside>
+          </div>
+
+          <!-- Analysis panels (inside board-active) -->
+          <div id="panel-bilan" class="analysis-panel" hidden>
+            <h3 class="panel-title">Graphe d'avantage</h3>
+            <p class="panel-subtitle">Cliquez sur un point pour naviguer vers ce coup.</p>
+            <div class="wp-chart-container">
+              <canvas id="wp-chart-canvas"></canvas>
+            </div>
+          </div>
+
+          <div id="panel-openings" class="analysis-panel" hidden>
+            <h3 class="panel-title">Performances par ouverture</h3>
+            <div id="openings-table-container">
+              <p class="empty-state">Analysez des parties pour voir vos statistiques d'ouvertures.</p>
+            </div>
+          </div>
+
+          <div id="panel-endgame" class="analysis-panel" hidden>
+            <h3 class="panel-title">Analyse des finales</h3>
+            <div id="endgame-stats-container">
+              <p class="empty-state">Aucune finale détectée dans la partie actuelle.</p>
+            </div>
+          </div>
+
+          <div id="panel-stats" class="analysis-panel" hidden>
+            <h3 class="panel-title">Statistiques &amp; Progression</h3>
+            <div class="stats-period-selector">
+              <button class="btn btn--sm period-btn active" data-days="7">7 jours</button>
+              <button class="btn btn--sm period-btn" data-days="30">30 jours</button>
+              <button class="btn btn--sm period-btn" data-days="90">90 jours</button>
+            </div>
+            <div class="stats-charts-grid">
+              <div class="stats-chart-wrap">
+                <div class="stats-chart-label">Elo estimé</div>
+                <canvas id="elo-chart-canvas"></canvas>
+              </div>
+              <div class="stats-chart-wrap">
+                <div class="stats-chart-label">Précision moyenne (%)</div>
+                <canvas id="acc-chart-canvas"></canvas>
+              </div>
+            </div>
+          </div>
+
+          <div id="panel-coach" class="analysis-panel" hidden>
+            <h3 class="panel-title">Coach Personnel</h3>
+            <div id="coach-diagnosis"></div>
+          </div>
+
+        </div><!-- /#board-active -->
+      </div><!-- /.board-col -->
+
+    </div><!-- /.dashboard-layout -->
+  </section><!-- /#section-dashboard -->
+
+  <!-- ── HIDDEN COMPAT CONTAINERS (legacy JS IDs) ── -->
+  <div id="section-tabs" hidden aria-hidden="true">
+    <div id="tab-openings">
+      <div id="openings-global-container"></div>
     </div>
-    <div id="tab-openings" class="tab-content">
-      <div id="openings-global-container">
-        <p class="empty-state">Chargement…</p>
-      </div>
+    <div id="tab-endgame" hidden>
+      <div id="endgame-global-container"></div>
     </div>
-    <div id="tab-endgame" class="tab-content" hidden>
-      <div id="endgame-global-container">
-        <p class="empty-state">Analysez des parties pour voir vos statistiques de finale.</p>
-      </div>
+    <div id="tab-puzzle" hidden>
+      <div id="puzzle-tab-container"></div>
     </div>
-    <div id="tab-puzzle" class="tab-content" hidden>
-      <div id="puzzle-tab-container">
-        <p class="empty-state">Chargement…</p>
-      </div>
-    </div>
-    <div id="tab-stats" class="tab-content" hidden>
+    <div id="tab-stats" hidden>
       <div class="stats-period-selector">
         <button class="btn btn--sm period-btn2 active" data-days="7">7 jours</button>
         <button class="btn btn--sm period-btn2" data-days="30">30 jours</button>
@@ -291,9 +410,17 @@
         </div>
       </div>
     </div>
-    <div id="tab-coach" class="tab-content" hidden>
+    <div id="tab-coach" hidden>
       <div id="coach-diagnosis2"></div>
     </div>
+  </div>
+
+  <!-- ── LEGACY SECTION-BOARD (hidden, kept for compat) ── -->
+  <section id="section-board" hidden aria-hidden="true"></section>
+
+  <!-- ── LEGACY SECTION-PGN (hidden, kept for compat) ── -->
+  <section id="section-pgn" hidden aria-hidden="true">
+    <div id="btn-back-dashboard" hidden></div>
   </section>
 
 </main>
