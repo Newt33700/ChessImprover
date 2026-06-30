@@ -91,7 +91,7 @@ ChessImprover/
 ├── .gitignore
 │
 ├── frontend/
-│   ├── index.html                      # SPA — layout deux-colonnes (dashboard + board), PGN modal overlay, logo SVG
+│   ├── index.html                      # SPA — dashboard grille 2 cartes/colonne + page Review plein écran, PGN modal overlay, logo SVG
 │   ├── css/style.css                   # Thème sombre, variables CSS, responsive
 │   ├── serve.py                        # Serveur HTTP dev (python3 serve.py)
 │   ├── package.json                    # Jest, fake-indexeddb, Stryker config
@@ -593,9 +593,11 @@ Auth.getUser()                          // → {id, email, username, chessUserna
 
 ---
 
-### 3.15 Refonte UX — Layout deux colonnes & nouvelles cartes dashboard
+### 3.15 Refonte UX — Dashboard grille 2 colonnes & page Review plein écran
 
 **Fichiers :** `index.html`, `css/style.css`, `app.js`
+
+> **Refonte design (juin 2026)** — le dashboard est désormais une **grille de 4 grandes cartes titrées** (REVIEW, EXERCICE, BILAN, FINALES) et la page Review (échiquier + analyse) occupe **toute la largeur** au lieu d'une colonne latérale fixe. Tous les IDs JS sont conservés.
 
 #### Structure de la page
 
@@ -603,33 +605,39 @@ Auth.getUser()                          // → {id, email, username, chessUserna
 <header>  logo SVG patte musclée + gamification bar + auth chip
 <main>
   #section-dashboard
-    .dashboard-layout (CSS grid 380px | 1fr)
-      .dashboard-col (gauche)         .board-col (droite, sticky)
-        #card-review                    #board-col-empty  (placeholder)
-        #card-exercise                  #board-active     (section-board intégrée)
-        .stats-row-db (3 stats)
+    .dash-grid (CSS grid 1fr | 1fr — masquée quand body.board-active)
+      .dash-col (gauche)              .dash-col (droite)
+        #card-review                    #card-exercise (illustration + médailles)
+        .stats-row-db (3 stats)         #card-finales
         #card-bilan (Chart.js)
-        #card-finales
+    .board-col (#board-active) — plein écran, affichée quand body.board-active
   #pgn-modal (overlay fixe)
   #auth-modal (overlay fixe)
 ```
 
-#### Carte RÉVISION (`#card-review`)
+#### En-têtes de carte (`.db-card-head`)
+
+- Chaque carte affiche un **grand titre** (`.db-card-title`, Inter 800, ~1.55rem, MAJUSCULES) + un **sous-titre** gris (`.db-card-sub`).
+- Sous-titres : « Réviser vos parties récentes », « Vos prochains exercices », « Statistiques de progrès », « Maîtrisez les finales ».
+
+#### Carte REVIEW (`#card-review`)
 
 - **Prompt de connexion** (`#connect-prompt`) : affiché par défaut — champ pseudo + bouton "Charger" + lien "Coller un PGN"
-- **Aperçu dernière partie** (`#last-game-preview`) : affiché après `_renderReviewCard(games)` :
-  - `.match-card` : avatars ♔/♚, noms joueurs, barres de précision (blanc/vert), score (1–0 / 0–1 / ½–½)
-  - Bouton "Lancer la Révision" → `_enterReviewMode(this.currentGame)`
+- **Aperçu dernière partie** (`#last-game-preview`) :
+  - `.match-head` : avatar — nom blanc (`#head-name-white`) — score encadré (`#match-score`) — nom noir (`#head-name-black`) — avatar — chevron `⌄`
+  - `.match-precision` : titre « Précision » + 2 lignes `.prec-row` (nom + barre + valeur). Barre blanc = vert (`--green`), barre noir = orange (`--col-inaccuracy`)
+  - Bouton "Lancer la Révision" (`.btn--lg`) → `_enterReviewMode(this.currentGame)`
   - Lien "Coller un PGN" → `_openPgnModal()`
 
 #### Carte EXERCICE (`#card-exercise`)
 
-- Affiche le nombre de révisions SRS en attente + badge thème + bouton "Résoudre"
-- Peuplée par `async _renderExerciseCard()` → lit ChessDB ou localStorage
+- **Illustration** `.exo-illustration` : mini-échiquier CSS incliné (`.exo-board`) avec pièces ♚♛♞ — décoratif
+- `#exercise-preview-card` : badge thème + label + bouton "Résoudre", peuplé par `async _renderExerciseCard()`
+- **Médailles** `.exo-medals` : 3 pastilles (or/bronze/argent) décoratives
 
 #### Stats inline (`.stats-row-db`)
 
-- 3 cases : PARTIES / PRÉCISION / GAFFES — mêmes IDs que l'ancien dashboard (`stat-games`, `stat-accuracy`, `stat-blunders`)
+- 3 cases : PARTIES / PRÉCISION / GAFFES — IDs `stat-games`, `stat-accuracy`, `stat-blunders`
 
 #### Carte BILAN (`#card-bilan`)
 
@@ -642,11 +650,12 @@ Auth.getUser()                          // → {id, email, username, chessUserna
 
 - Liste `.finale-list` avec items "Tour vs. Pion" et "Opposition de Rois" → `_showEndgame()`
 
-#### Colonne Board (droite)
+#### Page Review plein écran (`.board-col` / `#board-active`)
 
-- `#board-col-empty` : placeholder affiché quand aucune partie n'est chargée
-- `#board-active` : contient tout l'ancien `section-board` (topbar + board-layout + analysis panels)
-- Transition : `_showBoardActive()` / `_goHome()`
+- Masquée par défaut (`display: none`) ; affichée et centrée (`max-width: 1100px`) quand `body.board-active`.
+- Contient topbar (back `←` + mode-pills + eval), `board-layout` (échiquier + side-panel), et les `analysis-panel`.
+- Le bouton retour `←` (`.board-back-mobile`) est visible **desktop + mobile** et appelle `_goHome()`.
+- Boutons « ‹ Précédent » / « Suivant › » élargis (largeur auto).
 
 #### Modal PGN (`#pgn-modal`)
 
@@ -659,23 +668,24 @@ Auth.getUser()                          // → {id, email, username, chessUserna
 - SVG inline dans `<header>` : pion vert (#81b64c) avec bras fléchis, base (#4f7128), brillance blanche
 - Remplace l'emoji ♞ ; `aria-hidden="true"`, taille 32×36px
 
-#### Mobile (`max-width: 900px`)
+#### Bascule dashboard ↔ Review (`body.board-active`)
 
-- `.board-col` masquée par défaut (`display: none`)
-- `body.board-active-mobile` → affiche `.board-col`, masque `.dashboard-col`
-- `.board-back-mobile` → `←` visible uniquement en mobile (appelle `_goHome()`)
+- `body.board-active` masque `.dash-grid` et affiche `.board-col` (desktop **et** mobile).
+- `.dash-grid` passe en une colonne sous `max-width: 900px`.
 
-#### Nouvelles méthodes app.js
+#### Méthodes app.js
 
 ```js
-_showBoardActive()        // Affiche #board-active, masque #board-col-empty, add class mobile
-_goHome()                 // Affiche #board-col-empty, masque #board-active, remove class mobile
+_showBoardActive()        // Affiche #board-active, masque #board-col-empty, add body.board-active
+_goHome()                 // Affiche #board-col-empty, masque #board-active, remove body.board-active
 _openPgnModal()           // retire hidden sur #pgn-modal
 _closePgnModal()          // ajoute hidden sur #pgn-modal
-_renderReviewCard(games)  // peuple .match-card avec la dernière partie (noms, scores, précision)
+_renderReviewCard(games)  // peuple .match-card (noms top + précision, scores)
 async _renderExerciseCard()   // peuple #exercise-preview-card (count SRS)
 _renderBilanChart(mode)   // crée Chart.js dans #bilan-canvas (mode 'progress' ou 'elo')
 ```
+
+`_renderReviewCard` renseigne les noms en double : `#head-name-white/black` (ligne avatars) et `#name-white/black` (lignes précision).
 
 `_showSection(id)` est conservé mais redirige : `"section-board"` → `_showBoardActive()`, `"section-pgn"` → `_openPgnModal()`, `"section-dashboard"` → `_goHome()`.
 
