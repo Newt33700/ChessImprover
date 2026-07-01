@@ -142,6 +142,12 @@ async def analyze_games(
     return AnalyzeAccepted(accepted=accepted)
 
 
+@router.get("/games")
+async def list_games(user_id: str = Depends(get_current_user_id)) -> Dict[str, Any]:
+    """US 7.1 — Liste des parties déjà soumises/analysées de l'utilisateur authentifié."""
+    return {"games": db_client.get_games_for_user(user_id)}
+
+
 @router.get("/games/{game_id}")
 async def get_game(
     game_id: str, user_id: str = Depends(get_current_user_id),
