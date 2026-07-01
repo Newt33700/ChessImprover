@@ -185,7 +185,8 @@ ChessImprover/
 │       ├── 20260701172219_profiles_chess_username.sql # Colonne chess_username sur profiles (US 6.2)
 │       ├── 20260701185622_games_pgn_hash.sql   # Colonne pgn_hash + index unique (user_id, pgn_hash) (US 7.2)
 │       ├── 20260701191149_games_is_reviewed.sql # Colonne is_reviewed (défaut false) sur games (US 7.3)
-│       └── 20260701194517_tactics_epic8.sql    # Table tactical_problems + profiles.tactical_elo + seed 15 problèmes (US 8.1)
+│       ├── 20260701194517_tactics_epic8.sql    # Table tactical_problems + profiles.tactical_elo + seed 15 problèmes (US 8.1)
+│       └── 20260701201530_tactical_attempts.sql # Table tactical_attempts (historique, RLS) (US 8.4)
 │
 └── .github/
     └── workflows/
@@ -934,9 +935,9 @@ Modules **purs** (couche domaine), entièrement testés, indépendants de l'infr
 
 **`GET /api/v1/stats/history`** : dégrade en `history: []` (200) si l'accès aux données échoue (log de la trace), plutôt qu'un 500 — même pattern défensif que `/stats/summary`.
 
-### 4.8 EPIC 8 — Coaching Tactique Adaptatif (US 8.1/8.2/8.3)
+### 4.8 EPIC 8 — Coaching Tactique Adaptatif (US 8.1-8.4)
 
-**Fichiers :** `routers/tactics.py`, `domain/tactical_elo.py`, `domain/tactics.py`, `infrastructure/db_client.py`, `supabase/migrations/20260701194517_tactics_epic8.sql`, `js/api_client.js`, `js/app.js`, `index.html` (`#tactics-col`)
+**Fichiers :** `routers/tactics.py`, `domain/tactical_elo.py`, `domain/tactics.py`, `infrastructure/db_client.py`, `infrastructure/pg_repository.py`, `supabase/migrations/20260701194517_tactics_epic8.sql`, `supabase/migrations/20260701201530_tactical_attempts.sql`, `js/api_client.js`, `js/app.js`, `index.html` (`#tactics-col`)
 
 > **Distinct du mode Exercice/SRS existant** (`js/app.js`, cartes en `localStorage`/`IndexedDB`) qui rejoue les propres gaffes détectées lors de l'analyse d'une partie du joueur. L'EPIC 8 introduit un **jeu de problèmes tactiques curés côté serveur** (dataset indépendant des parties du joueur), avec sélection adaptative par Elo et validation anti-triche systématiquement côté backend.
 
@@ -945,7 +946,8 @@ Modules **purs** (couche domaine), entièrement testés, indépendants de l'infr
 | Route | Méthode | Comportement |
 |---|---|---|
 | `/api/v1/tactics/next` | GET | Problème le plus proche de l'Elo tactique de l'utilisateur authentifié (1000 par défaut). Ne renvoie **jamais** `solution`. `?theme_id=` (US 8.2) filtre par catégorie ; absent = « Aléatoire » ; valeur hors `TACTICAL_THEMES` → 422. |
-| `/api/v1/tactics/attempt` | POST | Corps `{problem_id, move}` (SAN). Valide le coup **côté serveur** contre la solution stockée, ajuste l'Elo tactique (+15/-15), renvoie `{success, new_elo, solution}` — la solution n'est révélée qu'après la tentative. |
+| `/api/v1/tactics/attempt` | POST | Corps `{problem_id, move, time_taken?}` (SAN + secondes optionnelles). Valide le coup **côté serveur** contre la solution stockée, ajuste l'Elo tactique (+15/-15), enregistre la tentative (US 8.4), renvoie `{success, new_elo, solution, streak}` — la solution n'est révélée qu'après la tentative. |
+| `/api/v1/tactics/stats` | GET | (US 8.4) Historique agrégé de l'utilisateur authentifié : `{by_theme: [{category, attempts, successes, success_rate}], streak}`. |
 
 **Règles métier :**
 - **Elo tactique** (`domain/tactical_elo.py`) : distinct de l'Elo virtuel Stats Avancées (EPIC 3, qualité des coups dans de vraies parties). `update_elo(current, success)` : +15 si réussi, −15 sinon, plancher à 100 (évite une dérive négative absurde après une série d'échecs). Stocké sur `profiles.tactical_elo` (colonne SQL) et répliqué dans le dict utilisateur in-memory (`db_client.create_user`), à l'image de `chess_username` (US 6.2) — le store `users`/`profiles` reste 100 % in-memory quel que soit `DATABASE_URL` (gap connu, §10.1).
@@ -962,6 +964,12 @@ Modules **purs** (couche domaine), entièrement testés, indépendants de l'infr
 - `_onTacticsDragStart` bloque le glisser hors-tour ou une fois le problème déjà résolu.
 - `_onTacticsDrop` valide la légalité du coup localement (chess.js, pour le retour immédiat « snapback » si illégal) mais délègue **exclusivement au serveur** la validation de la *solution* via `ApiClient.submitTacticalAttempt(problemId, moveSan)` (`POST /api/v1/tactics/attempt`, déjà opérationnel depuis US 8.1) — le frontend ne connaît jamais la solution avant la réponse serveur (anti-triche, DoD).
 - Feedback visuel : halo vert/rouge autour de l'échiquier (`.tactics-board--success`/`--error`), message de résultat sous l'échiquier (révèle la solution en cas d'échec), badge Elo mis à jour, puis enchaînement automatique vers un nouveau problème (même catégorie) après un court délai. Son : omis (marqué optionnel dans le DoD).
+
+**Persistance et historique (US 8.4) :** table `tactical_attempts` (migration `20260701201530_tactical_attempts.sql` — `attempt_id`, `user_id`, `problem_id`, `success`, `time_taken`, `created_at`, RLS `user_id = auth.uid()::UUID`), avec `db_client.record_tactical_attempt`/`get_tactical_attempts` (in-memory dev/test, délégation `PgRepository` si `DATABASE_URL` — méthodes réellement implémentées cette fois, cf. §10.6).
+- **Taux de réussite par thème** (`domain.tactics.compute_stats_by_theme`) : regroupe l'historique par catégorie, calcule `attempts`/`successes`/`success_rate`. Exposé via `GET /api/v1/tactics/stats`.
+- **Série en cours du jour** (`domain.tactics.compute_daily_streak`, recommandation PO) : nombre de problèmes résolus d'affilée *aujourd'hui* — calculé à la volée en parcourant l'historique du plus récent au plus ancien, interrompu au premier échec ou à la première tentative d'un jour différent. Pas de compteur dupliqué à maintenir : une seule source de vérité (l'historique).
+- Frontend : badge **🔥 Série** dans la topbar du Coach Tactique (à côté du badge Elo), initialisé via `ApiClient.getTacticsStats()` à l'ouverture de la vue et rafraîchi après chaque tentative. Une réussite alimente également le système XP/Streak général déjà existant (`XPSystem`, `StreakSystem` — jours d'activité consécutifs, mode Exercice/Ghost), volontairement **non fusionné** avec le streak tactique quotidien (deux notions différentes : activité générale vs. série de réussites du jour sur les problèmes tactiques).
+- `time_taken` (secondes, optionnel) mesuré côté frontend entre l'affichage de l'échiquier et le coup joué, transmis au serveur pour persistance.
 
 ---
 
@@ -1173,7 +1181,7 @@ npm run test:mutation # Stryker
 | `stats_dashboard.test.js` | StatsDashboard | wpFromCp, estimateEloLogistic, movingAverage, filterByDays, buildChartData, render (Chart mock) |
 | `personal_coach.test.js` | PersonalCoach | computeMetrics, diagnose (toutes les 6 branches), renderHTML, _detectResult, _detectUserColor, _extractOpening |
 | `advanced_stats.test.js` | AdvancedStats | cellClass, deltas, deepDiveFor, gaugeAngle, matrixRows, `categoryDetailHtml` (tactics/endgames/openings/strategy), `tacticSuccessGaugeHtml` (bornes, clamp, NaN-safe), fetchSummary (fallbacks), `formatShortDate`, `buildProgressDatasets`, `toggleProgressSeries`, `fetchHistory` (fallbacks) |
-| `api_client.test.js` | ApiClient | baseUrl/isConfigured (window/localStorage), url (query), analyzeGame (POST + erreur), getStatsSummary, getGame, getStatsHistory, **en-tête `Authorization: Bearer` présent/absent selon `Auth.getToken()` (US 6.4)**, **getGames (US 7.1)**, **updateGameStatus (US 7.3)**, **getNextTacticalProblem + régression bug `?` orphelin (US 8.2)**, **submitTacticalAttempt (US 8.3)** |
+| `api_client.test.js` | ApiClient | baseUrl/isConfigured (window/localStorage), url (query), analyzeGame (POST + erreur), getStatsSummary, getGame, getStatsHistory, **en-tête `Authorization: Bearer` présent/absent selon `Auth.getToken()` (US 6.4)**, **getGames (US 7.1)**, **updateGameStatus (US 7.3)**, **getNextTacticalProblem + régression bug `?` orphelin (US 8.2)**, **submitTacticalAttempt + time_taken, getTacticsStats (US 8.3/8.4)** |
 | `auth.test.js` (US 6.1/6.3) | Auth | signup/login (succès, `detail` chaîne, `detail` liste Pydantic 422 — un ou plusieurs champs, absence de `detail`), `updateChessUsername` (sans token, succès + PATCH + persistance session, format invalide), isLoggedIn/logout |
 
 > `advanced_stats.js` n'est pas dans `collectCoverageFrom` (comme `app.js`, `auth.js`, `board_manager.js`) : seules ses fonctions pures sont testées, les `render*` sont de la glue DOM.
@@ -1211,11 +1219,11 @@ JWT_SECRET=ci-test-secret pytest tests/ -v
 | `test_stats_aggregator.py` | user_outcome, build_summary (catégories, ratings, couleur), gaffeRate, finales, acplTrend | US 4.1 |
 | `test_progress_history.py` | build_snapshot (cadence inconnue, filtre couleur, IDs), filter_history_by_days (bornes, dates invalides/naïves) | US 5.1 |
 | `test_games_api.py` | POST analyze (202, 400), worker→completed, réanalyse, GET game (404), stats/summary, snapshot auto, GET stats/history, **401 sans JWT sur les 6 routes, isolation entre 2 utilisateurs (get_game/réanalyse/stats/GET games/PATCH status)**, **GET /games (liste, vide, isolation)**, **dédup PGN par hash (même game_id, pas de doublon, statut réel, isolation par utilisateur, PGN différent → parties distinctes)**, **PATCH /games/{id}/status (marque/démarque, persistance, 404 non-propriétaire, 422 body invalide)** | US 1.1 + US 5.1 + US 6.4 + US 7.1 + US 7.2 + US 7.3 |
-| `test_pg_repository.py` | PgRepository (dsn, colonnes, contrat progress_history, `_iso` générique, **contrat `create_game`/`find_game_by_pgn_hash`**), délégation db_client (in-memory sans `DATABASE_URL`) | EPIC 1 + US 5.1 + US 7.2 |
+| `test_pg_repository.py` | PgRepository (dsn, colonnes, contrat progress_history, `_iso` générique, **contrat `create_game`/`find_game_by_pgn_hash`**, **contrat `record_tactical_attempt`/`get_tactical_attempts` (US 8.4)**), délégation db_client (in-memory sans `DATABASE_URL`) | EPIC 1 + US 5.1 + US 7.2 + US 8.4 |
 | `test_tactical_elo.py` | `update_elo` (+15/-15, constantes, plancher, pas de plafond) | US 8.1 |
-| `test_tactics.py` | `is_correct_move` (match exact, notation équivalente, coup faux/illégal/invalide), `select_nearest_problem` (vide, exact, plus proche haut/bas, tirage aléatoire équidistant) | US 8.1 |
-| `test_db_tactics.py` | Store tactique (Elo par défaut, persistance), **intégrité des 15 problèmes du seed vérifiée par python-chess** (mat effectif, capture non défendue), sélection/filtre par catégorie | US 8.1 |
-| `test_tactics_api.py` | `GET /tactics/next` (sans solution, 401, **filtre theme_id ×3 + 422 si inconnu**), `POST /tactics/attempt` (succès/échec ±15, notation équivalente, persistance, 404, 401, isolation entre utilisateurs) | US 8.1 + US 8.2 |
+| `test_tactics.py` | `is_correct_move` (match exact, notation équivalente, coup faux/illégal/invalide), `select_nearest_problem` (vide, exact, plus proche haut/bas, tirage aléatoire équidistant), **`compute_daily_streak` (vide, série du jour, arrêt au premier échec, hier ne compte pas), `compute_stats_by_theme` (regroupement + taux par catégorie)** | US 8.1 + US 8.4 |
+| `test_db_tactics.py` | Store tactique (Elo par défaut, persistance), **intégrité des 15 problèmes du seed vérifiée par python-chess** (mat effectif, capture non défendue), sélection/filtre par catégorie, **`TestTacticalAttempts` (enregistrement, isolation entre utilisateurs, reset)** | US 8.1 + US 8.4 |
+| `test_tactics_api.py` | `GET /tactics/next` (sans solution, 401, **filtre theme_id ×3 + 422 si inconnu**), `POST /tactics/attempt` (succès/échec ±15, notation équivalente, persistance, 404, 401, isolation entre utilisateurs, **`streak` croissant/remis à zéro, `time_taken` optionnel**), **`GET /tactics/stats` (vide, agrégation par catégorie, 401)** | US 8.1 + US 8.2 + US 8.4 |
 | `test_srs.py` | — | SM-2 backend |
 
 **Couverture backend :** 480 TUs au total, couverture globale **89 %** ; cœur Stats Avancées + EPIC 1/5.1/US 4.2 à 92–100 % (`stats_aggregator`, `cadence`, `progress_history`, `models`, `engine` à 100 %, `analysis_pipeline` 92 %, `routers/games` 92 %, `db_client` 98 %). Les requêtes SQL réelles de `pg_repository` (nécessitant une base) sont marquées `pragma: no cover`.
@@ -1363,6 +1371,7 @@ UNIQUE (user_id)
 | **Moteur de sélection adaptative tactique** (US 8.1) | `routers/tactics.py` + `domain/tactical_elo.py` + `domain/tactics.py` | Backend : `GET /tactics/next` + `POST /tactics/attempt` opérationnels et testés (curl/pytest) |
 | **Dashboard de catégories tactiques** (US 8.2) | `index.html:#tactics-col` + `app.js:_showTactics/_loadTacticalProblem` + `api_client.js:getNextTacticalProblem` | Carte TACTIQUE → vue plein écran, menu 4 catégories, badge Elo |
 | **Échiquier tactique jouable** (US 8.3) | `app.js:_initTacticsBoard/_onTacticsDrop/_submitTacticsAttempt` + `api_client.js:submitTacticalAttempt` + `index.html`/`style.css` (`.tactics-board`) | Échiquier indépendant (`Chess`/`Chessboard` directs, pas de `BoardManager`), validation de la solution 100 % serveur, feedback vert/rouge, enchaînement auto vers le problème suivant |
+| **Persistance + série du jour** (US 8.4) | `tactical_attempts` (migration) + `db_client.record_tactical_attempt`/`get_tactical_attempts` + `domain/tactics.compute_daily_streak`/`compute_stats_by_theme` + `GET /tactics/stats` + `app.js:#tactics-streak-badge` | Chaque tentative est persistée ; badge 🔥 Série (problèmes résolus d'affilée aujourd'hui) mis à jour en direct ; taux de réussite par catégorie calculable via `/tactics/stats` |
 
 ### ❌ Non câblé ou incomplet
 
@@ -1417,11 +1426,11 @@ L'utilisateur ne voit pas que le livre ECO se télécharge (~2s). Ajouter un spi
 
 L'API Chess.com retourne `g.accuracies.white/black`. Les afficher dans les barres de précision de la `.match-card` au lieu de `null` (les barres restent à 0% si Stockfish n'a pas encore analysé la partie).
 
-### 10.6 🟡 IMPORTANT — EPIC 8, jeu de données tactiques (US 8.1/8.2/8.3)
+### 10.6 🟢 EPIC 8 — Coaching Tactique Adaptatif (US 8.1-8.4, backlog complet)
 
-**Fait :** moteur de sélection adaptative + validation serveur (US 8.1), filtre par catégorie + dashboard de sélection (US 8.2), échiquier jouable avec feedback visuel et anti-triche serveur (US 8.3), avec un seed de 15 problèmes vérifiés.
+**Fait :** moteur de sélection adaptative + validation serveur (US 8.1), filtre par catégorie + dashboard de sélection (US 8.2), échiquier jouable avec feedback visuel et anti-triche serveur (US 8.3), persistance des tentatives + taux de réussite par thème + série du jour (US 8.4), avec un seed de 15 problèmes vérifiés. L'intégralité du backlog EPIC 8 enregistré dans `UserStory.md` est ✅ Implémenté.
 
-**Reste :** (1) remplacer/enrichir le seed par un dataset externe plus large (ex. export CSV Lichess Puzzle Database) — non fait dans cet environnement d'exécution faute d'accès réseau vers les sources habituelles (proxy sortant restreint) ; (2) persistance/historique des tentatives (US 8.4).
+**Reste (idées non bloquantes) :** (1) remplacer/enrichir le seed par un dataset externe plus large (ex. export CSV Lichess Puzzle Database) — non fait dans cet environnement d'exécution faute d'accès réseau vers les sources habituelles (proxy sortant restreint) ; (2) exposer `GET /tactics/stats` dans l'UI (ex. une carte dédiée dans Stats Avancées) — l'endpoint existe et est testé, mais aucune vue ne l'affiche encore graphiquement ; (3) **gap Postgres pré-existant (US 8.1, non corrigé ici, hors scope de cette US)** : `db_client.get_tactical_problem`/`get_next_tactical_problem` délèguent à `PgRepository` si `DATABASE_URL` est défini, mais `PgRepository` n'implémente pas ces deux méthodes (contrairement à `tactical_attempts`, dont la délégation US 8.4 est complète et testée) — à corriger avant toute mise en production avec base réelle pour les tables `tactical_problems`/`profiles.tactical_elo`.
 
 ---
 
