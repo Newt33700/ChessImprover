@@ -319,18 +319,23 @@ En tant qu'équipe, nous voulons que chaque modification de `supabase/migrations
 - Cellule = Elo virtuel ; couleur désaturée verte si > classement actuel, orange/rouge si inférieur (intensité selon l'écart, seuil fort à 150).
 - Le frontend appelle `GET /api/v1/stats/summary?period=` (zéro calcul client) ; fallback sur données de démo tant que l'EPIC 1 n'est pas branché.
 
-**Statut :** ✅ Implémenté côté frontend (`frontend/js/advanced_stats.js`, vue plein écran `#advstats-col`, `tests/advanced_stats.test.js`). ⏳ Endpoint d'agrégation backend à brancher (EPIC 1).
+**Statut :** ✅ Implémenté bout en bout — frontend (`frontend/js/advanced_stats.js`, vue plein écran `#advstats-col`) + backend (`GET /api/v1/stats/summary`, EPIC 1).
 
 ## US 4.2 : Vues détaillées par catégorie (Deep Dive mobile)
 
-**Description :** détail par catégorie adapté au mobile (gauge Héros + deltas par phase + métriques Finales/Tactiques).
+**Description :** détail par catégorie adapté au mobile (gauge Héros + deltas par phase + métriques Finales/Tactiques/Ouvertures).
 
 **Règles de gestion :**
 - Onglets de cadence + carte « Héros » (niveau estimé + gauge) + liste « Détail par phase » (Elo + delta coloré vs classement).
 - Finales : tuiles Taux de conversion (avantage ≥ +1.50) et Taux de résilience (position perdante ≤ −1.50).
-- Tactiques : carte rating de puzzles (à réviser / résolus / série).
+- Tactiques : carte rating de puzzles (à réviser / résolus / série) **+ mini-indicateur circulaire du taux de réussite tactique** (`summary.tactics.successRatio`, agrégé sur toutes les parties analysées, sans bucketing par cadence).
+- Ouvertures : **top 3 des ouvertures les plus jouées** par code ECO (`summary.topOpenings`), triées par nombre de parties décroissant, avec l'Elo virtuel « Ouvertures » associé (ACPL des coups d'ouverture du groupe, **sans bonus de cadence** — un groupe ECO peut mélanger plusieurs cadences). L'ECO/nom d'ouverture sont extraits des en-têtes PGN Chess.com (`ECO`/`ECOUrl`) par le worker d'analyse ; les parties sans ECO (PGN non issu de Chess.com) sont exclues du classement.
 
-**Statut :** ✅ Implémenté côté frontend (mêmes fichiers). ⏳ Données réelles à fournir par le backend.
+**Statut :** ✅ Implémenté bout en bout, DoD complète :
+- Migration `20260701164500_games_eco.sql` (colonnes `eco`/`opening_name` sur `games`).
+- `backend/app/domain/analysis_pipeline.py` (`_extract_opening`), `backend/app/domain/stats_aggregator.py` (`top_openings`, `_tactical_success_ratio_all`).
+- `frontend/js/advanced_stats.js` (`tacticSuccessGaugeHtml`, SVG circulaire pur).
+- Tests : extensions `test_analysis_pipeline.py`, `test_stats_aggregator.py`, `advanced_stats.test.js`.
 
 ## US 1.1 : Soumission asynchrone de PGN
 

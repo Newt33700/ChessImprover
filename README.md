@@ -162,8 +162,8 @@ ChessImprover/
 │       │   ├── test_move_class.py      # US 3.2
 │       │   ├── test_cadence.py         # EPIC 1 : classification cadence
 │       │   ├── test_db_games.py        # EPIC 1 + US 5.1 : store games/moves/progress_history
-│       │   ├── test_analysis_pipeline.py # US 1.2 : worker d'analyse
-│       │   ├── test_stats_aggregator.py  # US 4.1 : agrégation
+│       │   ├── test_analysis_pipeline.py # US 1.2 : worker d'analyse + extraction ECO (US 4.2)
+│       │   ├── test_stats_aggregator.py  # US 4.1 : agrégation + top_openings/successRatio (US 4.2)
 │       │   ├── test_progress_history.py  # US 5.1 : snapshot + fenêtre glissante
 │       │   ├── test_games_api.py       # US 1.1 + US 5.1 : routes + worker async
 │       │   ├── test_pg_repository.py   # Adaptateur Postgres + délégation db_client
@@ -174,7 +174,8 @@ ChessImprover/
 │   └── migrations/
 │       ├── 20260630000000_init_auth.sql       # Tables profiles + user_data, RLS (US 7)
 │       ├── 20260701000000_advanced_stats.sql  # Tables games + game_moves, RLS (EPIC 1)
-│       └── 20260701120000_progress_history.sql # Table user_progress_history, RLS (US 5.1)
+│       ├── 20260701120000_progress_history.sql # Table user_progress_history, RLS (US 5.1)
+│       └── 20260701164500_games_eco.sql        # Colonnes eco/opening_name sur games (US 4.2)
 │
 └── .github/
     └── workflows/
@@ -737,6 +738,8 @@ Vue plein écran (« type Chess.com Premium ») ouverte depuis la carte BILAN (b
 | `deepDiveFor(summary, cadence)` | `{estimated, phases:[{key,label,sub,icon,elo,delta}]}` |
 | `gaugeAngle(value, min, max)` | angle d'aiguille −90°…+90° (borné) |
 | `matrixRows(summary)` | lignes prêtes au rendu (cadence × 4 catégories classées) |
+| `categoryDetailHtml(category, summary)` | vue détaillée (US 4.2) : `tactics` (rating + **gauge circulaire** `successRatio` + thèmes), `endgames` (tuiles + leçons), `openings` (`summary.topOpenings`, `{name, elo}`) |
+| `tacticSuccessGaugeHtml(percent)` | SVG circulaire pur (`stroke-dasharray`/`-dashoffset`), clampé `[0,100]`, `undefined`/`null` → 0 % |
 | `renderMatrix/renderDeepDive/renderFinalesTiles/renderTacticsCard/renderAcplChart/renderGaffeDonut/mount` | glue DOM/Chart.js |
 
 **Câblage `app.js` :** `_showAdvStats()` (ajoute la classe + `_loadAdvStats()`), `_loadAdvStats()` (fetch + `renderMatrix/DeepDive/FinalesTiles/TacticsCard` + 2 graphes Chart.js détruits/recréés), onglets de cadence (re-render deep-dive) et sélecteur de période (re-fetch).
@@ -876,9 +879,9 @@ Modules **purs** (couche domaine), entièrement testés, indépendants de l'infr
 
 **Worker (`run_analysis`)** : choisit la source d'évals (client > Stockfish natif `STOCKFISH_PATH` > aucune), appelle `analysis_pipeline.analyze_pgn`, **bulk-insert** des coups (US 1.2), puis `status=completed` (`failed` sur exception). Depuis US 5.1, enregistre ensuite un **snapshot de progression** (garde-fou séparé : un échec du snapshot n'invalide jamais l'analyse déjà persistée).
 
-**`analysis_pipeline.analyze_pgn(pgn, engine=None)`** → `{result, moves:[…]}` : pour chaque coup, `phase` (US 2.1), `eval_before`/`eval_after`/`score_cp`, `cpl` plafonné (US 2.2), `is_mate`/`mate_in`, `position_type` (US 3.2). `build_client_engine(evals)` adapte les évals navigateur (`{fen: [[uci, cp, is_mate?, mate_in?], …]}`).
+**`analysis_pipeline.analyze_pgn(pgn, engine=None)`** → `{result, eco, opening_name, moves:[…]}` : pour chaque coup, `phase` (US 2.1), `eval_before`/`eval_after`/`score_cp`, `cpl` plafonné (US 2.2), `is_mate`/`mate_in`, `position_type` (US 3.2). `build_client_engine(evals)` adapte les évals navigateur (`{fen: [[uci, cp, is_mate?, mate_in?], …]}`). **`_extract_opening(headers)`** (US 4.2) lit les en-têtes PGN `ECO`/`Opening`/`ECOUrl` (format Chess.com) ; `(None, None)` si absents (PGN non issu de Chess.com).
 
-**`stats_aggregator.build_summary(entries, ratings=None, period)`** → résumé attendu par le frontend : matrice `rows` (Elo virtuel par cadence × catégorie, défaut 1200), `acplTrend`, `gaffeRate` par phase, `finales` (conversion/résilience), `tactics`. **`category_elos(moves, tc)`** (ex-`_category_elos`, promue publique en US 5.1) : cœur du calcul, partagé avec `progress_history.build_snapshot`.
+**`stats_aggregator.build_summary(entries, ratings=None, period)`** → résumé attendu par le frontend : matrice `rows` (Elo virtuel par cadence × catégorie, défaut 1200), `acplTrend`, `gaffeRate` par phase, `finales` (conversion/résilience), `tactics` (+ `successRatio` %, US 4.2), `topOpenings` (US 4.2). **`category_elos(moves, tc)`** (ex-`_category_elos`, promue publique en US 5.1) : cœur du calcul, partagé avec `progress_history.build_snapshot`. **`top_openings(entries, limit=3)`** groupe par `eco`, trie par nombre de parties, Elo **sans bonus de cadence** (un groupe ECO peut mélanger les cadences).
 
 > **Persistance :** en dev/test, `db_client` stocke `games`/`game_moves`/`user_progress_history` en mémoire (resetable). L'adaptateur Postgres (`pg_repository.py`, §10.1) est prêt côté code.
 
@@ -1061,6 +1064,18 @@ fenêtre affichée      = { lignes | now - days ≤ recorded_at ≤ now }
 days ≤ 0               → fenêtre vide (aucune ligne)
 ```
 
+### 5.16 Top ouvertures & taux de réussite tactique (US 4.2)
+
+```
+eco/opening_name = en-têtes PGN ECO / Opening / ECOUrl (Chess.com) — None si absents
+top_openings     : groupe par eco, exclut les parties sans eco,
+                   trie par nb de parties décroissant, garde les 3 premières
+Elo par ouverture = acpl_to_elo(ACPL des coups d'ouverture du groupe, cadence=None)
+                    → PAS de bonus de cadence (un groupe ECO mélange les cadences)
+successRatio (%) = tactical_success_ratio(tous les coups tactiques, toutes cadences confondues) × 100
+                    → 0.0 si aucune position tactique (pas de None exposé au frontend)
+```
+
 ---
 
 ## 6. Tests & Qualité
@@ -1091,7 +1106,7 @@ npm run test:mutation # Stryker
 | `srs_sm2.test.js` | SRS (extrait de app.js) | createCard, SM-2 quality=5/3/1, EF clamp, due date |
 | `stats_dashboard.test.js` | StatsDashboard | wpFromCp, estimateEloLogistic, movingAverage, filterByDays, buildChartData, render (Chart mock) |
 | `personal_coach.test.js` | PersonalCoach | computeMetrics, diagnose (toutes les 6 branches), renderHTML, _detectResult, _detectUserColor, _extractOpening |
-| `advanced_stats.test.js` | AdvancedStats | cellClass, deltas, deepDiveFor, gaugeAngle, matrixRows, `categoryDetailHtml` (tactics/endgames/openings/strategy), fetchSummary (fallbacks), `formatShortDate`, `buildProgressDatasets`, `toggleProgressSeries`, `fetchHistory` (fallbacks) |
+| `advanced_stats.test.js` | AdvancedStats | cellClass, deltas, deepDiveFor, gaugeAngle, matrixRows, `categoryDetailHtml` (tactics/endgames/openings/strategy), `tacticSuccessGaugeHtml` (bornes, clamp, NaN-safe), fetchSummary (fallbacks), `formatShortDate`, `buildProgressDatasets`, `toggleProgressSeries`, `fetchHistory` (fallbacks) |
 | `api_client.test.js` | ApiClient | baseUrl/isConfigured (window/localStorage), url (query), analyzeGame (POST + erreur), getStatsSummary, getGame, getStatsHistory |
 
 > `advanced_stats.js` n'est pas dans `collectCoverageFrom` (comme `app.js`, `auth.js`, `board_manager.js`) : seules ses fonctions pures sont testées, les `render*` sont de la glue DOM.
@@ -1132,7 +1147,7 @@ JWT_SECRET=ci-test-secret pytest tests/ -v
 | `test_pg_repository.py` | PgRepository (dsn, colonnes, contrat progress_history, `_iso` générique), délégation db_client (in-memory sans `DATABASE_URL`) | EPIC 1 + US 5.1 |
 | `test_srs.py` | — | SM-2 backend |
 
-**Couverture backend :** 365 TUs au total, couverture globale **89 %** ; cœur Stats Avancées + EPIC 1/5.1 à 90–100 % (`stats_aggregator`, `cadence`, `progress_history`, `models`, `engine` à 100 %, `analysis_pipeline` 90 %, `routers/games` 92 %, `db_client` 98 %). Les requêtes SQL réelles de `pg_repository` (nécessitant une base) sont marquées `pragma: no cover`.
+**Couverture backend :** 387 TUs au total, couverture globale **89 %** ; cœur Stats Avancées + EPIC 1/5.1/US 4.2 à 92–100 % (`stats_aggregator`, `cadence`, `progress_history`, `models`, `engine` à 100 %, `analysis_pipeline` 92 %, `routers/games` 92 %, `db_client` 98 %). Les requêtes SQL réelles de `pg_repository` (nécessitant une base) sont marquées `pragma: no cover`.
 
 **Architecture de test `test_auth.py` :**
 - App de test minimale (`FastAPI()` + routers auth/sync uniquement) pour éviter la dépendance `python-chess`
@@ -1265,7 +1280,7 @@ UNIQUE (user_id)
 | **Bilan Chart dashboard** | `app.js:_renderBilanChart()` | Graphe Progrès/Elo sur les 10 dernières parties |
 | **Modal PGN overlay** | `index.html` + `app.js` | Remplace section-pgn ; `_openPgnModal()/_closePgnModal()` |
 | **Mobile / bascule Review** | CSS `body.board-active` | `.dash-grid` masquée / `.board-col` plein écran via classe `body` |
-| **Vue Statistiques Avancées** (US 4.1/4.2) | `advanced_stats.js` + `index.html` + `app.js` | Plein écran `body.advstats-active` : matrice colorée + gauge Héros + deep-dive + tuiles Finales + carte Tactiques (données `MOCK_SUMMARY`) |
+| **Vue Statistiques Avancées** (US 4.1/4.2) | `advanced_stats.js` + `index.html` + `app.js` | Plein écran `body.advstats-active` : matrice colorée + gauge Héros + deep-dive + tuiles Finales + carte Tactiques (gauge circulaire `successRatio`) + top 3 ouvertures ECO (données réelles via `/stats/summary`, `MOCK_SUMMARY` en secours) |
 
 ### ❌ Non câblé ou incomplet
 
@@ -1299,9 +1314,9 @@ Le `PersonalCoach` lit `game.endgame_accuracy` pour évaluer la technique de fin
 
 ### 10.1bis 🟢 Chaîne Stats Avancées — bout-à-bout en production
 
-EPIC 1 à 4 et US 5.1 sont implémentés, testés, **déployés** (backend Render Docker + Stockfish natif, frontend Vercel, Supabase). Reste :
+EPIC 1 à 4 et US 5.1 sont implémentés, testés, **déployés** (backend Render Docker + Stockfish natif, frontend Vercel, Supabase). US 4.2 est désormais **complète** (top 3 ouvertures ECO + gauge circulaire tactique). Reste :
 - **Source d'évals** : le frontend ne poste pas encore le PGN + évals de son Stockfish WASM vers `POST /api/v1/games/analyze` (champ `evals`) — Stockfish natif Render (`STOCKFISH_PATH=/usr/games/stockfish`, Docker) est la source active actuellement.
-- **US 4.2 (reste)** : top 3 ouvertures par code ECO dans l'onglet détaillé Ouvertures (placeholder `topOpenings` déjà prévu dans `categoryDetailHtml`).
+- **US 4.2 — ECO en prod** : l'extraction ECO ne peuple `topOpenings` que pour les parties analysées **après** ce déploiement (les parties déjà en base ont `eco = NULL`, exclues du classement jusqu'à réanalyse via `game_ids`).
 - **US 5.1 (reste)** : aucune vue de progression n'existe encore pour un utilisateur avec 0 ou 1 seul snapshot (le graphe affiche alors 0 ou 1 point ; pas de message pédagogique intermédiaire entre l'état vide et une vraie courbe).
 
 ### 10.2 🟡 IMPORTANT — Cache du livre d'ouvertures
