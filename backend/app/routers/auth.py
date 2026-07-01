@@ -3,27 +3,13 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 from app.domain import auth as auth_domain
 from app.domain.models import AuthResponse, ChessUsernameUpdate, UserCreate, UserLogin, UserProfile
 from app.infrastructure import db_client
+from app.routers.deps import get_current_user as _current_user
 
 router = APIRouter(prefix="/auth", tags=["auth"])
-_bearer = HTTPBearer(auto_error=False)
-
-
-def _current_user(creds: HTTPAuthorizationCredentials | None = Depends(_bearer)) -> dict:
-    if not creds:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Token manquant")
-    try:
-        payload = auth_domain.decode_token(creds.credentials)
-    except Exception:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Token invalide")
-    user = db_client.find_user_by_id(payload["sub"])
-    if not user:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Utilisateur introuvable")
-    return user
 
 
 def _to_profile(user: dict) -> UserProfile:

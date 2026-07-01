@@ -41,20 +41,30 @@ const ApiClient = (() => {
   }
 
   /**
+   * En-tête d'authentification (US 6.4) : ces routes dérivent désormais
+   * systématiquement `user_id` du JWT côté serveur — jamais d'un champ
+   * fourni par le client. Sans token, l'appel échoue en 401 (l'appelant
+   * dégrade déjà proprement, ex. `AdvancedStats.MOCK_SUMMARY`).
+   */
+  function _authHeaders() {
+    const token = typeof window !== "undefined" && window.Auth && window.Auth.getToken();
+    return token ? { Authorization: `Bearer ${token}` } : {};
+  }
+
+  /**
    * Soumet une partie à l'analyse asynchrone (US 1.1). Renvoie la réponse 202.
    * @param {string} pgn
-   * @param {object} [opts] { evals, timeControl, userColor, userId }
+   * @param {object} [opts] { evals, timeControl, userColor }
    */
   async function analyzeGame(pgn, opts = {}) {
     const res = await fetch(url("/api/v1/games/analyze"), {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", ..._authHeaders() },
       body: JSON.stringify({
         pgn,
         evals: opts.evals || null,
         time_control: opts.timeControl || null,
         user_color: opts.userColor || "white",
-        user_id: opts.userId || null,
       }),
     });
     return _json(res);
@@ -62,17 +72,19 @@ const ApiClient = (() => {
 
   /** Récupère le statut + les coups d'une partie. */
   async function getGame(gameId) {
-    return _json(await fetch(url(`/api/v1/games/${gameId}`)));
+    return _json(await fetch(url(`/api/v1/games/${gameId}`), { headers: _authHeaders() }));
   }
 
   /** Récupère le résumé agrégé des statistiques (US 4.1). */
-  async function getStatsSummary(period = "30d", userId) {
-    return _json(await fetch(url("/api/v1/stats/summary", { period, user_id: userId })));
+  async function getStatsSummary(period = "30d") {
+    return _json(await fetch(url("/api/v1/stats/summary", { period }), { headers: _authHeaders() }));
   }
 
   /** Récupère l'historique des snapshots Elo virtuel pour une cadence (US 5.1). */
-  async function getStatsHistory(cadence = "blitz", days = 30, userId) {
-    return _json(await fetch(url("/api/v1/stats/history", { cadence, days, user_id: userId })));
+  async function getStatsHistory(cadence = "blitz", days = 30) {
+    return _json(
+      await fetch(url("/api/v1/stats/history", { cadence, days }), { headers: _authHeaders() })
+    );
   }
 
   /** Vrai si une base API est configurée (sinon, mode 100 % local). */

@@ -1507,17 +1507,19 @@ class ChessImproverApp {
 
   /**
    * Envoie best-effort la partie analysée au backend (EPIC 1) pour persistance
-   * et stats serveur. No-op si aucune base API n'est configurée.
+   * et stats serveur. No-op si aucune base API n'est configurée ou si
+   * l'utilisateur n'est pas connecté (US 6.4 : la route exige un JWT, le
+   * propriétaire n'est plus fourni par le client).
    */
   _syncToBackend(analysis) {
     if (!window.ApiClient || !ApiClient.isConfigured()) return;
+    if (!window.Auth?.isLoggedIn()) return;
     const pgn = analysis?.pgn;
     if (!pgn) return;
     const userColor = (this._detectPlayerColor?.(pgn) === "b") ? "black" : "white";
     const tcMatch = pgn.match(/\[TimeControl\s+"([^"]+)"\]/);
     ApiClient.analyzeGame(pgn, {
       userColor,
-      userId: window.Auth?.currentUser?.id || null,
       timeControl: tcMatch ? tcMatch[1] : null,
     }).catch(() => { /* best-effort */ });
   }

@@ -38,17 +38,21 @@ describe("url", () => {
   });
 });
 
+afterEach(() => {
+  if (global.window) delete global.window.Auth;
+});
+
 describe("analyzeGame", () => {
   test("POST le PGN + options et renvoie le JSON", async () => {
     global.fetch = jest.fn().mockResolvedValue({ ok: true, json: async () => ({ accepted: [] }) });
-    const out = await ApiClient.analyzeGame("1. e4", { timeControl: "300", userColor: "black", userId: "u1" });
+    const out = await ApiClient.analyzeGame("1. e4", { timeControl: "300", userColor: "black" });
     expect(out).toEqual({ accepted: [] });
     const [, opts] = global.fetch.mock.calls[0];
     const body = JSON.parse(opts.body);
     expect(body.pgn).toBe("1. e4");
     expect(body.time_control).toBe("300");
     expect(body.user_color).toBe("black");
-    expect(body.user_id).toBe("u1");
+    expect(body.user_id).toBeUndefined();
   });
 
   test("rejette sur HTTP non-ok", async () => {
@@ -57,11 +61,39 @@ describe("analyzeGame", () => {
   });
 });
 
-describe("getStatsSummary / getGame", () => {
-  test("getStatsSummary construit la query period+user_id", async () => {
+describe("authentification (US 6.4)", () => {
+  test("sans Auth.getToken() → pas d'en-tête Authorization", async () => {
     global.fetch = jest.fn().mockResolvedValue({ ok: true, json: async () => ({ rows: {} }) });
-    await ApiClient.getStatsSummary("7d", "u9");
-    expect(global.fetch.mock.calls[0][0]).toBe("/api/v1/stats/summary?period=7d&user_id=u9");
+    await ApiClient.getStatsSummary("7d");
+    expect(global.fetch.mock.calls[0][1].headers.Authorization).toBeUndefined();
+  });
+
+  test("avec Auth.getToken() → en-tête Authorization Bearer sur toutes les routes", async () => {
+    global.window.Auth = { getToken: () => "jwt-123" };
+    global.fetch = jest.fn().mockResolvedValue({ ok: true, json: async () => ({ rows: {} }) });
+
+    await ApiClient.getStatsSummary("7d");
+    expect(global.fetch.mock.calls[0][1].headers.Authorization).toBe("Bearer jwt-123");
+
+    global.fetch.mockResolvedValue({ ok: true, json: async () => ({ history: [] }) });
+    await ApiClient.getStatsHistory();
+    expect(global.fetch.mock.calls[1][1].headers.Authorization).toBe("Bearer jwt-123");
+
+    global.fetch.mockResolvedValue({ ok: true, json: async () => ({ game: {} }) });
+    await ApiClient.getGame("abc");
+    expect(global.fetch.mock.calls[2][1].headers.Authorization).toBe("Bearer jwt-123");
+
+    global.fetch.mockResolvedValue({ ok: true, json: async () => ({ accepted: [] }) });
+    await ApiClient.analyzeGame("1. e4");
+    expect(global.fetch.mock.calls[3][1].headers.Authorization).toBe("Bearer jwt-123");
+  });
+});
+
+describe("getStatsSummary / getGame", () => {
+  test("getStatsSummary construit la query period (sans user_id, dérivé du JWT serveur)", async () => {
+    global.fetch = jest.fn().mockResolvedValue({ ok: true, json: async () => ({ rows: {} }) });
+    await ApiClient.getStatsSummary("7d");
+    expect(global.fetch.mock.calls[0][0]).toBe("/api/v1/stats/summary?period=7d");
   });
 
   test("getGame appelle l'URL de la partie", async () => {
@@ -72,13 +104,13 @@ describe("getStatsSummary / getGame", () => {
 });
 
 describe("getStatsHistory", () => {
-  test("construit la query cadence+days+user_id", async () => {
+  test("construit la query cadence+days (sans user_id)", async () => {
     global.fetch = jest.fn().mockResolvedValue({ ok: true, json: async () => ({ history: [] }) });
-    await ApiClient.getStatsHistory("bullet", 7, "u9");
-    expect(global.fetch.mock.calls[0][0]).toBe("/api/v1/stats/history?cadence=bullet&days=7&user_id=u9");
+    await ApiClient.getStatsHistory("bullet", 7);
+    expect(global.fetch.mock.calls[0][0]).toBe("/api/v1/stats/history?cadence=bullet&days=7");
   });
 
-  test("valeurs par défaut (blitz, 30 jours, sans user_id)", async () => {
+  test("valeurs par défaut (blitz, 30 jours)", async () => {
     global.fetch = jest.fn().mockResolvedValue({ ok: true, json: async () => ({ history: [] }) });
     await ApiClient.getStatsHistory();
     expect(global.fetch.mock.calls[0][0]).toBe("/api/v1/stats/history?cadence=blitz&days=30");
