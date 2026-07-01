@@ -2,10 +2,15 @@
 
 from __future__ import annotations
 
-from app.domain.tactics import is_correct_move, select_nearest_problem
+from app.domain.tactics import TACTICAL_THEMES, is_correct_move, select_nearest_problem
 
 MATE_IN_1_FEN = "6k1/5ppp/8/8/8/8/5PPP/R5K1 w - - 0 1"
 MATE_IN_1_SOLUTION = "Ra8#"
+
+
+class TestTacticalThemes:
+    def test_contains_the_three_seeded_categories(self):
+        assert set(TACTICAL_THEMES) == {"mate_in_1", "mate_in_2", "hanging_piece"}
 
 
 class TestIsCorrectMove:

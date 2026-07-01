@@ -1,14 +1,16 @@
-"""Coaching Tactique Adaptatif — sélection de problèmes + validation (US 8.1, EPIC 8).
+"""Coaching Tactique Adaptatif — sélection de problèmes + validation (US 8.1/8.2, EPIC 8).
 
 * ``GET  /api/v1/tactics/next``    — problème le plus proche de l'Elo tactique
-  de l'utilisateur authentifié.
+  de l'utilisateur authentifié, filtrable par ``theme_id`` (US 8.2).
 * ``POST /api/v1/tactics/attempt`` — valide le coup joué côté serveur (jamais
   une confiance aveugle au client) et ajuste l'Elo tactique (+15/-15).
 """
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException
+from typing import Optional
+
+from fastapi import APIRouter, Depends, HTTPException, Query
 
 from app.domain.models import (
     TacticalAttemptRequest,
@@ -16,7 +18,7 @@ from app.domain.models import (
     TacticalProblemPublic,
 )
 from app.domain.tactical_elo import update_elo
-from app.domain.tactics import is_correct_move
+from app.domain.tactics import TACTICAL_THEMES, is_correct_move
 from app.infrastructure import db_client
 from app.routers.deps import get_current_user_id
 
@@ -24,13 +26,22 @@ router = APIRouter(prefix="/api/v1/tactics", tags=["tactics"])
 
 
 @router.get("/next", response_model=TacticalProblemPublic)
-async def next_problem(user_id: str = Depends(get_current_user_id)) -> TacticalProblemPublic:
+async def next_problem(
+    theme_id: Optional[str] = Query(None, description="mate_in_1 | mate_in_2 | hanging_piece"),
+    user_id: str = Depends(get_current_user_id),
+) -> TacticalProblemPublic:
     """Sélectionne un problème dont la difficulté est proche de l'Elo tactique
     actuel de l'utilisateur (1000 par défaut tant qu'aucune tentative n'a été
     enregistrée). La solution n'est jamais incluse dans cette réponse.
+
+    ``theme_id`` (US 8.2) filtre par catégorie ; omis ou ``None`` = « Aléatoire »
+    (toutes catégories confondues). Une valeur hors de ``TACTICAL_THEMES``
+    est rejetée en 422 plutôt que de renvoyer silencieusement 404.
     """
+    if theme_id is not None and theme_id not in TACTICAL_THEMES:
+        raise HTTPException(status_code=422, detail=f"theme_id inconnu : {theme_id!r}")
     tactical_elo = db_client.get_tactical_elo(user_id)
-    problem = db_client.get_next_tactical_problem(tactical_elo)
+    problem = db_client.get_next_tactical_problem(tactical_elo, category=theme_id)
     if problem is None:
         raise HTTPException(status_code=404, detail="Aucun problème tactique disponible.")
     return TacticalProblemPublic(

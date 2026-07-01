@@ -26,12 +26,12 @@ const ApiClient = (() => {
 
   /** Construit une URL absolue/relative vers le backend. */
   function url(path, query) {
-    const qs = query
-      ? "?" + Object.entries(query)
+    const pairs = query
+      ? Object.entries(query)
           .filter(([, v]) => v != null && v !== "")
           .map(([k, v]) => `${encodeURIComponent(k)}=${encodeURIComponent(v)}`)
-          .join("&")
-      : "";
+      : [];
+    const qs = pairs.length ? `?${pairs.join("&")}` : "";
     return `${baseUrl()}${path}${qs}`;
   }
 
@@ -90,6 +90,17 @@ const ApiClient = (() => {
     return _json(res);
   }
 
+  /**
+   * Sélectionne le prochain problème tactique (US 8.1/8.2), proche de l'Elo
+   * tactique de l'utilisateur. `themeId` filtre par catégorie ("Aléatoire"
+   * = omis/vide). Ne renvoie jamais la solution.
+   */
+  async function getNextTacticalProblem(themeId) {
+    return _json(
+      await fetch(url("/api/v1/tactics/next", { theme_id: themeId }), { headers: _authHeaders() })
+    );
+  }
+
   /** Récupère le résumé agrégé des statistiques (US 4.1). */
   async function getStatsSummary(period = "30d") {
     return _json(await fetch(url("/api/v1/stats/summary", { period }), { headers: _authHeaders() }));
@@ -109,7 +120,7 @@ const ApiClient = (() => {
 
   return {
     baseUrl, url, analyzeGame, getGame, getGames, updateGameStatus,
-    getStatsSummary, getStatsHistory, isConfigured,
+    getNextTacticalProblem, getStatsSummary, getStatsHistory, isConfigured,
   };
 })();
 

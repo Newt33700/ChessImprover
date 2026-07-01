@@ -1904,6 +1904,82 @@ body.advstats-active .advstats-col { display: block; }
 }
 
 /* ==========================================================================
+   Coach Tactique Adaptatif (EPIC 8 — US 8.1 / 8.2)
+   ========================================================================== */
+.tactics-col {
+  display: none;
+  max-width: 720px;
+  margin: 0 auto;
+  padding: var(--space-lg) var(--space-md) var(--space-xl);
+}
+body.tactics-active .dash-grid { display: none; }
+body.tactics-active .board-col { display: none; }
+body.tactics-active .tactics-col { display: block; }
+
+.tactics-topbar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-md);
+  margin-bottom: var(--space-md);
+}
+.tactics-title {
+  font-size: 1.35rem;
+  font-weight: 800;
+  letter-spacing: -0.01em;
+  color: var(--text-primary);
+  flex: 1;
+}
+.tactics-elo-badge {
+  background: rgba(129,182,76,0.15);
+  color: var(--green-light);
+  border: 1px solid rgba(129,182,76,0.3);
+  border-radius: var(--radius-sm);
+  padding: 4px 10px;
+  font-size: 0.8rem;
+  font-weight: 700;
+}
+
+.tactics-themes {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-sm);
+  margin-bottom: var(--space-lg);
+}
+.tactics-theme-btn {
+  background: var(--bg-700);
+  border: 1px solid var(--border);
+  color: var(--text-secondary);
+  border-radius: var(--radius-sm);
+  padding: 6px 12px;
+  font-size: 0.8rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+.tactics-theme-btn.active { background: var(--green); color: #fff; border-color: var(--green-dark); }
+.tactics-theme-btn:hover:not(.active) { background: var(--bg-600); }
+
+.tactics-problem-card { max-width: 480px; margin: 0 auto; }
+.tactics-fen {
+  font-family: var(--font-mono, monospace);
+  font-size: 0.8rem;
+  color: var(--text-secondary);
+  word-break: break-all;
+  background: var(--bg-900);
+  border-radius: var(--radius-sm);
+  padding: var(--space-sm);
+  margin: var(--space-sm) 0;
+}
+.tactics-category-badge {
+  display: inline-block;
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+/* ==========================================================================
    Vues détaillées par catégorie (US 4.2 — maquettes Finales / Tactiques)
    ========================================================================== */
 .adv-detail { display: none; }
