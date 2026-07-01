@@ -494,4 +494,10 @@ En tant qu'équipe, nous voulons que chaque modification de `supabase/migrations
 - `PATCH /api/v1/games/{game_id}/status` pour basculer l'état (restreint à l'utilisateur propriétaire).
 - Distinction visuelle (coche verte) dans le dashboard pour les parties `is_reviewed = true`.
 
-**Statut :** 🔜 Backlog.
+**Statut :** ✅ Implémenté :
+- Migration `20260701191149_games_is_reviewed.sql` (colonne `is_reviewed` boolean, `NOT NULL DEFAULT false`).
+- `PATCH /api/v1/games/{game_id}/status` (body `{is_reviewed}`, modèle `GameStatusUpdate`), restreint à l'utilisateur propriétaire (`Depends(get_current_user_id)`, 404 si partie inconnue ou appartenant à un autre utilisateur — même traitement, indiscernable).
+- Frontend : `ApiClient.updateGameStatus(gameId, isReviewed)` (PATCH), bouton `#btn-mark-reviewed` dans le topbar de la vue Review (`index.html`), affiché uniquement quand la partie en cours a un pendant serveur connu (`this.currentGame.serverGameId`, capturé par `_syncToBackend` après un appel `getGame` pour lire le statut réel — utile en cas de dédup US 7.2). `_toggleReviewed()` bascule l'état via l'API et met à jour visuellement le bouton (texte + classe CSS `.is-reviewed`, fond vert).
+- **Décision de conception documentée** : la « distinction visuelle » est portée par ce bouton dans la vue Review (partie du dashboard SPA), pas par la liste `#games-list` du dashboard (parties Chess.com) — ces deux listes sont aujourd'hui disjointes : seule une partie explicitement analysée via la modale « Analyser un PGN » est synchronisée côté serveur (`_syncToBackend`), les 20 dernières parties Chess.com affichées dans `#games-list` ne le sont pas automatiquement.
+- Vérifié en intégration réelle (navigateur Playwright + backend/frontend locaux) : le bouton apparaît après analyse, bascule visuellement (texte + fond vert) après clic, revient à l'état initial au second clic ; capture d'écran à l'appui.
+- Tests : `backend/tests/test_games_api.py` (classe `TestUpdateGameStatus`, 7 tests : marque/démarque, persistance via GET, 401 sans token, 404 partie inconnue/autre utilisateur, 422 body invalide ; `is_reviewed=False` par défaut vérifié dans `TestListGames`), `frontend/tests/api_client.test.js` (`updateGameStatus`).
