@@ -12,6 +12,9 @@ from __future__ import annotations
 import uuid
 from typing import Any, Dict, List, Optional
 
+from app.domain.tactical_elo import DEFAULT_TACTICAL_ELO
+from app.domain.tactics import select_nearest_problem
+
 # ---------------------------------------------------------------------------
 # In-memory store (dev / test)
 # ---------------------------------------------------------------------------
@@ -83,9 +86,26 @@ def create_user(email: str, username: str, password_hash: str) -> Dict[str, Any]
         "username": username,
         "password_hash": password_hash,
         "chess_username": None,
+        "tactical_elo": DEFAULT_TACTICAL_ELO,
     }
     _users[user_id] = user
     _user_data[user_id] = {"games": [], "srs_cards": []}
+    return user
+
+
+def get_tactical_elo(user_id: str) -> int:
+    """US 8.1 — Elo tactique de l'utilisateur (1000 par défaut)."""
+    user = _users.get(user_id)
+    if user is None:
+        return DEFAULT_TACTICAL_ELO
+    return user.get("tactical_elo", DEFAULT_TACTICAL_ELO)
+
+
+def update_tactical_elo(user_id: str, new_elo: int) -> Optional[Dict[str, Any]]:
+    user = _users.get(user_id)
+    if user is None:
+        return None
+    user["tactical_elo"] = new_elo
     return user
 
 
@@ -272,6 +292,62 @@ def get_progress_history(user_id: Optional[str], cadence: str) -> List[Dict[str,
         if r["cadence"] == cadence and (user_id is None or r["user_id"] == user_id)
     ]
     return sorted(rows, key=lambda r: r["recorded_at"])
+
+
+# ---------------------------------------------------------------------------
+# Problèmes tactiques (US 8.1, EPIC 8) — jeu de données de référence, non
+# réinitialisé par _reset_store() (ce n'est pas une donnée utilisateur).
+# Mêmes 15 problèmes que le seed SQL (migration games_epic8), vérifiés par
+# python-chess (voir tests/test_db_tactics.py).
+# ---------------------------------------------------------------------------
+
+_TACTICAL_PROBLEMS_SEED = [
+    {"fen": "6k1/5ppp/8/8/8/8/5PPP/R5K1 w - - 0 1", "solution": "Ra8#", "category": "mate_in_1", "difficulty_elo": 650},
+    {"fen": "7k/6pp/8/8/8/8/8/R6K w - - 0 1", "solution": "Ra8#", "category": "mate_in_1", "difficulty_elo": 650},
+    {"fen": "k7/8/1K6/8/8/8/8/7R w - - 0 1", "solution": "Rh8#", "category": "mate_in_1", "difficulty_elo": 700},
+    {"fen": "3r2k1/5ppp/8/8/8/8/5PPP/6K1 b - - 0 1", "solution": "Rd1#", "category": "mate_in_1", "difficulty_elo": 750},
+    {"fen": "6k1/4Rppp/8/8/8/8/6PP/6K1 w - - 0 1", "solution": "Re8#", "category": "mate_in_1", "difficulty_elo": 700},
+    {"fen": "k1K5/8/8/8/8/8/8/6R1 w - - 0 1", "solution": "Ra1#", "category": "mate_in_1", "difficulty_elo": 800},
+    {"fen": "4k3/8/8/3q4/8/8/3R4/4K3 w - - 0 1", "solution": "Rxd5", "category": "hanging_piece", "difficulty_elo": 900},
+    {"fen": "4k3/8/8/4q3/8/8/4R3/4K3 w - - 0 1", "solution": "Rxe5+", "category": "hanging_piece", "difficulty_elo": 950},
+    {"fen": "4k3/8/2n5/8/8/8/2R5/4K3 w - - 0 1", "solution": "Rxc6", "category": "hanging_piece", "difficulty_elo": 850},
+    {"fen": "4k3/8/8/8/4n3/8/4Q3/4K3 w - - 0 1", "solution": "Qxe4+", "category": "hanging_piece", "difficulty_elo": 1000},
+    {"fen": "8/8/8/8/8/8/8/k1KQ4 w - - 0 1", "solution": "Qd4+", "category": "mate_in_2", "difficulty_elo": 1250},
+    {"fen": "8/8/8/8/8/8/8/k1K1Q3 w - - 0 1", "solution": "Qe5+", "category": "mate_in_2", "difficulty_elo": 1300},
+    {"fen": "8/8/8/8/8/8/8/k1K1Q3 w - - 0 1", "solution": "Qc3+", "category": "mate_in_2", "difficulty_elo": 1300},
+    {"fen": "8/8/8/8/8/8/8/k1K2Q2 w - - 0 1", "solution": "Qf6+", "category": "mate_in_2", "difficulty_elo": 1350},
+    {"fen": "8/8/8/8/8/8/8/k1K2Q2 w - - 0 1", "solution": "Kc2+", "category": "mate_in_2", "difficulty_elo": 1400},
+]
+
+_tactical_problems: Dict[str, Dict[str, Any]] = {}
+for _seed in _TACTICAL_PROBLEMS_SEED:
+    _pid = str(uuid.uuid4())
+    _tactical_problems[_pid] = {"id": _pid, **_seed}
+del _seed, _pid
+
+
+def get_tactical_problem(problem_id: str) -> Optional[Dict[str, Any]]:
+    repo = _pg()
+    if repo is not None:  # pragma: no cover - nécessite DATABASE_URL
+        return repo.get_tactical_problem(problem_id)
+    return _tactical_problems.get(problem_id)
+
+
+def get_next_tactical_problem(
+    tactical_elo: int, category: Optional[str] = None
+) -> Optional[Dict[str, Any]]:
+    """US 8.1 — Problème le plus proche de l'Elo tactique du joueur.
+
+    ``category`` (US 8.2) filtre le jeu de problèmes avant sélection ;
+    ``None`` (par défaut) considère toutes les catégories.
+    """
+    repo = _pg()
+    if repo is not None:  # pragma: no cover - nécessite DATABASE_URL
+        return repo.get_next_tactical_problem(tactical_elo, category)
+    pool = list(_tactical_problems.values())
+    if category is not None:
+        pool = [p for p in pool if p["category"] == category]
+    return select_nearest_problem(pool, tactical_elo)
 
 
 def _reset_store() -> None:

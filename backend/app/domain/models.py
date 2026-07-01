@@ -254,6 +254,31 @@ class GameStatusUpdate(BaseModel):
     is_reviewed: bool = Field(..., description="Vrai si la partie a déjà été étudiée")
 
 
+# ---------------------------------------------------------------------------
+# Coaching Tactique Adaptatif (US 8.1, EPIC 8)
+# ---------------------------------------------------------------------------
+
+class TacticalProblemPublic(BaseModel):
+    """Problème tactique exposé au client — jamais `solution` avant tentative."""
+    id: str
+    fen: str
+    category: str
+    difficulty_elo: int
+
+
+class TacticalAttemptRequest(BaseModel):
+    """Coup joué par l'utilisateur pour résoudre un problème."""
+    problem_id: str
+    move: str = Field(..., min_length=2, description="Coup joué en notation SAN")
+
+
+class TacticalAttemptResult(BaseModel):
+    """Résultat d'une tentative : révèle la solution après coup."""
+    success: bool
+    new_elo: int
+    solution: str
+
+
 class GameMoveRecord(BaseModel):
     """Métriques persistées d'un coup (US 1.2)."""
     move_number: int

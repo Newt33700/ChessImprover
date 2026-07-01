@@ -30,6 +30,7 @@ from app.infrastructure.chess_com_client import ChessComClient
 from app.routers import auth as auth_router
 from app.routers import games as games_router
 from app.routers import sync as sync_router
+from app.routers import tactics as tactics_router
 
 # ---------------------------------------------------------------------------
 # Lifespan (remplace les événements on_startup / on_shutdown dépréciés)
@@ -68,6 +69,7 @@ app.add_middleware(
 app.include_router(auth_router.router)
 app.include_router(sync_router.router)
 app.include_router(games_router.router)
+app.include_router(tactics_router.router)
 
 
 # ---------------------------------------------------------------------------
