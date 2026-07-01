@@ -462,7 +462,11 @@ En tant qu'équipe, nous voulons que chaque modification de `supabase/migrations
 - `GET /api/v1/games` (nouveau) filtré côté SQL par l'utilisateur authentifié (JWT), réutilisant `get_games_for_user`.
 - Le frontend appelle cet endpoint au chargement du dashboard, avec un état de chargement (loader).
 
-**Statut :** 🔜 Backlog.
+**Statut :** ✅ Implémenté :
+- Backend : `GET /api/v1/games` (`backend/app/routers/games.py`), `Depends(get_current_user_id)`, réutilise `db_client.get_games_for_user` (déjà filtré par `user_id` en SQL/in-memory).
+- Frontend : `ApiClient.getGames()` (`api_client.js`, en-tête `Authorization`), appelé depuis `app.js:_loadServerGames()` (au boot après restauration de session ET juste après connexion/inscription, via `_onAuthSuccess`), avec `_setLoading(true/false, "Chargement de vos parties…")` pendant l'appel. Résultat stocké dans `this.serverGames` (base pour US 7.2/7.3). Best-effort : ne bloque jamais le reste du chargement du dashboard en cas d'échec.
+- Vérifié en intégration réelle (serveur local + `curl`) : 401 sans token, `{"games": []}` avant toute analyse, liste peuplée après une analyse.
+- Tests : `backend/tests/test_games_api.py` (classe `TestListGames`, 4 tests : liste propre, vide, 401 sans token, isolation entre utilisateurs), `frontend/tests/api_client.test.js` (`getGames`, en-tête Authorization).
 
 ### US 7.2 : Hashage PGN et prévention du recalcul
 
