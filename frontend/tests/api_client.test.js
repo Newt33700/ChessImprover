@@ -125,6 +125,30 @@ describe("updateGameStatus (US 7.3)", () => {
   });
 });
 
+describe("getNextTacticalProblem (US 8.1/8.2)", () => {
+  test("sans themeId : pas de query theme_id (Aléatoire)", async () => {
+    global.fetch = jest.fn().mockResolvedValue({
+      ok: true, json: async () => ({ id: "p1", fen: "x", category: "mate_in_1", difficulty_elo: 1000 }),
+    });
+    await ApiClient.getNextTacticalProblem();
+    expect(global.fetch.mock.calls[0][0]).toBe("/api/v1/tactics/next");
+  });
+
+  test("avec themeId : ajoute theme_id à la query", async () => {
+    global.fetch = jest.fn().mockResolvedValue({
+      ok: true, json: async () => ({ id: "p1", fen: "x", category: "mate_in_2", difficulty_elo: 1300 }),
+    });
+    const out = await ApiClient.getNextTacticalProblem("mate_in_2");
+    expect(global.fetch.mock.calls[0][0]).toBe("/api/v1/tactics/next?theme_id=mate_in_2");
+    expect(out.category).toBe("mate_in_2");
+  });
+
+  test("rejette sur HTTP non-ok", async () => {
+    global.fetch = jest.fn().mockResolvedValue({ ok: false, status: 401 });
+    await expect(ApiClient.getNextTacticalProblem()).rejects.toThrow("HTTP 401");
+  });
+});
+
 describe("getStatsSummary / getGame", () => {
   test("getStatsSummary construit la query period (sans user_id, dérivé du JWT serveur)", async () => {
     global.fetch = jest.fn().mockResolvedValue({ ok: true, json: async () => ({ rows: {} }) });

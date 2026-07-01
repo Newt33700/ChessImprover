@@ -303,6 +303,20 @@
           </div>
         </div>
 
+        <!-- TACTIQUE card (EPIC 8 — Coaching Tactique Adaptatif) -->
+        <div class="db-card" id="card-tactics">
+          <div class="db-card-head">
+            <div class="db-card-heading">
+              <h2 class="db-card-title">TACTIQUE</h2>
+              <p class="db-card-sub">Problèmes adaptés à votre niveau</p>
+            </div>
+          </div>
+          <div class="db-card-body" id="db-body-tactics">
+            <p class="empty-state">Résolvez des problèmes tactiques ajustés à votre Elo.</p>
+            <button class="btn btn--accent btn--full btn--sm" onclick="window.app?._showTactics()">Coach Tactique →</button>
+          </div>
+        </div>
+
       </div><!-- /.dash-col (right) -->
 
       <!-- Recent games (hidden, kept for compat) -->
@@ -581,6 +595,28 @@
     </div>
     <div id="tab-coach" hidden>
       <div id="coach-diagnosis2"></div>
+    </div>
+  </div>
+
+  <!-- ── COACH TACTIQUE (EPIC 8 — US 8.1/8.2, plein écran, body.tactics-active) ── -->
+  <div class="tactics-col" id="tactics-col">
+    <div class="tactics-topbar">
+      <button class="btn-icon" aria-label="Retour" onclick="window.app?._hideTactics()">←</button>
+      <h2 class="tactics-title">Coach Tactique</h2>
+      <div class="tactics-elo-badge" id="tactics-elo-badge">Elo — </div>
+    </div>
+
+    <div class="tactics-themes" id="tactics-themes">
+      <button class="tactics-theme-btn active" data-theme="">Aléatoire</button>
+      <button class="tactics-theme-btn" data-theme="mate_in_1">Mat en 1</button>
+      <button class="tactics-theme-btn" data-theme="mate_in_2">Mat en 2</button>
+      <button class="tactics-theme-btn" data-theme="hanging_piece">Pièces non protégées</button>
+    </div>
+
+    <div class="db-card tactics-problem-card">
+      <div class="db-card-body" id="tactics-problem-body">
+        <p class="empty-state">Connectez-vous pour accéder au Coach Tactique.</p>
+      </div>
     </div>
   </div>
 

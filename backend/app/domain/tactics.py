@@ -7,6 +7,9 @@ from typing import Any, Dict, List, Optional
 
 import chess
 
+#: Catégories/thèmes valides (US 8.2). "Aléatoire" côté UI = theme_id omis.
+TACTICAL_THEMES = ("mate_in_1", "mate_in_2", "hanging_piece")
+
 
 def is_correct_move(fen: str, solution_san: str, played_san: str) -> bool:
     """Compare le coup joué à la solution attendue sur cette position.

@@ -56,6 +56,27 @@ class TestNextProblem:
     def test_without_token_returns_401_or_403(self):
         assert client.get("/api/v1/tactics/next").status_code in (401, 403)
 
+    def test_theme_id_mate_in_1(self):
+        token = _signup_and_token()
+        r = client.get("/api/v1/tactics/next", params={"theme_id": "mate_in_1"}, headers=_auth(token))
+        assert r.status_code == 200
+        assert r.json()["category"] == "mate_in_1"
+
+    def test_theme_id_mate_in_2(self):
+        token = _signup_and_token()
+        r = client.get("/api/v1/tactics/next", params={"theme_id": "mate_in_2"}, headers=_auth(token))
+        assert r.json()["category"] == "mate_in_2"
+
+    def test_theme_id_hanging_piece(self):
+        token = _signup_and_token()
+        r = client.get("/api/v1/tactics/next", params={"theme_id": "hanging_piece"}, headers=_auth(token))
+        assert r.json()["category"] == "hanging_piece"
+
+    def test_unknown_theme_id_returns_422(self):
+        token = _signup_and_token()
+        r = client.get("/api/v1/tactics/next", params={"theme_id": "not-a-theme"}, headers=_auth(token))
+        assert r.status_code == 422
+
 
 class TestSubmitAttempt:
     def _get_mate_in_1_problem_id(self, token: str) -> str:

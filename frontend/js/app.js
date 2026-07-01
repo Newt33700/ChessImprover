@@ -372,6 +372,15 @@ class ChessImproverApp {
       });
     });
 
+    // Coach Tactique (EPIC 8) — sélection de thème (US 8.2)
+    document.getElementById("tactics-themes")?.addEventListener("click", (e) => {
+      const btn = e.target.closest(".tactics-theme-btn");
+      if (!btn) return;
+      document.querySelectorAll("#tactics-themes .tactics-theme-btn").forEach((b) => b.classList.remove("active"));
+      btn.classList.add("active");
+      this._loadTacticalProblem(btn.dataset.theme || null);
+    });
+
     // Auth modal — switch Login/Signup tabs
     document.querySelectorAll(".auth-tab").forEach((tab) => {
       tab.addEventListener("click", () => {
@@ -1620,6 +1629,45 @@ class ChessImproverApp {
     if (this._progressChart) {
       this._progressChart.destroy();
       this._progressChart = null;
+    }
+  }
+
+  // ─── Coach Tactique Adaptatif (EPIC 8 — US 8.1/8.2) ──────────────
+
+  _showTactics() {
+    document.body.classList.add("tactics-active");
+    this._loadTacticalProblem(null);
+  }
+
+  _hideTactics() {
+    document.body.classList.remove("tactics-active");
+  }
+
+  /**
+   * Récupère le prochain problème tactique (filtré par thème si fourni) et
+   * l'affiche. Nécessite d'être connecté (route protégée par JWT, US 6.4) :
+   * affiche un message explicite plutôt qu'une erreur brute sinon.
+   */
+  async _loadTacticalProblem(themeId) {
+    const body = document.getElementById("tactics-problem-body");
+    if (!body) return;
+    if (!window.ApiClient || !ApiClient.isConfigured() || !window.Auth?.isLoggedIn()) {
+      body.innerHTML = `<p class="empty-state">Connectez-vous pour accéder au Coach Tactique.</p>`;
+      return;
+    }
+    body.innerHTML = `<p class="empty-state">Chargement…</p>`;
+    try {
+      const problem = await ApiClient.getNextTacticalProblem(themeId || undefined);
+      const badge = document.getElementById("tactics-elo-badge");
+      if (badge) badge.textContent = `Elo ${problem.difficulty_elo}`;
+      body.innerHTML = `
+        <span class="tactics-category-badge">${problem.category.replace(/_/g, " ")}</span>
+        <div class="tactics-fen">${problem.fen}</div>
+        <p class="empty-state">Échiquier interactif à venir (US 8.3).</p>
+      `;
+      this._currentTacticalProblem = problem;
+    } catch {
+      body.innerHTML = `<p class="empty-state">Impossible de charger un problème pour le moment.</p>`;
     }
   }
 
