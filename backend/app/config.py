@@ -15,8 +15,12 @@ class Settings(BaseSettings):
     # Identifiant HTTP envoyé à Chess.com (politique de leur API)
     user_agent: str = "ChessImprover/0.1 (contact: chess-improver@example.com)"
 
-    # CORS — séparées par des virgules dans .env
-    allowed_origins: List[str] = ["http://localhost:8080", "http://127.0.0.1:8080"]
+    # CORS — surchargeable via ALLOWED_ORIGINS (liste séparée par des virgules).
+    allowed_origins: List[str] = [
+        "http://localhost:8080",
+        "http://127.0.0.1:8080",
+        "https://chess-improver-nu.vercel.app",
+    ]
 
     # Auth JWT (US 7)
     jwt_secret: str = "dev-secret-change-in-production"
