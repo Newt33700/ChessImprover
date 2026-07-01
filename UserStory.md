@@ -525,7 +525,14 @@ En tant qu'équipe, nous voulons que chaque modification de `supabase/migrations
 - Si aucun Elo tactique n'est défini pour l'utilisateur, le système propose un problème de difficulté moyenne (1000) et l'ajuste dès le premier résultat.
 - Algorithme : succès → +15 points ; échec → −15 points.
 
-**Statut :** 🔜 Backlog.
+**Statut :** ✅ Implémenté :
+- Migration `20260701194517_tactics_epic8.sql` : table `tactical_problems` (`fen`, `solution`, `category`, `difficulty_elo`, index sur `category`/`difficulty_elo`) + colonne `profiles.tactical_elo` (`1000` par défaut, distincte de l'Elo virtuel Stats Avancées EPIC 3) + seed de 15 problèmes (5 `mate_in_1`, 4 `hanging_piece`, 6 `mate_in_2`), **chacun vérifié programmatiquement via python-chess** (coup légal + mat effectif pour les catégories mat, capture non défendue pour `hanging_piece`) faute d'accès réseau à un dataset externe dans cet environnement — le même jeu de données est répliqué en Python (`db_client._TACTICAL_PROBLEMS_SEED`) pour le mode in-memory dev/test.
+- `backend/app/domain/tactical_elo.py` : `update_elo(current, success)` (+15/-15, plancher 100).
+- `backend/app/domain/tactics.py` : `is_correct_move(fen, solution, played)` (compare des objets `chess.Move` via python-chess, pas des chaînes brutes — des annotations différentes du même coup, ex. `Ra8` vs `Ra8#`, sont reconnues équivalentes) ; `select_nearest_problem(problems, target_elo)` (le plus proche de l'Elo cible, tirage aléatoire en cas d'égalité).
+- `backend/app/routers/tactics.py` (nouveau, câblé dans `app.main`) : `GET /api/v1/tactics/next` (JWT requis, ne renvoie jamais `solution`) et `POST /api/v1/tactics/attempt` (JWT requis, **valide le coup côté serveur** contre la solution stockée — jamais une confiance au client —, met à jour l'Elo tactique, révèle la solution uniquement après la tentative).
+- **Paramètre `category` pré-câblé mais pas encore exposé** : `db_client.get_next_tactical_problem(tactical_elo, category=None)` accepte déjà un filtre par catégorie (nécessaire à US 8.2), mais la route `GET /api/v1/tactics/next` ne l'expose pas encore en paramètre de requête — réservé à US 8.2.
+- Vérifié en intégration réelle (serveur local + `curl`) : 401 sans token, sélection d'un problème sans solution exposée, tentative invalide rejetée proprement (`success: false`, Elo décrémenté) sans crash.
+- Tests : `backend/tests/test_tactical_elo.py` (7 tests), `backend/tests/test_tactics.py` (10 tests, validation + sélection), `backend/tests/test_db_tactics.py` (12 tests, dont l'intégrité complète des 15 problèmes du seed), `backend/tests/test_tactics_api.py` (10 tests d'intégration : succès/échec, notation équivalente, persistance, isolation entre utilisateurs, 401/404).
 
 ### US 8.2 : Dashboard de catégories tactiques (Mat en 1, Mat en 2, Non-protégés)
 

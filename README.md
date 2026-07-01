@@ -146,12 +146,13 @@ ChessImprover/
 │       │   ├── chess_com_client.py     # Proxy httpx vers Chess.com API
 │       │   ├── engine.py               # EngineProvider (évals client / Stockfish natif) — EPIC 2
 │       │   ├── pg_repository.py        # Dépôt Postgres/Supabase games+game_moves+progress_history
-│       │   └── db_client.py            # Store in-memory + délégation Postgres (EPIC 1 / US 5.1)
+│       │   └── db_client.py            # Store in-memory + délégation Postgres (EPIC 1 / US 5.1 / US 8.1)
 │       ├── routers/
 │       │   ├── deps.py                 # get_current_user/get_current_user_id (JWT partagé, US 6.4)
 │       │   ├── auth.py                 # POST /auth/signup /auth/login GET+PATCH /auth/me (US 7/6.3)
 │       │   ├── sync.py                 # POST /sync — stratégie Client Wins (US 7)
-│       │   └── games.py                # POST /games/analyze, GET /games (US 7.1), GET stats/summary, GET stats/history (JWT requis, US 6.4)
+│       │   ├── games.py                # POST /games/analyze, GET /games (US 7.1), GET stats/summary, GET stats/history (JWT requis, US 6.4)
+│       │   └── tactics.py              # GET /tactics/next, POST /tactics/attempt (US 8.1)
 │       ├── tests/
 │       │   ├── test_auth.py            # 37 TUs auth : hash, JWT, signup, login, me, PATCH me, sync
 │       │   ├── test_analyzer.py
@@ -168,6 +169,10 @@ ChessImprover/
 │       │   ├── test_progress_history.py  # US 5.1 : snapshot + fenêtre glissante
 │       │   ├── test_games_api.py       # US 1.1 + US 5.1 + US 6.4 + US 7.1/7.2/7.3 : routes JWT + isolation + dédup PGN + is_reviewed + worker async
 │       │   ├── test_pg_repository.py   # Adaptateur Postgres + délégation db_client (+ contrat pgn_hash US 7.2)
+│       │   ├── test_tactical_elo.py    # US 8.1 : update_elo (+15/-15, plancher)
+│       │   ├── test_tactics.py         # US 8.1 : is_correct_move, select_nearest_problem
+│       │   ├── test_db_tactics.py      # US 8.1 : store tactique + intégrité du seed (python-chess)
+│       │   ├── test_tactics_api.py     # US 8.1 : routes GET next / POST attempt
 │       │   └── test_srs.py
 │       └── mutants/                    # Mutation testing mutmut
 │
@@ -179,7 +184,8 @@ ChessImprover/
 │       ├── 20260701164500_games_eco.sql        # Colonnes eco/opening_name sur games (US 4.2)
 │       ├── 20260701172219_profiles_chess_username.sql # Colonne chess_username sur profiles (US 6.2)
 │       ├── 20260701185622_games_pgn_hash.sql   # Colonne pgn_hash + index unique (user_id, pgn_hash) (US 7.2)
-│       └── 20260701191149_games_is_reviewed.sql # Colonne is_reviewed (défaut false) sur games (US 7.3)
+│       ├── 20260701191149_games_is_reviewed.sql # Colonne is_reviewed (défaut false) sur games (US 7.3)
+│       └── 20260701194517_tactics_epic8.sql    # Table tactical_problems + profiles.tactical_elo + seed 15 problèmes (US 8.1)
 │
 └── .github/
     └── workflows/
@@ -928,6 +934,25 @@ Modules **purs** (couche domaine), entièrement testés, indépendants de l'infr
 
 **`GET /api/v1/stats/history`** : dégrade en `history: []` (200) si l'accès aux données échoue (log de la trace), plutôt qu'un 500 — même pattern défensif que `/stats/summary`.
 
+### 4.8 EPIC 8 — Coaching Tactique Adaptatif (US 8.1)
+
+**Fichiers :** `routers/tactics.py`, `domain/tactical_elo.py`, `domain/tactics.py`, `infrastructure/db_client.py`, `supabase/migrations/20260701194517_tactics_epic8.sql`
+
+> **Distinct du mode Exercice/SRS existant** (`js/app.js`, cartes en `localStorage`/`IndexedDB`) qui rejoue les propres gaffes détectées lors de l'analyse d'une partie du joueur. L'EPIC 8 introduit un **jeu de problèmes tactiques curés côté serveur** (dataset indépendant des parties du joueur), avec sélection adaptative par Elo et validation anti-triche systématiquement côté backend.
+
+**Routes** (JWT requis, comme `games.py` depuis US 6.4) :
+
+| Route | Méthode | Comportement |
+|---|---|---|
+| `/api/v1/tactics/next` | GET | Problème le plus proche de l'Elo tactique de l'utilisateur authentifié (1000 par défaut). Ne renvoie **jamais** `solution`. |
+| `/api/v1/tactics/attempt` | POST | Corps `{problem_id, move}` (SAN). Valide le coup **côté serveur** contre la solution stockée, ajuste l'Elo tactique (+15/-15), renvoie `{success, new_elo, solution}` — la solution n'est révélée qu'après la tentative. |
+
+**Règles métier :**
+- **Elo tactique** (`domain/tactical_elo.py`) : distinct de l'Elo virtuel Stats Avancées (EPIC 3, qualité des coups dans de vraies parties). `update_elo(current, success)` : +15 si réussi, −15 sinon, plancher à 100 (évite une dérive négative absurde après une série d'échecs). Stocké sur `profiles.tactical_elo` (colonne SQL) et répliqué dans le dict utilisateur in-memory (`db_client.create_user`), à l'image de `chess_username` (US 6.2) — le store `users`/`profiles` reste 100 % in-memory quel que soit `DATABASE_URL` (gap connu, §10.1).
+- **Validation du coup** (`domain/tactics.is_correct_move`) : compare des objets `chess.Move` (python-chess), pas des chaînes SAN brutes — deux annotations différentes d'un même coup légal (ex. `Ra8` vs `Ra8#`) sont reconnues équivalentes. Toute notation invalide/illégale sur cette position est un échec silencieux (pas d'exception), jamais une confiance au client sur le résultat.
+- **Sélection adaptative** (`domain/tactics.select_nearest_problem`) : problème dont `difficulty_elo` est le plus proche de l'Elo tactique du joueur ; tirage aléatoire parmi les problèmes équidistants pour éviter de toujours servir le même. `db_client.get_next_tactical_problem(tactical_elo, category=None)` accepte déjà un filtre par catégorie (**pré-câblé pour US 8.2, pas encore exposé par la route**).
+- **Seed de données (MVP)** : 15 problèmes (5 `mate_in_1`, 4 `hanging_piece`, 6 `mate_in_2`, Elo 650-1400), **chacun vérifié programmatiquement par python-chess** avant intégration (coup légal + `board.is_checkmate()` pour les catégories mat — y compris une recherche exhaustive « pour toute réponse adverse, un mat existe » pour `mate_in_2` — et capture d'une pièce sans défenseur pour `hanging_piece`). Choix motivé par l'absence d'accès réseau à un dataset externe (Lichess, etc.) dans cet environnement d'exécution ; le même jeu est répliqué en dur dans `db_client._TACTICAL_PROBLEMS_SEED` pour le mode in-memory dev/test et dans la migration SQL pour Supabase. **Reste à faire** : remplacer/enrichir par un import de dataset externe plus large (cf. §10).
+
 ---
 
 ## 5. Règles métier
@@ -1177,9 +1202,13 @@ JWT_SECRET=ci-test-secret pytest tests/ -v
 | `test_progress_history.py` | build_snapshot (cadence inconnue, filtre couleur, IDs), filter_history_by_days (bornes, dates invalides/naïves) | US 5.1 |
 | `test_games_api.py` | POST analyze (202, 400), worker→completed, réanalyse, GET game (404), stats/summary, snapshot auto, GET stats/history, **401 sans JWT sur les 6 routes, isolation entre 2 utilisateurs (get_game/réanalyse/stats/GET games/PATCH status)**, **GET /games (liste, vide, isolation)**, **dédup PGN par hash (même game_id, pas de doublon, statut réel, isolation par utilisateur, PGN différent → parties distinctes)**, **PATCH /games/{id}/status (marque/démarque, persistance, 404 non-propriétaire, 422 body invalide)** | US 1.1 + US 5.1 + US 6.4 + US 7.1 + US 7.2 + US 7.3 |
 | `test_pg_repository.py` | PgRepository (dsn, colonnes, contrat progress_history, `_iso` générique, **contrat `create_game`/`find_game_by_pgn_hash`**), délégation db_client (in-memory sans `DATABASE_URL`) | EPIC 1 + US 5.1 + US 7.2 |
+| `test_tactical_elo.py` | `update_elo` (+15/-15, constantes, plancher, pas de plafond) | US 8.1 |
+| `test_tactics.py` | `is_correct_move` (match exact, notation équivalente, coup faux/illégal/invalide), `select_nearest_problem` (vide, exact, plus proche haut/bas, tirage aléatoire équidistant) | US 8.1 |
+| `test_db_tactics.py` | Store tactique (Elo par défaut, persistance), **intégrité des 15 problèmes du seed vérifiée par python-chess** (mat effectif, capture non défendue), sélection/filtre par catégorie | US 8.1 |
+| `test_tactics_api.py` | `GET /tactics/next` (sans solution, 401), `POST /tactics/attempt` (succès/échec ±15, notation équivalente, persistance, 404, 401, isolation entre utilisateurs) | US 8.1 |
 | `test_srs.py` | — | SM-2 backend |
 
-**Couverture backend :** 436 TUs au total, couverture globale **89 %** ; cœur Stats Avancées + EPIC 1/5.1/US 4.2 à 92–100 % (`stats_aggregator`, `cadence`, `progress_history`, `models`, `engine` à 100 %, `analysis_pipeline` 92 %, `routers/games` 92 %, `db_client` 98 %). Les requêtes SQL réelles de `pg_repository` (nécessitant une base) sont marquées `pragma: no cover`.
+**Couverture backend :** 475 TUs au total, couverture globale **89 %** ; cœur Stats Avancées + EPIC 1/5.1/US 4.2 à 92–100 % (`stats_aggregator`, `cadence`, `progress_history`, `models`, `engine` à 100 %, `analysis_pipeline` 92 %, `routers/games` 92 %, `db_client` 98 %). Les requêtes SQL réelles de `pg_repository` (nécessitant une base) sont marquées `pragma: no cover`.
 
 **Architecture de test `test_auth.py` :**
 - App de test minimale (`FastAPI()` + routers auth/sync uniquement) pour éviter la dépendance `python-chess`
@@ -1321,6 +1350,7 @@ UNIQUE (user_id)
 | **Liste des parties par utilisateur** (US 7.1) | `GET /api/v1/games` + `api_client.js:getGames` + `app.js:_loadServerGames` | Appelée depuis `_onAuthSuccess()` (boot + après connexion), loader `_setLoading` pendant l'appel, résultat dans `this.serverGames` |
 | **Hashage PGN et prévention du recalcul** (US 7.2) | `analysis_pipeline.compute_pgn_hash` + `db_client.find_game_by_pgn_hash` + `routers/games.py` | Une 2ᵉ soumission du même PGN par le même utilisateur renvoie la partie existante (statut réel) au lieu de relancer Stockfish ; index unique `(user_id, pgn_hash)` |
 | **Table « Partie-Étude » — bouton Marquer étudiée** (US 7.3) | `PATCH /games/{id}/status` + `api_client.js:updateGameStatus` + `index.html:#btn-mark-reviewed` + `app.js:_toggleReviewed` | Bouton du topbar Review, masqué sans `serverGameId` connu ; bascule visuelle (texte + fond vert) après clic |
+| **Moteur de sélection adaptative tactique** (US 8.1) | `routers/tactics.py` + `domain/tactical_elo.py` + `domain/tactics.py` | Backend uniquement : `GET /tactics/next` + `POST /tactics/attempt` opérationnels et testés (curl/pytest) ; pas encore d'UI frontend (US 8.3) |
 
 ### ❌ Non câblé ou incomplet
 
@@ -1374,6 +1404,12 @@ L'utilisateur ne voit pas que le livre ECO se télécharge (~2s). Ajouter un spi
 ### 10.5 🟢 OPTIONNEL — Précisions Chess.com dans la carte RÉVISION
 
 L'API Chess.com retourne `g.accuracies.white/black`. Les afficher dans les barres de précision de la `.match-card` au lieu de `null` (les barres restent à 0% si Stockfish n'a pas encore analysé la partie).
+
+### 10.6 🟡 IMPORTANT — EPIC 8, jeu de données tactiques (US 8.1)
+
+**Fait :** moteur de sélection adaptative + validation serveur opérationnels avec un seed de 15 problèmes vérifiés (US 8.1).
+
+**Reste :** (1) remplacer/enrichir le seed par un dataset externe plus large (ex. export CSV Lichess Puzzle Database) — non fait dans cet environnement d'exécution faute d'accès réseau vers les sources habituelles (proxy sortant restreint) ; (2) UI frontend (US 8.3) — le backend est utilisable via `curl`/tests mais n'a pas encore d'échiquier jouable côté client.
 
 ---
 
