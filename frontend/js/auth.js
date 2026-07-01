@@ -48,17 +48,25 @@ const Auth = (() => {
     return "Erreur serveur";
   }
 
-  async function _post(path, body, token) {
+  async function _request(method, path, body, token) {
     const headers = { "Content-Type": "application/json" };
     if (token) headers["Authorization"] = `Bearer ${token}`;
     const res = await fetch(`${API_BASE}${path}`, {
-      method: "POST",
+      method,
       headers,
       body: JSON.stringify(body),
     });
     const data = await res.json();
     if (!res.ok) throw new Error(_extractErrorMessage(data));
     return data;
+  }
+
+  async function _post(path, body, token) {
+    return _request("POST", path, body, token);
+  }
+
+  async function _patch(path, body, token) {
+    return _request("PATCH", path, body, token);
   }
 
   // ── Inscription ─────────────────────────────────────────────────────
@@ -94,6 +102,16 @@ const Auth = (() => {
     }
   }
 
+  // ── Profil : liaison Chess.com (US 6.3) ──────────────────────────────
+
+  async function updateChessUsername(chessUsername) {
+    const token = getToken();
+    if (!token) throw new Error("Non connecté");
+    const user = await _patch("/auth/me", { chess_username: chessUsername || "" }, token);
+    _saveSession(token, user);
+    return user;
+  }
+
   // ── Synchronisation (Client Wins) ───────────────────────────────────
 
   async function syncData(games = [], srsCards = []) {
@@ -103,7 +121,10 @@ const Auth = (() => {
     return data;
   }
 
-  return { getToken, getUser, isLoggedIn, logout, signup, login, autoConnect, syncData };
+  return {
+    getToken, getUser, isLoggedIn, logout, signup, login, autoConnect,
+    updateChessUsername, syncData,
+  };
 })();
 
 if (typeof window !== "undefined") window.Auth = Auth;

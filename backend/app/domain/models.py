@@ -166,6 +166,23 @@ class UserLogin(BaseModel):
     password: str = Field(...)
 
 
+_CHESS_USERNAME_RE = re.compile(r"^[A-Za-z0-9_-]{3,25}$")
+
+
+class ChessUsernameUpdate(BaseModel):
+    """US 6.3 — Liaison/déliaison du pseudo Chess.com au profil."""
+    chess_username: str = Field(..., max_length=25, description="Pseudo Chess.com (vide pour délier)")
+
+    @validator("chess_username")
+    def _validate_chess_username_format(cls, v: str) -> str:  # noqa: N805
+        v = v.strip()
+        if v and not _CHESS_USERNAME_RE.match(v):
+            raise ValueError(
+                "Pseudo Chess.com invalide (3 à 25 caractères alphanumériques, '_' ou '-')"
+            )
+        return v
+
+
 class UserProfile(BaseModel):
     """Profil utilisateur public."""
     id: str

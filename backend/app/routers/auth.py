@@ -6,7 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 from app.domain import auth as auth_domain
-from app.domain.models import AuthResponse, UserCreate, UserLogin, UserProfile
+from app.domain.models import AuthResponse, ChessUsernameUpdate, UserCreate, UserLogin, UserProfile
 from app.infrastructure import db_client
 
 router = APIRouter(prefix="/auth", tags=["auth"])
@@ -26,6 +26,13 @@ def _current_user(creds: HTTPAuthorizationCredentials | None = Depends(_bearer))
     return user
 
 
+def _to_profile(user: dict) -> UserProfile:
+    return UserProfile(
+        id=user["id"], email=user["email"], username=user["username"],
+        chess_username=user.get("chess_username"),
+    )
+
+
 @router.post("/signup", response_model=AuthResponse, status_code=status.HTTP_201_CREATED)
 def signup(body: UserCreate) -> AuthResponse:
     if db_client.find_user_by_email(body.email):
@@ -35,13 +42,7 @@ def signup(body: UserCreate) -> AuthResponse:
     pw_hash = auth_domain.hash_password(body.password)
     user = db_client.create_user(body.email, body.username, pw_hash)
     token = auth_domain.create_token(user["id"], user["email"])
-    return AuthResponse(
-        token=token,
-        user=UserProfile(
-            id=user["id"], email=user["email"], username=user["username"],
-            chess_username=user.get("chess_username"),
-        ),
-    )
+    return AuthResponse(token=token, user=_to_profile(user))
 
 
 @router.post("/login", response_model=AuthResponse)
@@ -50,18 +51,16 @@ def login(body: UserLogin) -> AuthResponse:
     if not user or not auth_domain.verify_password(body.password, user["password_hash"]):
         raise HTTPException(status_code=401, detail="Identifiants incorrects")
     token = auth_domain.create_token(user["id"], user["email"])
-    return AuthResponse(
-        token=token,
-        user=UserProfile(
-            id=user["id"], email=user["email"], username=user["username"],
-            chess_username=user.get("chess_username"),
-        ),
-    )
+    return AuthResponse(token=token, user=_to_profile(user))
 
 
 @router.get("/me", response_model=UserProfile)
 def me(user: dict = Depends(_current_user)) -> UserProfile:
-    return UserProfile(
-        id=user["id"], email=user["email"], username=user["username"],
-        chess_username=user.get("chess_username"),
-    )
+    return _to_profile(user)
+
+
+@router.patch("/me", response_model=UserProfile)
+def update_me(body: ChessUsernameUpdate, user: dict = Depends(_current_user)) -> UserProfile:
+    """US 6.3 — Lie/délie le pseudo Chess.com du profil de l'utilisateur authentifié uniquement."""
+    updated = db_client.update_chess_username(user["id"], body.chess_username or None)
+    return _to_profile(updated)

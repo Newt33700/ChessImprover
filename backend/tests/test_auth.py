@@ -190,6 +190,75 @@ class TestMe:
         assert r.json()["chess_username"] is None
 
 
+# ── PATCH /auth/me (US 6.3) ─────────────────────────────────────────────────────
+
+class TestUpdateMe:
+    def _signup_and_token(self, email="ida@ex.com", username="ida") -> str:
+        r = client.post("/auth/signup", json={"email": email, "username": username, "password": "pass123"})
+        return r.json()["token"]
+
+    def test_update_chess_username_success(self):
+        token = self._signup_and_token()
+        r = client.patch(
+            "/auth/me", json={"chess_username": "MagnusCarlsen"},
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert r.status_code == 200
+        assert r.json()["chess_username"] == "MagnusCarlsen"
+
+    def test_update_chess_username_persists(self):
+        token = self._signup_and_token()
+        client.patch(
+            "/auth/me", json={"chess_username": "Hikaru"},
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        r = client.get("/auth/me", headers={"Authorization": f"Bearer {token}"})
+        assert r.json()["chess_username"] == "Hikaru"
+
+    def test_update_chess_username_invalid_format_returns_422(self):
+        token = self._signup_and_token()
+        r = client.patch(
+            "/auth/me", json={"chess_username": "a"},  # trop court (< 3)
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert r.status_code == 422
+
+    def test_update_chess_username_rejects_special_characters(self):
+        token = self._signup_and_token()
+        r = client.patch(
+            "/auth/me", json={"chess_username": "bad user!"},
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert r.status_code == 422
+
+    def test_update_chess_username_empty_clears_it(self):
+        token = self._signup_and_token()
+        client.patch(
+            "/auth/me", json={"chess_username": "Hikaru"},
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        r = client.patch(
+            "/auth/me", json={"chess_username": ""},
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert r.status_code == 200
+        assert r.json()["chess_username"] is None
+
+    def test_update_chess_username_without_token_returns_401_or_403(self):
+        r = client.patch("/auth/me", json={"chess_username": "Hikaru"})
+        assert r.status_code in (401, 403)
+
+    def test_update_chess_username_only_affects_own_profile(self):
+        token_a = self._signup_and_token(email="jack@ex.com", username="jack")
+        token_b = self._signup_and_token(email="kate@ex.com", username="kate")
+        client.patch(
+            "/auth/me", json={"chess_username": "JackOnChessCom"},
+            headers={"Authorization": f"Bearer {token_a}"},
+        )
+        r_b = client.get("/auth/me", headers={"Authorization": f"Bearer {token_b}"})
+        assert r_b.json()["chess_username"] is None
+
+
 # ── POST /sync ─────────────────────────────────────────────────────────────────
 
 class TestSync:

@@ -70,6 +70,47 @@ describe("login", () => {
   });
 });
 
+describe("updateChessUsername (US 6.3)", () => {
+  test("sans token → rejette sans appeler fetch", async () => {
+    global.fetch = jest.fn();
+    await expect(Auth.updateChessUsername("Hikaru")).rejects.toThrow("Non connecté");
+    expect(global.fetch).not.toHaveBeenCalled();
+  });
+
+  test("succès : PATCH /auth/me, met à jour la session locale", async () => {
+    global.fetch = jest.fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ token: "t1", user: { id: "u1", email: "a@b.com", username: "a", chess_username: null } }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ id: "u1", email: "a@b.com", username: "a", chess_username: "Hikaru" }),
+      });
+    await Auth.signup("a@b.com", "a", "secret1");
+    const user = await Auth.updateChessUsername("Hikaru");
+    expect(user.chess_username).toBe("Hikaru");
+    expect(Auth.getUser().chess_username).toBe("Hikaru");
+    const [, patchCall] = global.fetch.mock.calls;
+    expect(patchCall[1].method).toBe("PATCH");
+    expect(JSON.parse(patchCall[1].body)).toEqual({ chess_username: "Hikaru" });
+  });
+
+  test("format invalide (422) → message lisible", async () => {
+    global.fetch = jest.fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ token: "t1", user: { id: "u1", email: "a@b.com", username: "a" } }),
+      })
+      .mockResolvedValueOnce({
+        ok: false,
+        json: async () => ({ detail: [{ msg: "Pseudo Chess.com invalide (3 à 25 caractères alphanumériques, '_' ou '-')" }] }),
+      });
+    await Auth.signup("a@b.com", "a", "secret1");
+    await expect(Auth.updateChessUsername("a")).rejects.toThrow("Pseudo Chess.com invalide");
+  });
+});
+
 describe("isLoggedIn / logout", () => {
   test("faux par défaut, vrai après signup, faux après logout", async () => {
     expect(Auth.isLoggedIn()).toBe(false);

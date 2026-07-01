@@ -66,6 +66,15 @@ def find_user_by_id(user_id: str) -> Optional[Dict[str, Any]]:
     return _users.get(user_id)
 
 
+def update_chess_username(user_id: str, chess_username: Optional[str]) -> Optional[Dict[str, Any]]:
+    """US 6.3 — Met à jour (ou délie si None/vide) le pseudo Chess.com du profil."""
+    user = _users.get(user_id)
+    if user is None:
+        return None
+    user["chess_username"] = chess_username or None
+    return user
+
+
 def create_user(email: str, username: str, password_hash: str) -> Dict[str, Any]:
     user_id = str(uuid.uuid4())
     user = {
