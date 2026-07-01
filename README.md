@@ -152,7 +152,7 @@ ChessImprover/
 │       │   ├── sync.py                 # POST /sync — stratégie Client Wins (US 7)
 │       │   └── games.py                # POST /games/analyze, GET stats/summary, GET stats/history
 │       ├── tests/
-│       │   ├── test_auth.py            # 30 TUs auth : hash, JWT, signup, login, me, sync, chess_username
+│       │   ├── test_auth.py            # 37 TUs auth : hash, JWT, signup, login, me, PATCH me, sync
 │       │   ├── test_analyzer.py
 │       │   ├── test_elo.py
 │       │   ├── test_phases.py          # US 2.1
@@ -614,10 +614,11 @@ Auth.signup(email, username, password)  // POST /auth/signup → sauvegarde toke
 Auth.login(email, password)             // POST /auth/login  → sauvegarde token + user
 Auth.logout()                           // Supprime ci_jwt + ci_user du localStorage
 Auth.autoConnect()                      // GET /auth/me → valide le token au rechargement
+Auth.updateChessUsername(chessUsername) // PATCH /auth/me → lie/délie le pseudo Chess.com (US 6.3)
 Auth.syncData(games, srsCards)          // POST /sync → stratégie Client Wins
 Auth.isLoggedIn()                       // → boolean
 Auth.getToken()                         // → string | null
-Auth.getUser()                          // → {id, email, username, chessUsername} | null
+Auth.getUser()                          // → {id, email, username, chess_username} | null
 ```
 
 **Stockage :** `localStorage["ci_jwt"]` (token), `localStorage["ci_user"]` (profil JSON).  
@@ -626,6 +627,14 @@ Auth.getUser()                          // → {id, email, username, chessUserna
 #### Messages d'erreur exploitables (US 6.1)
 
 `_extractErrorMessage(data)` (interne à `auth.js`) normalise la réponse d'erreur FastAPI avant de la remonter dans `Error.message` : si `detail` est une chaîne (400/401 métier, ex. « Email déjà utilisé »), elle est utilisée telle quelle ; si `detail` est une liste d'erreurs de validation Pydantic (422, un objet `{msg, loc, type}` par champ), les `msg` sont concaténés (`" ; "`) au lieu d'afficher `[object Object]`. `_submitSignup`/`_submitLogin` (`app.js`) affichent ce message dans `#signup-error`/`#login-error`.
+
+#### Modal Profil — liaison Chess.com (US 6.3)
+
+**Fichiers :** `index.html` (`#profile-modal`), `app.js` (`_openProfileModal`/`_closeProfileModal`/`_submitProfile`), `auth.js` (`updateChessUsername`)
+
+Un bouton **Profil** apparaît à côté de **Déconnexion** dans `#current-user` une fois connecté. Il ouvre `#profile-modal` (réutilise les classes `auth-overlay`/`auth-card`/`auth-form`/`auth-error` — même charte graphique que la modal de connexion, plus une classe `.auth-success` pour le message de confirmation), pré-rempli avec `Auth.getUser().chess_username`. La soumission appelle `Auth.updateChessUsername()` (`PATCH /auth/me`) ; en cas de succès, le pseudo est aussi propagé à `Store[STORAGE_KEYS.USERNAME]` pour que le reste du dashboard (chargement Chess.com) l'utilise immédiatement. À l'inscription, si un pseudo Chess.com est saisi dans le formulaire signup, il est désormais persisté côté serveur via ce même appel (`_submitSignup`), remplaçant l'ancien stockage `localStorage` uniquement — un format invalide à cette étape n'empêche jamais la création du compte (l'utilisateur peut corriger ensuite via le profil).
+
+> **Piège évité :** le gestionnaire de bascule d'onglets Connexion/Inscription masquait initialement *tous* les éléments `.auth-form` de la page (`document.querySelectorAll(".auth-form")`), y compris `#profile-form` qui partage cette classe pour la cohérence visuelle — le formulaire de profil restait alors invisible en permanence après le premier clic sur un onglet auth. Détecté par une vérification navigateur (Playwright) et corrigé en scopant le sélecteur à `#auth-modal .auth-form`.
 
 ---
 
@@ -803,6 +812,7 @@ Carte **PROGRESSION**, première carte de la colonne principale de la vue Stats 
 | `/auth/signup` | POST | `{email, username, password}` | 201 `{token, user}` | Inscription |
 | `/auth/login` | POST | `{email, password}` | 200 `{token, user}` | Connexion |
 | `/auth/me` | GET | — (Bearer token) | 200 `{id, email, username, chess_username}` | Profil courant |
+| `/auth/me` | PATCH | `{chess_username}` (Bearer token) | 200 `{id, email, username, chess_username}` | Lie/délie le pseudo Chess.com (US 6.3) |
 
 **Règles métier :**
 - Email unique (case-insensitive) → 400 `"Email déjà utilisé"`
@@ -811,7 +821,8 @@ Carte **PROGRESSION**, première carte de la colonne principale de la vue Stats 
 - Mot de passe haché via bcrypt (salt aléatoire, facteur de coût par défaut ~12), longueur minimale 6 caractères (422 sinon)
 - Token JWT HS256 (stdlib Python : `hmac` + `hashlib.sha256`), expiration 30 jours
 - Payload JWT : `{sub: user_id, email, exp}`
-- **`chess_username` (US 6.2)** : champ distinct du `username` de connexion, initialisé à `None` à la création du profil (`db_client.create_user`), exposé par `UserProfile` dans les 3 réponses `/auth/*`. Pas encore modifiable via l'API (aucune route d'écriture) — prévu par US 6.3.
+- **`chess_username` (US 6.2)** : champ distinct du `username` de connexion, initialisé à `None` à la création du profil (`db_client.create_user`), exposé par `UserProfile` dans les réponses `/auth/*`.
+- **`PATCH /auth/me` (US 6.3)** : `ChessUsernameUpdate` valide le format (`^[A-Za-z0-9_-]{3,25}$`, chaîne vide autorisée pour délier) → 422 sinon. L'utilisateur ciblé est **toujours** celui du token (`Depends(_current_user)`) — la route n'accepte aucun `user_id` en paramètre, donc structurellement impossible de modifier le profil d'un autre utilisateur.
 
 **Dépendance `_current_user` :** FastAPI `HTTPBearer` → `decode_token()` → `find_user_by_id()`. Retourne 401 si token absent, invalide ou expiré.
 
@@ -1115,7 +1126,7 @@ npm run test:mutation # Stryker
 | `personal_coach.test.js` | PersonalCoach | computeMetrics, diagnose (toutes les 6 branches), renderHTML, _detectResult, _detectUserColor, _extractOpening |
 | `advanced_stats.test.js` | AdvancedStats | cellClass, deltas, deepDiveFor, gaugeAngle, matrixRows, `categoryDetailHtml` (tactics/endgames/openings/strategy), `tacticSuccessGaugeHtml` (bornes, clamp, NaN-safe), fetchSummary (fallbacks), `formatShortDate`, `buildProgressDatasets`, `toggleProgressSeries`, `fetchHistory` (fallbacks) |
 | `api_client.test.js` | ApiClient | baseUrl/isConfigured (window/localStorage), url (query), analyzeGame (POST + erreur), getStatsSummary, getGame, getStatsHistory |
-| `auth.test.js` (US 6.1) | Auth | signup/login (succès, `detail` chaîne, `detail` liste Pydantic 422 — un ou plusieurs champs, absence de `detail`), isLoggedIn/logout |
+| `auth.test.js` (US 6.1/6.3) | Auth | signup/login (succès, `detail` chaîne, `detail` liste Pydantic 422 — un ou plusieurs champs, absence de `detail`), `updateChessUsername` (sans token, succès + PATCH + persistance session, format invalide), isLoggedIn/logout |
 
 > `advanced_stats.js` n'est pas dans `collectCoverageFrom` (comme `app.js`, `auth.js`, `board_manager.js`) : seules ses fonctions pures sont testées, les `render*` sont de la glue DOM.
 
@@ -1138,7 +1149,7 @@ JWT_SECRET=ci-test-secret pytest tests/ -v
 
 | Fichier | Classes | TUs |
 |---|---|---|
-| `test_auth.py` | TestPasswordHashing (5), TestJWT (4), TestSignup (4+3 US 6.1+2 US 6.2), TestLogin (4), TestMe (3+1 US 6.2), TestSync (4) | **30 TUs** |
+| `test_auth.py` | TestPasswordHashing (5), TestJWT (4), TestSignup (4+3 US 6.1+2 US 6.2), TestLogin (4), TestMe (3+1 US 6.2), TestUpdateMe (7, US 6.3), TestSync (4) | **37 TUs** |
 | `test_analyzer.py` | — | Analyse géométrique |
 | `test_elo.py` | — | Formules Elo/précision backend |
 | `test_phases.py` | Constantes, Material, IsEndgame, OpeningEndPly, SegmentPhases, SegmentPgn | US 2.1 |
@@ -1155,7 +1166,7 @@ JWT_SECRET=ci-test-secret pytest tests/ -v
 | `test_pg_repository.py` | PgRepository (dsn, colonnes, contrat progress_history, `_iso` générique), délégation db_client (in-memory sans `DATABASE_URL`) | EPIC 1 + US 5.1 |
 | `test_srs.py` | — | SM-2 backend |
 
-**Couverture backend :** 393 TUs au total, couverture globale **89 %** ; cœur Stats Avancées + EPIC 1/5.1/US 4.2 à 92–100 % (`stats_aggregator`, `cadence`, `progress_history`, `models`, `engine` à 100 %, `analysis_pipeline` 92 %, `routers/games` 92 %, `db_client` 98 %). Les requêtes SQL réelles de `pg_repository` (nécessitant une base) sont marquées `pragma: no cover`.
+**Couverture backend :** 400 TUs au total, couverture globale **89 %** ; cœur Stats Avancées + EPIC 1/5.1/US 4.2 à 92–100 % (`stats_aggregator`, `cadence`, `progress_history`, `models`, `engine` à 100 %, `analysis_pipeline` 92 %, `routers/games` 92 %, `db_client` 98 %). Les requêtes SQL réelles de `pg_repository` (nécessitant une base) sont marquées `pragma: no cover`.
 
 **Architecture de test `test_auth.py` :**
 - App de test minimale (`FastAPI()` + routers auth/sync uniquement) pour éviter la dépendance `python-chess`
@@ -1291,7 +1302,8 @@ UNIQUE (user_id)
 | **Mobile / bascule Review** | CSS `body.board-active` | `.dash-grid` masquée / `.board-col` plein écran via classe `body` |
 | **Vue Statistiques Avancées** (US 4.1/4.2) | `advanced_stats.js` + `index.html` + `app.js` | Plein écran `body.advstats-active` : matrice colorée + gauge Héros + deep-dive + tuiles Finales + carte Tactiques (gauge circulaire `successRatio`) + top 3 ouvertures ECO (données réelles via `/stats/summary`, `MOCK_SUMMARY` en secours) |
 | **Validation email + erreurs UI inscription** (US 6.1) | `models.py:UserCreate` + `auth.js:_extractErrorMessage` | Format email validé (regex) en plus de la longueur ; erreurs 422 Pydantic (liste) affichées lisiblement au lieu de `[object Object]` |
-| **Colonne `chess_username` sur le profil** (US 6.2) | Migration `20260701172219_profiles_chess_username.sql` + `db_client.create_user` + `UserProfile` | Initialisée à `None` à l'inscription, exposée par `/auth/signup`/`/auth/login`/`/auth/me` ; pas encore modifiable (US 6.3) |
+| **Colonne `chess_username` sur le profil** (US 6.2) | Migration `20260701172219_profiles_chess_username.sql` + `db_client.create_user` + `UserProfile` | Initialisée à `None` à l'inscription, exposée par `/auth/signup`/`/auth/login`/`/auth/me` |
+| **Modal Profil — liaison Chess.com** (US 6.3) | `PATCH /auth/me` + `auth.js:updateChessUsername` + `index.html:#profile-modal` + `app.js` | Édition du pseudo Chess.com depuis un bouton « Profil » ; validation format (regex) ; persisté serveur dès l'inscription si renseigné |
 
 ### ❌ Non câblé ou incomplet
 

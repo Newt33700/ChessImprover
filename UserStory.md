@@ -426,7 +426,11 @@ En tant qu'équipe, nous voulons que chaque modification de `supabase/migrations
 - `PATCH /auth/me` (ou équivalent) restreint à l'utilisateur courant (identifié via le JWT) — un utilisateur ne peut modifier que son propre `chess_username`.
 - Le champ `signup-chess-username` actuellement stocké uniquement en `localStorage` (`frontend/js/app.js`) est migré vers ce nouveau champ persistant côté serveur.
 
-**Statut :** 🔜 Backlog.
+**Statut :** ✅ Implémenté :
+- Backend : `ChessUsernameUpdate` (`app/domain/models.py`, regex `^[A-Za-z0-9_-]{3,25}$`, vide autorisé pour délier), `db_client.update_chess_username`, `PATCH /auth/me` (`app/routers/auth.py`, restreint à l'utilisateur du token via `_current_user` — aucun paramètre `user_id` en entrée, donc aucune façon de cibler le profil d'un autre utilisateur).
+- Frontend : `Auth.updateChessUsername` (`auth.js`, PATCH via un helper `_request` générique factorisé avec `_post`), modal `#profile-modal` (réutilise la charte `auth-overlay`/`auth-card`/`auth-form`/`auth-error` + nouvelle classe `.auth-success`), bouton « Profil » dans `_renderAuthState()`, `_submitSignup` persiste désormais le pseudo Chess.com saisi à l'inscription côté serveur (au lieu du seul `localStorage`).
+- **Bug détecté et corrigé pendant la vérification navigateur (Playwright)** : le gestionnaire de bascule d'onglets Connexion/Inscription (`document.querySelectorAll(".auth-form")`) masquait aussi `#profile-form` (qui partage la classe `.auth-form`) dès qu'un onglet auth était cliqué, rendant le formulaire de profil invisible en permanence. Corrigé en scopant le sélecteur à `#auth-modal .auth-form`, avec une remise à `hidden = false` défensive dans `_openProfileModal()`.
+- Tests : `backend/tests/test_auth.py` (classe `TestUpdateMe`, 7 tests : succès, persistance, format invalide, caractères spéciaux, vidage, sans token, isolation entre utilisateurs), `frontend/tests/auth.test.js` (3 tests `updateChessUsername`).
 
 ### US 6.4 : Isolation des données par user_id
 
