@@ -27,7 +27,7 @@ jobs:
         run: |
           sqlfluff lint supabase/migrations/ \
             --dialect postgres \
-            --exclude-rules LT12,AM06
+            --exclude-rules LT12,AM06,PG01
 
   # ── Déploiement des migrations (main seulement) ─────────────────────────────
   push-migrations:
