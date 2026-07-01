@@ -23,6 +23,9 @@ _user_data: Dict[str, Dict[str, Any]] = {}  # keyed by user_id
 _games: Dict[str, Dict[str, Any]] = {}        # keyed by game_id
 _game_moves: Dict[str, List[Dict[str, Any]]] = {}  # keyed by game_id
 
+# US 5.1 — historisation de la progression
+_progress_history: List[Dict[str, Any]] = []  # append-only
+
 # Dépôt PostgreSQL construit paresseusement si DATABASE_URL est défini.
 _pg_repo: Any = None
 
@@ -197,9 +200,55 @@ def get_completed_games(user_id: Optional[str] = None) -> List[Dict[str, Any]]:
     return games
 
 
+# ---------------------------------------------------------------------------
+# Historisation de la progression (US 5.1)
+# ---------------------------------------------------------------------------
+
+def create_progress_snapshot(
+    user_id: Optional[str],
+    game_id: Optional[str],
+    cadence: str,
+    elos: Dict[str, int],
+) -> Dict[str, Any]:
+    """Enregistre un snapshot d'Elo virtuel après une analyse réussie."""
+    repo = _pg()
+    if repo is not None:  # pragma: no cover - nécessite DATABASE_URL
+        return repo.create_progress_snapshot(user_id, game_id, cadence, elos)
+
+    import datetime as _dt
+
+    record = {
+        "id": len(_progress_history) + 1,
+        "user_id": user_id,
+        "game_id": game_id,
+        "cadence": cadence,
+        "elo_openings": elos["openings"],
+        "elo_tactics": elos["tactics"],
+        "elo_strategy": elos["strategy"],
+        "elo_endgames": elos["endgames"],
+        "recorded_at": _dt.datetime.now(_dt.timezone.utc).isoformat(),
+    }
+    _progress_history.append(record)
+    return record
+
+
+def get_progress_history(user_id: Optional[str], cadence: str) -> List[Dict[str, Any]]:
+    """Historique des snapshots d'une cadence, trié chronologiquement (asc)."""
+    repo = _pg()
+    if repo is not None:  # pragma: no cover - nécessite DATABASE_URL
+        return repo.get_progress_history(user_id, cadence)
+
+    rows = [
+        r for r in _progress_history
+        if r["cadence"] == cadence and (user_id is None or r["user_id"] == user_id)
+    ]
+    return sorted(rows, key=lambda r: r["recorded_at"])
+
+
 def _reset_store() -> None:
     """Reset in-memory store between tests."""
     _users.clear()
     _user_data.clear()
     _games.clear()
     _game_moves.clear()
+    _progress_history.clear()

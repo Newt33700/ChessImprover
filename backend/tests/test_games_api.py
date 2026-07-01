@@ -76,6 +76,33 @@ class TestAnalyzeEndpoint:
         assert r.json()["accepted"][0]["game_id"] == gid
         assert db_client.get_game(gid)["status"] == "completed"
 
+    def test_analysis_records_progress_snapshot(self):
+        # US 5.1 : une analyse réussie avec cadence connue enregistre un snapshot.
+        r = client.post("/api/v1/games/analyze", json={
+            "pgn": PGN, "time_control": "300", "user_id": "u1", "evals": _evals(PGN, played=40),
+        })
+        gid = r.json()["accepted"][0]["game_id"]
+        history = db_client.get_progress_history("u1", "blitz")
+        assert len(history) == 1
+        assert history[0]["game_id"] == gid
+        assert history[0]["elo_openings"] == 2900  # ACPL 0 → 2800 base + 100 bonus blitz
+
+    def test_analysis_without_cadence_records_no_snapshot(self):
+        # time_control absent → classify_cadence renvoie None → pas de snapshot.
+        client.post("/api/v1/games/analyze", json={
+            "pgn": PGN, "user_id": "u1", "evals": _evals(PGN),
+        })
+        assert db_client.get_progress_history("u1", "blitz") == []
+
+    def test_reanalyze_records_second_snapshot(self):
+        first = client.post("/api/v1/games/analyze", json={
+            "pgn": PGN, "time_control": "300", "user_id": "u1", "evals": _evals(PGN),
+        })
+        gid = first.json()["accepted"][0]["game_id"]
+        client.post("/api/v1/games/analyze", json={"game_ids": [gid], "evals": _evals(PGN)})
+        # Le time_control/user_id du jeu existant sont repris → 2 snapshots au total.
+        assert len(db_client.get_progress_history("u1", "blitz")) == 2
+
     def test_unknown_game_id_skipped(self):
         r = client.post("/api/v1/games/analyze", json={"game_ids": ["does-not-exist"]})
         assert r.status_code == 202
@@ -122,3 +149,53 @@ class TestStatsSummary:
         assert s.status_code == 200
         assert s.json()["period"] == "7d"
         assert set(s.json()["rows"]) == {"bullet", "blitz", "rapid"}
+
+
+class TestStatsHistory:
+    def test_history_after_analysis(self):
+        client.post("/api/v1/games/analyze", json={
+            "pgn": PGN, "time_control": "300", "user_id": "u1", "evals": _evals(PGN, played=40),
+        })
+        r = client.get("/api/v1/stats/history", params={"cadence": "blitz", "user_id": "u1"})
+        assert r.status_code == 200
+        body = r.json()
+        assert body["cadence"] == "blitz"
+        assert body["days"] == 30
+        assert len(body["history"]) == 1
+        point = body["history"][0]
+        assert point["openings"] == 2900
+        assert "date" in point and point["date"]
+
+    def test_history_empty(self):
+        r = client.get("/api/v1/stats/history", params={"cadence": "blitz"})
+        assert r.status_code == 200
+        assert r.json()["history"] == []
+
+    def test_history_wrong_cadence_returns_empty(self):
+        client.post("/api/v1/games/analyze", json={
+            "pgn": PGN, "time_control": "300", "user_id": "u1", "evals": _evals(PGN),
+        })
+        r = client.get("/api/v1/stats/history", params={"cadence": "bullet", "user_id": "u1"})
+        assert r.json()["history"] == []
+
+    def test_history_respects_days_window(self):
+        client.post("/api/v1/games/analyze", json={
+            "pgn": PGN, "time_control": "300", "user_id": "u1", "evals": _evals(PGN),
+        })
+        # La fenêtre par défaut (30j) couvre le snapshot qui vient d'être créé ;
+        # une fenêtre de 0 jour est rejetée par la validation FastAPI (ge=1).
+        r = client.get("/api/v1/stats/history", params={"cadence": "blitz", "user_id": "u1", "days": 1})
+        assert len(r.json()["history"]) == 1
+
+    def test_history_invalid_days_rejected(self):
+        r = client.get("/api/v1/stats/history", params={"cadence": "blitz", "days": 0})
+        assert r.status_code == 422
+
+    def test_history_degrades_on_db_error(self, monkeypatch):
+        def boom(*_a, **_k):
+            raise RuntimeError("db down")
+
+        monkeypatch.setattr("app.routers.games.db_client.get_progress_history", boom)
+        r = client.get("/api/v1/stats/history", params={"cadence": "blitz"})
+        assert r.status_code == 200
+        assert r.json()["history"] == []

@@ -327,6 +327,7 @@ class ChessImproverApp {
         if (window.AdvancedStats && this._advSummary) {
           AdvancedStats.renderDeepDive(document.getElementById("adv-deepdive"), this._advSummary, this._advCadence);
         }
+        this._loadProgressChart();
       });
     });
     document.querySelectorAll("#adv-period .adv-period-btn").forEach((btn) => {
@@ -344,6 +345,12 @@ class ChessImproverApp {
     });
     document.getElementById("adv-detail")?.addEventListener("click", (e) => {
       if (e.target.closest("[data-detail-back]")) this._hideCategoryDetail();
+    });
+    // Toggles de séries du graphe de progression (US 5.1)
+    document.getElementById("adv-progress-toggles")?.addEventListener("change", (e) => {
+      const cb = e.target.closest("input[type=checkbox][data-key]");
+      if (!cb || !this._progressChart) return;
+      AdvancedStats.toggleProgressSeries(this._progressChart, cb.dataset.key, cb.checked);
     });
 
     // Legacy back buttons
@@ -1489,6 +1496,40 @@ class ChessImproverApp {
       this._advCharts.forEach((c) => c && c.destroy && c.destroy());
       this._advCharts = null;
     }
+    if (this._progressChart) {
+      this._progressChart.destroy();
+      this._progressChart = null;
+    }
+  }
+
+  /**
+   * Charge et affiche la courbe de progression (US 5.1) pour la cadence et la
+   * période courantes. Affiche un état vide explicite si aucun snapshot.
+   */
+  async _loadProgressChart() {
+    if (!window.AdvancedStats) return;
+    const wrap = document.getElementById("adv-progress-wrap");
+    if (!wrap) return;
+
+    const days = parseInt(this._advPeriod, 10) || 30;
+    const history = await AdvancedStats.fetchHistory(this._advCadence, days);
+
+    if (this._progressChart) {
+      this._progressChart.destroy();
+      this._progressChart = null;
+    }
+
+    if (!history.length) {
+      wrap.innerHTML = '<p class="empty-state">Pas encore d\'historique pour cette cadence. Analysez plusieurs parties pour voir votre progression.</p>';
+      return;
+    }
+
+    wrap.innerHTML = '<div class="adv-progress-scroll" id="adv-progress-scroll"><canvas id="adv-progress-canvas"></canvas></div>';
+    const scrollEl = document.getElementById("adv-progress-scroll");
+    if (scrollEl) scrollEl.style.minWidth = Math.max(600, history.length * 46) + "px";
+    this._progressChart = AdvancedStats.renderProgressChart(
+      document.getElementById("adv-progress-canvas"), history
+    );
   }
 
   async _loadAdvStats() {
@@ -1498,6 +1539,7 @@ class ChessImproverApp {
       this._advCharts.forEach((c) => c && c.destroy && c.destroy());
     }
     this._advSummary = await AdvancedStats.fetchSummary(this._advPeriod);
+    await this._loadProgressChart();
 
     // État vide : aucune partie analysée → message explicite (pas de tableau cassé).
     if (AdvancedStats.isEmpty(this._advSummary)) {

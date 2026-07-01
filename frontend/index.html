@@ -442,6 +442,36 @@
           <div class="db-card">
             <div class="db-card-head">
               <div class="db-card-heading">
+                <h2 class="db-card-title">PROGRESSION</h2>
+                <p class="db-card-sub">Évolution des Elos virtuels par catégorie</p>
+              </div>
+            </div>
+            <div class="db-card-body">
+              <div class="adv-progress-wrap" id="adv-progress-wrap">
+                <div class="adv-progress-scroll" id="adv-progress-scroll">
+                  <canvas id="adv-progress-canvas"></canvas>
+                </div>
+              </div>
+              <div class="adv-progress-toggles" id="adv-progress-toggles">
+                <label class="prog-toggle prog-toggle--openings">
+                  <input type="checkbox" checked data-key="openings"/> Ouvertures
+                </label>
+                <label class="prog-toggle prog-toggle--tactics">
+                  <input type="checkbox" checked data-key="tactics"/> Tactique
+                </label>
+                <label class="prog-toggle prog-toggle--strategy">
+                  <input type="checkbox" checked data-key="strategy"/> Stratégie
+                </label>
+                <label class="prog-toggle prog-toggle--endgames">
+                  <input type="checkbox" checked data-key="endgames"/> Finales
+                </label>
+              </div>
+            </div>
+          </div>
+
+          <div class="db-card">
+            <div class="db-card-head">
+              <div class="db-card-heading">
                 <h2 class="db-card-title">BILAN</h2>
                 <p class="db-card-sub">Average Centipawn Loss (ACPL)</p>
               </div>

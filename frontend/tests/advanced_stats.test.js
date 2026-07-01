@@ -165,3 +165,109 @@ describe("fetchSummary", () => {
     expect(out).toBe(AS.MOCK_SUMMARY);
   });
 });
+
+// ── formatShortDate (US 5.1) ───────────────────────────────────────
+
+describe("formatShortDate", () => {
+  test("formate une date ISO en JJ/MM", () => {
+    expect(AS.formatShortDate("2026-07-01T00:00:00Z")).toBe("01/07");
+  });
+
+  test("chaîne vide/absente → chaîne vide", () => {
+    expect(AS.formatShortDate("")).toBe("");
+    expect(AS.formatShortDate(null)).toBe("");
+    expect(AS.formatShortDate(undefined)).toBe("");
+  });
+
+  test("date invalide → 10 premiers caractères", () => {
+    expect(AS.formatShortDate("not-a-date")).toBe("not-a-date");
+  });
+});
+
+// ── buildProgressDatasets (US 5.1) ─────────────────────────────────
+
+describe("buildProgressDatasets", () => {
+  test("historique vide → labels et séries vides", () => {
+    const { labels, series } = AS.buildProgressDatasets([]);
+    expect(labels).toEqual([]);
+    expect(series).toEqual({ openings: [], tactics: [], strategy: [], endgames: [] });
+  });
+
+  test("aligne labels et séries dans l'ordre chronologique fourni", () => {
+    const history = [
+      { date: "2026-06-01T00:00:00Z", openings: 2400, tactics: 2100, strategy: 2200, endgames: 1900 },
+      { date: "2026-06-08T00:00:00Z", openings: 2550, tactics: 2300, strategy: 2350, endgames: 2050 },
+    ];
+    const { labels, series } = AS.buildProgressDatasets(history);
+    expect(labels).toEqual(["01/06", "08/06"]);
+    expect(series.openings).toEqual([2400, 2550]);
+    expect(series.tactics).toEqual([2100, 2300]);
+    expect(series.strategy).toEqual([2200, 2350]);
+    expect(series.endgames).toEqual([1900, 2050]);
+  });
+
+  test("MOCK_HISTORY se transforme sans erreur (5 points)", () => {
+    const { labels, series } = AS.buildProgressDatasets(AS.MOCK_HISTORY);
+    expect(labels).toHaveLength(5);
+    expect(series.openings).toHaveLength(5);
+  });
+});
+
+// ── toggleProgressSeries (US 5.1) ──────────────────────────────────
+
+describe("toggleProgressSeries", () => {
+  function fakeChart() {
+    return { setDatasetVisibility: jest.fn(), update: jest.fn() };
+  }
+
+  test("bascule la visibilité du bon index de dataset", () => {
+    const chart = fakeChart();
+    AS.toggleProgressSeries(chart, "tactics", false);
+    const tacticsIndex = AS.CATEGORIES.findIndex((c) => c.key === "tactics");
+    expect(chart.setDatasetVisibility).toHaveBeenCalledWith(tacticsIndex, false);
+    expect(chart.update).toHaveBeenCalledTimes(1);
+  });
+
+  test("no-op si le chart est null", () => {
+    expect(() => AS.toggleProgressSeries(null, "openings", true)).not.toThrow();
+  });
+
+  test("no-op si la clé de catégorie est inconnue", () => {
+    const chart = fakeChart();
+    AS.toggleProgressSeries(chart, "inconnue", true);
+    expect(chart.setDatasetVisibility).not.toHaveBeenCalled();
+    expect(chart.update).not.toHaveBeenCalled();
+  });
+});
+
+// ── fetchHistory (fallback, US 5.1) ────────────────────────────────
+
+describe("fetchHistory", () => {
+  afterEach(() => { delete global.fetch; });
+
+  test("renvoie l'historique backend quand la requête réussit", async () => {
+    const history = [{ date: "2026-07-01T00:00:00Z", openings: 2000, tactics: 2000, strategy: 2000, endgames: 2000 }];
+    global.fetch = jest.fn().mockResolvedValue({ ok: true, json: async () => ({ history }) });
+    const out = await AS.fetchHistory("blitz", 30, "http://api.test");
+    expect(out).toBe(history);
+    expect(global.fetch).toHaveBeenCalledWith("http://api.test/api/v1/stats/history?cadence=blitz&days=30");
+  });
+
+  test("retombe sur MOCK_HISTORY si HTTP non-ok", async () => {
+    global.fetch = jest.fn().mockResolvedValue({ ok: false, status: 500 });
+    const out = await AS.fetchHistory("blitz", 30, "http://api.test");
+    expect(out).toBe(AS.MOCK_HISTORY);
+  });
+
+  test("retombe sur MOCK_HISTORY si le réseau échoue", async () => {
+    global.fetch = jest.fn().mockRejectedValue(new Error("network"));
+    const out = await AS.fetchHistory("blitz", 30, "http://api.test");
+    expect(out).toBe(AS.MOCK_HISTORY);
+  });
+
+  test("retombe sur MOCK_HISTORY si le backend renvoie un historique absent", async () => {
+    global.fetch = jest.fn().mockResolvedValue({ ok: true, json: async () => ({}) });
+    const out = await AS.fetchHistory("blitz", 30, "http://api.test");
+    expect(out).toBe(AS.MOCK_HISTORY);
+  });
+});

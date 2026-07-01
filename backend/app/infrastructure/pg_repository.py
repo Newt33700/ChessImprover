@@ -35,9 +35,12 @@ class PgRepository:
 
     @staticmethod
     def _iso(row: Dict[str, Any]) -> Dict[str, Any]:  # pragma: no cover
-        created = row.get("created_at")
-        if created is not None and hasattr(created, "isoformat"):
-            row["created_at"] = created.isoformat()
+        """Convertit tout champ de type date/heure (ex. ``created_at``,
+        ``recorded_at``) en chaîne ISO 8601, pour une sérialisation JSON directe.
+        """
+        for key, value in row.items():
+            if value is not None and hasattr(value, "isoformat"):
+                row[key] = value.isoformat()
         return row
 
     # -- games ---------------------------------------------------------------
@@ -124,3 +127,46 @@ class PgRepository:
         with self._connect() as conn, conn.cursor() as cur:
             cur.execute("DELETE FROM game_moves WHERE game_id = %s::uuid", (game_id,))
             conn.commit()
+
+    # -- user_progress_history (US 5.1) --------------------------------------
+
+    def create_progress_snapshot(
+        self,
+        user_id: Optional[str],
+        game_id: Optional[str],
+        cadence: str,
+        elos: Dict[str, int],
+    ) -> Dict[str, Any]:  # pragma: no cover - nécessite une base réelle
+        sql = (
+            "INSERT INTO user_progress_history "
+            "(user_id, game_id, cadence, elo_openings, elo_tactics, "
+            "elo_strategy, elo_endgames) "
+            "VALUES (%s::uuid, %s::uuid, %s, %s, %s, %s, %s) RETURNING *"
+        )
+        params = (
+            user_id, game_id, cadence,
+            elos["openings"], elos["tactics"], elos["strategy"], elos["endgames"],
+        )
+        with self._connect() as conn, conn.cursor() as cur:
+            cur.execute(sql, params)
+            row = cur.fetchone()
+            conn.commit()
+        return self._iso(dict(row))
+
+    def get_progress_history(
+        self, user_id: Optional[str], cadence: str
+    ) -> List[Dict[str, Any]]:  # pragma: no cover - nécessite une base réelle
+        # Même précaution que get_completed_games : pas de paramètre "IS NULL"
+        # non typé, cast ::uuid explicite sur la colonne UUID.
+        if user_id is None:
+            sql = "SELECT * FROM user_progress_history WHERE cadence = %s ORDER BY recorded_at ASC"
+            params: tuple = (cadence,)
+        else:
+            sql = (
+                "SELECT * FROM user_progress_history "
+                "WHERE cadence = %s AND user_id = %s::uuid ORDER BY recorded_at ASC"
+            )
+            params = (cadence, user_id)
+        with self._connect() as conn, conn.cursor() as cur:
+            cur.execute(sql, params)
+            return [self._iso(dict(r)) for r in cur.fetchall()]

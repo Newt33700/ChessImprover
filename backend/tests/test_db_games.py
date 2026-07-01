@@ -66,3 +66,37 @@ class TestGameMoves:
 
     def test_moves_for_unknown_game(self):
         assert db_client.get_moves_for_game("missing") == []
+
+
+class TestProgressHistory:
+    _ELOS = {"openings": 2800, "tactics": 3000, "strategy": 1600, "endgames": 700}
+
+    def test_create_snapshot_fields(self):
+        record = db_client.create_progress_snapshot("u1", "g1", "blitz", self._ELOS)
+        assert record["user_id"] == "u1"
+        assert record["game_id"] == "g1"
+        assert record["cadence"] == "blitz"
+        assert record["elo_openings"] == 2800
+        assert record["elo_tactics"] == 3000
+        assert "recorded_at" in record and record["recorded_at"]
+
+    def test_get_history_filters_by_cadence(self):
+        db_client.create_progress_snapshot("u1", "g1", "blitz", self._ELOS)
+        db_client.create_progress_snapshot("u1", "g2", "bullet", self._ELOS)
+        assert len(db_client.get_progress_history("u1", "blitz")) == 1
+        assert len(db_client.get_progress_history("u1", "bullet")) == 1
+
+    def test_get_history_filters_by_user(self):
+        db_client.create_progress_snapshot("u1", "g1", "blitz", self._ELOS)
+        db_client.create_progress_snapshot("u2", "g2", "blitz", self._ELOS)
+        assert len(db_client.get_progress_history("u1", "blitz")) == 1
+        assert len(db_client.get_progress_history(None, "blitz")) == 2
+
+    def test_get_history_sorted_chronologically(self):
+        first = db_client.create_progress_snapshot("u1", "g1", "blitz", self._ELOS)
+        second = db_client.create_progress_snapshot("u1", "g2", "blitz", self._ELOS)
+        history = db_client.get_progress_history("u1", "blitz")
+        assert [h["game_id"] for h in history] == [first["game_id"], second["game_id"]]
+
+    def test_get_history_empty(self):
+        assert db_client.get_progress_history("u1", "blitz") == []

@@ -65,8 +65,20 @@ def _endgame_entry_eval(moves: List[Dict[str, Any]]) -> Optional[int]:
     return None
 
 
-def _category_elos(moves: List[Dict[str, Any]], tc: TimeClass) -> Dict[str, int]:
-    """Elos virtuels par catégorie pour un lot de coups (du joueur)."""
+def category_elos(moves: List[Dict[str, Any]], tc: TimeClass) -> Dict[str, int]:
+    """Elos virtuels par catégorie (ouvertures/tactique/stratégie/finales).
+
+    Fonction partagée : utilisée par la matrice ``build_summary`` (US 4.1) et
+    par le snapshot de progression ``progress_history.build_snapshot`` (US 5.1)
+    pour garantir un calcul d'Elo virtuel identique partout.
+
+    Parameters
+    ----------
+    moves : list[dict]
+        Coups du joueur uniquement (déjà filtrés par couleur).
+    tc : TimeClass
+        Cadence, pour le bonus du mapping US 3.1.
+    """
     opening_cpls = [m["cpl"] for m in moves if m.get("phase") == Phase.OPENING.value and m.get("cpl") is not None]
     endgame_cpls = [m["cpl"] for m in moves if m.get("phase") == Phase.ENDGAME.value and m.get("cpl") is not None]
     strat_cpls = [m["cpl"] for m in moves if m.get("position_type") == "strategic" and m.get("cpl") is not None]
@@ -115,7 +127,7 @@ def build_summary(
         moves: List[Dict[str, Any]] = []
         for entry in by_cadence[key]:
             moves.extend(_user_moves(entry))
-        cats = _category_elos(moves, tc)
+        cats = category_elos(moves, tc)
         current = ratings.get(key)
         if current is None:
             current = round(sum(cats.values()) / len(cats)) if cats else DEFAULT_ELO

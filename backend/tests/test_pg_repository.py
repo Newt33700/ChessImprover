@@ -25,6 +25,29 @@ class TestPgRepository:
             "score_cp", "cpl", "is_mate", "mate_in", "phase", "position_type",
         )
 
+    def test_progress_history_methods_exist(self):
+        # Verrouille le contrat US 5.1 : les deux méthodes doivent exister
+        # avec cette signature, indépendamment de toute connexion réelle.
+        import inspect
+
+        create_sig = inspect.signature(PgRepository.create_progress_snapshot)
+        assert list(create_sig.parameters) == ["self", "user_id", "game_id", "cadence", "elos"]
+
+        get_sig = inspect.signature(PgRepository.get_progress_history)
+        assert list(get_sig.parameters) == ["self", "user_id", "cadence"]
+
+    def test_iso_converts_any_datetime_field(self):
+        import datetime as _dt
+
+        row = {"recorded_at": _dt.datetime(2026, 7, 1, tzinfo=_dt.timezone.utc), "cadence": "blitz"}
+        converted = PgRepository._iso(row)
+        assert converted["recorded_at"] == "2026-07-01T00:00:00+00:00"
+        assert converted["cadence"] == "blitz"
+
+    def test_iso_leaves_non_datetime_untouched(self):
+        row = {"id": 1, "recorded_at": None}
+        assert PgRepository._iso(row) == {"id": 1, "recorded_at": None}
+
 
 class TestDelegation:
     def test_pg_none_without_database_url(self):

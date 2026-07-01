@@ -70,12 +70,17 @@ const ApiClient = (() => {
     return _json(await fetch(url("/api/v1/stats/summary", { period, user_id: userId })));
   }
 
+  /** Récupère l'historique des snapshots Elo virtuel pour une cadence (US 5.1). */
+  async function getStatsHistory(cadence = "blitz", days = 30, userId) {
+    return _json(await fetch(url("/api/v1/stats/history", { cadence, days, user_id: userId })));
+  }
+
   /** Vrai si une base API est configurée (sinon, mode 100 % local). */
   function isConfigured() {
     return baseUrl() !== "";
   }
 
-  return { baseUrl, url, analyzeGame, getGame, getStatsSummary, isConfigured };
+  return { baseUrl, url, analyzeGame, getGame, getStatsSummary, getStatsHistory, isConfigured };
 })();
 
 if (typeof window !== "undefined") window.ApiClient = ApiClient;
