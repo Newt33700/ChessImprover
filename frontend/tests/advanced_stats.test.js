@@ -112,12 +112,14 @@ describe("categoryDetailHtml", () => {
     expect(AS.ENDGAME_LESSONS).toHaveLength(4);
   });
 
-  test("tactics : rating + thèmes + bouton Résoudre + retour", () => {
+  test("tactics : rating + thèmes + bouton Résoudre + retour + gauge", () => {
     const html = AS.categoryDetailHtml("tactics", AS.MOCK_SUMMARY);
     expect(html).toContain("data-detail-back");
     expect(html).toContain("Mat en 2");
     expect(html).toContain("Résoudre");
     expect(html).toContain(String(AS.MOCK_SUMMARY.tactics.rating));
+    expect(html).toContain("tac-gauge");
+    expect(html).toContain("69%"); // 68.5 arrondi
   });
 
   test("endgames : tuiles conversion/résilience + leçons + Étudier", () => {
@@ -137,6 +139,43 @@ describe("categoryDetailHtml", () => {
 
   test("strategy : placeholder", () => {
     expect(AS.categoryDetailHtml("strategy", {})).toContain("empty-state");
+  });
+});
+
+// ── tacticSuccessGaugeHtml (US 4.2) ────────────────────────────────
+
+describe("tacticSuccessGaugeHtml", () => {
+  test("affiche le pourcentage arrondi", () => {
+    expect(AS.tacticSuccessGaugeHtml(72.3)).toContain("72%");
+  });
+
+  test("0% : offset = circonférence complète (aucun remplissage)", () => {
+    const html = AS.tacticSuccessGaugeHtml(0);
+    const r = 42;
+    const c = 2 * Math.PI * r;
+    expect(html).toContain(`stroke-dashoffset="${c.toFixed(2)}"`);
+    expect(html).toContain("0%");
+  });
+
+  test("100% : offset = 0 (anneau plein)", () => {
+    const html = AS.tacticSuccessGaugeHtml(100);
+    expect(html).toContain('stroke-dashoffset="0.00"');
+    expect(html).toContain("100%");
+  });
+
+  test("valeurs hors bornes clampées [0, 100]", () => {
+    expect(AS.tacticSuccessGaugeHtml(-20)).toContain("0%");
+    expect(AS.tacticSuccessGaugeHtml(150)).toContain("100%");
+  });
+
+  test("undefined/null → 0% (pas de NaN)", () => {
+    expect(AS.tacticSuccessGaugeHtml(undefined)).toContain("0%");
+    expect(AS.tacticSuccessGaugeHtml(null)).toContain("0%");
+    expect(AS.tacticSuccessGaugeHtml(undefined)).not.toContain("NaN");
+  });
+
+  test("libellé du taux de réussite présent", () => {
+    expect(AS.tacticSuccessGaugeHtml(50)).toContain("Taux de réussite tactique");
   });
 });
 

@@ -68,7 +68,11 @@ def run_analysis(
         outcome = analyze_pgn(pgn, engine)
         db_client.bulk_insert_moves(game_id, outcome["moves"])
         db_client.update_game(
-            game_id, status=GameStatus.COMPLETED.value, result=outcome.get("result")
+            game_id,
+            status=GameStatus.COMPLETED.value,
+            result=outcome.get("result"),
+            eco=outcome.get("eco"),
+            opening_name=outcome.get("opening_name"),
         )
     except Exception:  # pragma: no cover - garde-fou worker
         db_client.update_game(game_id, status=GameStatus.FAILED.value)

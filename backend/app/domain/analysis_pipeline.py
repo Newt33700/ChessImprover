@@ -81,18 +81,41 @@ def _enrich_with_engine(
         record["cpl"] = centipawn_loss(best.score_cp, played_cp)
 
 
-def analyze_pgn(pgn: str, engine: Optional[EngineProvider] = None) -> Dict[str, Any]:
-    """Analyse un PGN et renvoie ``{"result": str|None, "moves": [record, ...]}``.
+def _extract_opening(headers: Any) -> tuple:
+    """Extrait ``(eco, opening_name)`` des en-têtes PGN (US 4.2 — top 3 ouvertures).
 
-    Chaque ``record`` suit le schéma ``game_moves`` (US 1.2). Sans moteur, les
-    évaluations restent ``None`` mais les phases et coups sont produits.
+    Chess.com exporte systématiquement ``ECO`` (ex. ``"C50"``) et ``ECOUrl``
+    (ex. ``".../openings/Italian-Game"``) ; on dérive le nom lisible du dernier
+    segment de l'URL faute d'en-tête ``Opening`` standard. Renvoie
+    ``(None, None)`` si les en-têtes ne portent aucune de ces informations
+    (PGN non issu de Chess.com, ou collé manuellement).
     """
+    if not headers:
+        return None, None
+    eco = headers.get("ECO") or None
+    name = headers.get("Opening") or None
+    if not name:
+        eco_url = headers.get("ECOUrl")
+        if eco_url:
+            slug = eco_url.rstrip("/").rsplit("/", 1)[-1]
+            name = slug.replace("-", " ") if slug else None
+    return eco, name
+
+
+def analyze_pgn(pgn: str, engine: Optional[EngineProvider] = None) -> Dict[str, Any]:
+    """Analyse un PGN et renvoie ``{"result", "eco", "opening_name", "moves": [...]}``.
+
+    Chaque ``record`` de ``moves`` suit le schéma ``game_moves`` (US 1.2). Sans
+    moteur, les évaluations restent ``None`` mais les phases et coups sont
+    produits. ``eco``/``opening_name`` sont ``None`` si absents du PGN.
+    """
+    empty = {"result": None, "eco": None, "opening_name": None, "moves": []}
     try:
         game = chess.pgn.read_game(_io.StringIO(pgn))
     except Exception:
-        return {"result": None, "moves": []}
+        return empty
     if game is None:
-        return {"result": None, "moves": []}
+        return empty
 
     board = game.board()
     moves = list(game.mainline_moves())
@@ -100,6 +123,7 @@ def analyze_pgn(pgn: str, engine: Optional[EngineProvider] = None) -> Dict[str, 
     result = game.headers.get("Result") if game.headers else None
     if result == "*":
         result = None
+    eco, opening_name = _extract_opening(game.headers)
 
     records: List[Dict[str, Any]] = []
     cursor = board.copy(stack=False)
@@ -111,4 +135,4 @@ def analyze_pgn(pgn: str, engine: Optional[EngineProvider] = None) -> Dict[str, 
         records.append(record)
         cursor.push(move)
 
-    return {"result": result, "moves": records}
+    return {"result": result, "eco": eco, "opening_name": opening_name, "moves": records}

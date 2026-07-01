@@ -36,6 +36,9 @@ MISSED_CPL: int = 100
 #: Seuils d'avantage/désavantage à l'entrée de finale (centipions).
 ADVANTAGE_CP: int = 150
 
+#: Nombre d'ouvertures affichées dans le top (US 4.2, onglet Ouvertures).
+TOP_OPENINGS_LIMIT: int = 3
+
 
 def _avg(values: List[int]) -> Optional[float]:
     return sum(values) / len(values) if values else None
@@ -141,7 +144,8 @@ def build_summary(
         "acplTrend": _acpl_trend(entries),
         "gaffeRate": _gaffe_rate(entries),
         "finales": _finales(entries),
-        "tactics": _tactics_block(rows),
+        "tactics": _tactics_block(rows, _tactical_success_ratio_all(entries)),
+        "topOpenings": top_openings(entries),
     }
 
 
@@ -199,8 +203,65 @@ def _finales(entries: List[Dict[str, Any]]) -> Dict[str, float]:
     return {"conversion": conversion, "resilience": resilience}
 
 
-def _tactics_block(rows: Dict[str, Dict[str, int]]) -> Dict[str, Any]:
-    """Bloc tactiques : rating dérivé de l'Elo tactique moyen (SRS hors périmètre)."""
+def _tactical_success_ratio_all(entries: List[Dict[str, Any]]) -> Optional[float]:
+    """Ratio de réussite tactique (US 4.2) sur **toutes** les parties analysées.
+
+    Global comme ``_gaffe_rate``/``_finales`` (pas de bucketing par cadence) :
+    alimente le mini-indicateur circulaire de l'onglet Tactiques.
+    """
+    outcomes: List[TacticOutcome] = []
+    for entry in entries:
+        for m in _user_moves(entry):
+            if m.get("position_type") == "tactical" and m.get("cpl") is not None:
+                outcomes.append(tactic_outcome(m["cpl"]))
+    return tactical_success_ratio(outcomes)
+
+
+def _tactics_block(rows: Dict[str, Dict[str, int]], success_ratio: Optional[float] = None) -> Dict[str, Any]:
+    """Bloc tactiques : rating dérivé de l'Elo tactique moyen (SRS hors périmètre),
+    + ``successRatio`` (%, US 4.2) pour le mini-indicateur circulaire de l'onglet détaillé.
+    """
     tactic_elos = [r["tactics"] for r in rows.values() if "tactics" in r]
     rating = round(sum(tactic_elos) / len(tactic_elos)) if tactic_elos else DEFAULT_ELO
-    return {"rating": rating, "toReview": 0, "solved": 0, "streak": 0}
+    ratio_pct = round(100 * success_ratio, 1) if success_ratio is not None else 0.0
+    return {"rating": rating, "toReview": 0, "solved": 0, "streak": 0, "successRatio": ratio_pct}
+
+
+def top_openings(entries: List[Dict[str, Any]], limit: int = TOP_OPENINGS_LIMIT) -> List[Dict[str, Any]]:
+    """Top ouvertures les plus jouées, par code ECO (US 4.2, onglet Ouvertures).
+
+    Parties sans ``eco`` (PGN non issu de Chess.com, ou pas encore analysé)
+    sont ignorées. L'Elo par ouverture est calculé **sans bonus de cadence**
+    (``acpl_to_elo(acpl, None)``) : un groupe ECO peut mélanger plusieurs
+    cadences, appliquer le bonus d'une seule serait arbitraire.
+
+    Parameters
+    ----------
+    entries : list[dict]
+        Liste de ``{"game": game_dict, "moves": [...]}``.
+    limit : int
+        Nombre d'ouvertures renvoyées (les plus jouées d'abord).
+
+    Returns
+    -------
+    list[dict]
+        ``[{"name", "elo", "games"}, ...]``, triée par nombre de parties décroissant.
+    """
+    groups: Dict[str, Dict[str, Any]] = {}
+    for entry in entries:
+        eco = entry["game"].get("eco")
+        if not eco:
+            continue
+        group = groups.setdefault(eco, {"name": entry["game"].get("opening_name") or eco, "cpls": [], "games": 0})
+        group["games"] += 1
+        for m in _user_moves(entry):
+            if m.get("phase") == Phase.OPENING.value and m.get("cpl") is not None:
+                group["cpls"].append(m["cpl"])
+
+    ranked = sorted(groups.values(), key=lambda g: g["games"], reverse=True)[:limit]
+    result = []
+    for g in ranked:
+        acpl = _avg(g["cpls"])
+        elo = acpl_to_elo(acpl, None) if acpl is not None else DEFAULT_ELO
+        result.append({"name": g["name"], "elo": int(elo), "games": g["games"]})
+    return result
