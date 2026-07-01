@@ -501,3 +501,59 @@ En tant qu'équipe, nous voulons que chaque modification de `supabase/migrations
 - **Décision de conception documentée** : la « distinction visuelle » est portée par ce bouton dans la vue Review (partie du dashboard SPA), pas par la liste `#games-list` du dashboard (parties Chess.com) — ces deux listes sont aujourd'hui disjointes : seule une partie explicitement analysée via la modale « Analyser un PGN » est synchronisée côté serveur (`_syncToBackend`), les 20 dernières parties Chess.com affichées dans `#games-list` ne le sont pas automatiquement.
 - Vérifié en intégration réelle (navigateur Playwright + backend/frontend locaux) : le bouton apparaît après analyse, bascule visuellement (texte + fond vert) après clic, revient à l'état initial au second clic ; capture d'écran à l'appui.
 - Tests : `backend/tests/test_games_api.py` (classe `TestUpdateGameStatus`, 7 tests : marque/démarque, persistance via GET, 401 sans token, 404 partie inconnue/autre utilisateur, 422 body invalide ; `is_reviewed=False` par défaut vérifié dans `TestListGames`), `frontend/tests/api_client.test.js` (`updateGameStatus`).
+
+---
+
+## EPIC 8 : Système de Coaching Tactique Adaptatif
+
+**Objectif :** créer un moteur de problèmes tactiques (puzzles curés, pas les propres gaffes du joueur) qui s'ajuste au niveau réel du joueur et propose des catégories ciblées.
+
+> **Note d'architecture :** ce système est distinct du mode « Exercice » existant (`SRS`, `js/app.js`), qui rejoue les propres gaffes détectées lors de l'analyse d'une partie du joueur (répétition espacée, cartes locales `IndexedDB`). L'EPIC 8 introduit un **jeu de problèmes tactiques curés côté serveur** (dataset externe), avec sélection adaptative par Elo et validation anti-triche côté backend — une fonctionnalité nouvelle, pas une extension du SRS.
+>
+> **Recommandations du PO retenues :**
+> - Données : table `tactical_problems` (PGN/FEN du problème, solution, difficulté Elo, catégorie), peuplée pour le MVP par import d'un dataset open-source (CSV/JSON) dans Supabase.
+> - Validation : jamais uniquement côté frontend (anti-triche) — le backend valide que le coup joué correspond au « best move » attendu.
+> - UI : échiquier responsive, touchant le haut de l'écran sur mobile, boutons « Catégories » en dessous.
+> - UX : compteur de « Série en cours » (streak) — nombre de problèmes réussis d'affilée aujourd'hui.
+
+### US 8.1 : Moteur de sélection adaptative (Elo type Glicko simplifié)
+
+**Description :** proposer des problèmes dont la difficulté correspond à l'Elo tactique actuel du joueur, pour rester dans sa zone de progression.
+
+**Critères d'Acceptation (DoD) :**
+- Système de notation simplifié (type Elo) pour le joueur sur les problèmes tactiques (distinct de l'Elo virtuel Stats Avancées, EPIC 3).
+- Si aucun Elo tactique n'est défini pour l'utilisateur, le système propose un problème de difficulté moyenne (1000) et l'ajuste dès le premier résultat.
+- Algorithme : succès → +15 points ; échec → −15 points.
+
+**Statut :** 🔜 Backlog.
+
+### US 8.2 : Dashboard de catégories tactiques (Mat en 1, Mat en 2, Non-protégés)
+
+**Description :** filtrer les problèmes par thème pour travailler spécifiquement une faiblesse identifiée.
+
+**Critères d'Acceptation (DoD) :**
+- Menu de sélection : « Aléatoire », « Mat en 1 », « Mat en 2 », « Tactique Positionnelle ».
+- L'API backend filtre la base de problèmes selon le `theme_id` transmis.
+
+**Statut :** 🔜 Backlog.
+
+### US 8.3 : Interface de jeu interactive (échiquier jouable)
+
+**Description :** interagir avec un échiquier où les coups sont validés en temps réel par le backend, pour résoudre les problèmes comme sur une application mobile.
+
+**Critères d'Acceptation (DoD) :**
+- Le frontend utilise chess.js (déjà chargé) pour la logique des coups.
+- Chaque coup est envoyé au backend, qui valide via le moteur si c'est le « Best Move » attendu du problème (jamais de validation frontend seule).
+- Feedback visuel immédiat (vert succès / rouge erreur), son optionnel.
+
+**Statut :** 🔜 Backlog.
+
+### US 8.4 : Persistance et historique des exercices
+
+**Description :** enregistrer chaque tentative pour calculer des statistiques de progression par catégorie.
+
+**Critères d'Acceptation (DoD) :**
+- Table `tactical_attempts` : `attempt_id`, `user_id`, `problem_id`, `success` (bool), `time_taken` (secondes), `timestamp`.
+- L'historique permet de calculer le taux de réussite par thème pour la vue stats.
+
+**Statut :** 🔜 Backlog.
