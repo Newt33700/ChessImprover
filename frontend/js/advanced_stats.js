@@ -60,7 +60,7 @@ const AdvancedStats = (() => {
     },
     gaffeRate: { opening: 37.3, middlegame: 37.5, endgame: 25.2 },
     finales: { conversion: 60.7, resilience: 0.5 },
-    tactics: { rating: 209, toReview: 43, solved: 23, streak: 1 },
+    tactics: { rating: 209, toReview: 43, solved: 23, streak: 1, successRatio: 68.5 },
   };
 
   // Historique de démonstration (US 5.1) — 5 points hebdomadaires croissants.
@@ -283,6 +283,30 @@ const AdvancedStats = (() => {
   }
 
   /**
+   * Mini-indicateur circulaire (US 4.2) du taux de réussite tactique (%).
+   * Fonction pure (SVG + `stroke-dasharray`, sans DOM ni Chart.js).
+   */
+  function tacticSuccessGaugeHtml(percent) {
+    const p = Math.max(0, Math.min(100, Number(percent) || 0));
+    const radius = 42;
+    const circumference = 2 * Math.PI * radius;
+    const offset = circumference * (1 - p / 100);
+    return (
+      '<div class="tac-gauge-wrap">' +
+      '<div class="tac-gauge">' +
+      '<svg viewBox="0 0 100 100" class="tac-gauge-svg" aria-hidden="true">' +
+      `<circle cx="50" cy="50" r="${radius}" class="tac-gauge-track"/>` +
+      `<circle cx="50" cy="50" r="${radius}" class="tac-gauge-fill" ` +
+      `stroke-dasharray="${circumference.toFixed(2)}" stroke-dashoffset="${offset.toFixed(2)}"/>` +
+      "</svg>" +
+      `<div class="tac-gauge-value">${p.toFixed(0)}%</div>` +
+      "</div>" +
+      '<div class="tac-gauge-label">Taux de réussite tactique</div>' +
+      "</div>"
+    );
+  }
+
+  /**
    * HTML de la vue détaillée d'une catégorie (US 4.2). Fonction PURE (testable).
    */
   function categoryDetailHtml(category, summary) {
@@ -296,7 +320,8 @@ const AdvancedStats = (() => {
       const banner =
         `<div class="tac-banner"><span class="tac-rating">${t.rating != null ? t.rating : "—"}</span>` +
         `<span class="tac-rating-label">Rating de puzzles</span></div>`;
-      return head + banner + _themeGrid(TACTIC_THEMES, "Résoudre");
+      const gauge = tacticSuccessGaugeHtml(t.successRatio);
+      return head + banner + gauge + _themeGrid(TACTIC_THEMES, "Résoudre");
     }
     if (category === "endgames") {
       const f = summary.finales || { conversion: 0, resilience: 0 };
@@ -541,6 +566,7 @@ const AdvancedStats = (() => {
     fetchHistory,
     isEmpty,
     categoryDetailHtml,
+    tacticSuccessGaugeHtml,
     renderCategoryDetail,
     cellClass,
     phaseDelta,

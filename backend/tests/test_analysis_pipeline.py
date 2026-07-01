@@ -7,7 +7,7 @@ import io
 import chess
 import chess.pgn
 
-from app.domain.analysis_pipeline import analyze_pgn, build_client_engine
+from app.domain.analysis_pipeline import _extract_opening, analyze_pgn, build_client_engine
 
 PGN = '[Event "x"][Result "1-0"]\n\n1. e4 e5 2. Nf3 Nc6 3. Bb5 a6 1-0'
 
@@ -44,6 +44,58 @@ class TestWithoutEngine:
     def test_star_result_normalized(self):
         out = analyze_pgn('[Result "*"]\n\n1. e4 *')
         assert out["result"] is None
+
+    def test_invalid_pgn_has_no_eco(self):
+        out = analyze_pgn("not a pgn")
+        assert out["eco"] is None
+        assert out["opening_name"] is None
+
+
+class TestExtractOpening:
+    def test_eco_and_opening_headers(self):
+        eco, name = _extract_opening({"ECO": "C50", "Opening": "Italian Game"})
+        assert eco == "C50"
+        assert name == "Italian Game"
+
+    def test_derives_name_from_eco_url(self):
+        eco, name = _extract_opening({
+            "ECO": "C50",
+            "ECOUrl": "https://www.chess.com/openings/Italian-Game-Giuoco-Piano",
+        })
+        assert eco == "C50"
+        assert name == "Italian Game Giuoco Piano"
+
+    def test_opening_header_takes_precedence_over_eco_url(self):
+        eco, name = _extract_opening({
+            "Opening": "Ruy Lopez",
+            "ECOUrl": "https://www.chess.com/openings/Italian-Game",
+        })
+        assert name == "Ruy Lopez"
+
+    def test_no_headers(self):
+        assert _extract_opening(None) == (None, None)
+        assert _extract_opening({}) == (None, None)
+
+    def test_eco_without_name_source(self):
+        eco, name = _extract_opening({"ECO": "C50"})
+        assert eco == "C50"
+        assert name is None
+
+    def test_trailing_slash_in_eco_url(self):
+        eco, name = _extract_opening({"ECOUrl": "https://www.chess.com/openings/Italian-Game/"})
+        assert name == "Italian Game"
+
+    def test_analyze_pgn_extracts_eco_from_full_pgn(self):
+        # Un tag PGN par ligne (format standard réellement produit par Chess.com) ;
+        # des tags accolés sur une seule ligne sont mal supportés par python-chess.
+        pgn = (
+            '[Event "x"]\n[Result "1-0"]\n[ECO "C50"]\n'
+            '[ECOUrl "https://www.chess.com/openings/Italian-Game"]\n\n'
+            "1. e4 e5 2. Nf3 Nc6 3. Bc4 1-0"
+        )
+        out = analyze_pgn(pgn)
+        assert out["eco"] == "C50"
+        assert out["opening_name"] == "Italian Game"
 
 
 class TestWithEngine:
