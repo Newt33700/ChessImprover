@@ -27,7 +27,11 @@ class PgRepository:
         import psycopg
         from psycopg.rows import dict_row
 
-        return psycopg.connect(self.dsn, row_factory=dict_row)
+        conn = psycopg.connect(self.dsn, row_factory=dict_row)
+        # Compat pooler Supabase en mode "transaction" (port 6543) : les
+        # prepared statements de psycopg3 y sont incompatibles.
+        conn.prepare_threshold = None
+        return conn
 
     @staticmethod
     def _iso(row: Dict[str, Any]) -> Dict[str, Any]:  # pragma: no cover
@@ -58,13 +62,13 @@ class PgRepository:
 
     def get_game(self, game_id: str) -> Optional[Dict[str, Any]]:  # pragma: no cover
         with self._connect() as conn, conn.cursor() as cur:
-            cur.execute("SELECT * FROM games WHERE id = %s", (game_id,))
+            cur.execute("SELECT * FROM games WHERE id = %s::uuid", (game_id,))
             row = cur.fetchone()
         return self._iso(dict(row)) if row else None
 
     def get_games_for_user(self, user_id: Optional[str]) -> List[Dict[str, Any]]:  # pragma: no cover
         with self._connect() as conn, conn.cursor() as cur:
-            cur.execute("SELECT * FROM games WHERE user_id = %s", (user_id,))
+            cur.execute("SELECT * FROM games WHERE user_id = %s::uuid", (user_id,))
             return [self._iso(dict(r)) for r in cur.fetchall()]
 
     def update_game(self, game_id: str, **fields: Any) -> Optional[Dict[str, Any]]:  # pragma: no cover
@@ -73,15 +77,22 @@ class PgRepository:
         cols = ", ".join(f"{k} = %s" for k in fields)
         params = list(fields.values()) + [game_id]
         with self._connect() as conn, conn.cursor() as cur:
-            cur.execute(f"UPDATE games SET {cols} WHERE id = %s RETURNING *", params)
+            cur.execute(f"UPDATE games SET {cols} WHERE id = %s::uuid RETURNING *", params)
             row = cur.fetchone()
             conn.commit()
         return self._iso(dict(row)) if row else None
 
     def get_completed_games(self, user_id: Optional[str] = None) -> List[Dict[str, Any]]:  # pragma: no cover
-        sql = "SELECT * FROM games WHERE status = 'completed' AND (%s IS NULL OR user_id = %s)"
+        # NB : on évite un paramètre "IS NULL" non typé (IndeterminateDatatype
+        # avec psycopg3) en branchant la requête sur la présence de user_id, et
+        # on caste explicitement en ::uuid pour la colonne UUID de Postgres.
+        if user_id is None:
+            sql, params = "SELECT * FROM games WHERE status = 'completed'", ()
+        else:
+            sql = "SELECT * FROM games WHERE status = 'completed' AND user_id = %s::uuid"
+            params = (user_id,)
         with self._connect() as conn, conn.cursor() as cur:
-            cur.execute(sql, (user_id, user_id))
+            cur.execute(sql, params)
             return [self._iso(dict(r)) for r in cur.fetchall()]
 
     # -- game_moves ----------------------------------------------------------
@@ -106,10 +117,10 @@ class PgRepository:
 
     def get_moves_for_game(self, game_id: str) -> List[Dict[str, Any]]:  # pragma: no cover
         with self._connect() as conn, conn.cursor() as cur:
-            cur.execute("SELECT * FROM game_moves WHERE game_id = %s ORDER BY id", (game_id,))
+            cur.execute("SELECT * FROM game_moves WHERE game_id = %s::uuid ORDER BY id", (game_id,))
             return [dict(r) for r in cur.fetchall()]
 
     def clear_moves(self, game_id: str) -> None:  # pragma: no cover
         with self._connect() as conn, conn.cursor() as cur:
-            cur.execute("DELETE FROM game_moves WHERE game_id = %s", (game_id,))
+            cur.execute("DELETE FROM game_moves WHERE game_id = %s::uuid", (game_id,))
             conn.commit()

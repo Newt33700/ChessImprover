@@ -159,6 +159,11 @@ const AdvancedStats = (() => {
     });
   }
 
+  /** Vrai si le résumé ne contient aucune partie analysée (état vide UX). */
+  function isEmpty(summary) {
+    return !!summary && summary.hasData === false;
+  }
+
   // ── Catalogues des vues détaillées (US 4.2, maquettes Finales/Tactiques) ──
   const TACTIC_THEMES = [
     { key: "mate2", label: "Mat en 2", icon: "♚" },
@@ -408,6 +413,7 @@ const AdvancedStats = (() => {
     ENDGAME_LESSONS,
     CATEGORY_TITLES,
     fetchSummary,
+    isEmpty,
     categoryDetailHtml,
     renderCategoryDetail,
     cellClass,

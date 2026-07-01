@@ -111,3 +111,14 @@ class TestStatsSummary:
         s = client.get("/api/v1/stats/summary")
         assert s.status_code == 200
         assert set(s.json()["rows"]) == {"bullet", "blitz", "rapid"}
+
+    def test_summary_degrades_on_db_error(self, monkeypatch):
+        # Une erreur d'accès aux données ne doit PAS produire un 500.
+        def boom(*_a, **_k):
+            raise RuntimeError("db down")
+
+        monkeypatch.setattr("app.routers.games.db_client.get_completed_games", boom)
+        s = client.get("/api/v1/stats/summary", params={"period": "7d"})
+        assert s.status_code == 200
+        assert s.json()["period"] == "7d"
+        assert set(s.json()["rows"]) == {"bullet", "blitz", "rapid"}
