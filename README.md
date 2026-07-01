@@ -140,16 +140,17 @@ ChessImprover/
 │       │   ├── cadence.py              # time_control Chess.com → TimeClass (EPIC 1)
 │       │   ├── analysis_pipeline.py    # Worker : PGN → métriques par coup (US 1.2)
 │       │   ├── stats_aggregator.py     # Agrégation → résumé /stats/summary (US 4.1)
+│       │   ├── progress_history.py     # Snapshot Elo + fenêtre glissante (US 5.1)
 │       │   └── srs_engine.py           # Algorithme SM-2 côté backend
 │       ├── infrastructure/
 │       │   ├── chess_com_client.py     # Proxy httpx vers Chess.com API
 │       │   ├── engine.py               # EngineProvider (évals client / Stockfish natif) — EPIC 2
-│       │   ├── pg_repository.py        # Dépôt Postgres/Supabase games+game_moves (si DATABASE_URL)
-│       │   └── db_client.py            # Store in-memory + délégation Postgres (EPIC 1)
+│       │   ├── pg_repository.py        # Dépôt Postgres/Supabase games+game_moves+progress_history
+│       │   └── db_client.py            # Store in-memory + délégation Postgres (EPIC 1 / US 5.1)
 │       ├── routers/
 │       │   ├── auth.py                 # POST /auth/signup /auth/login GET /auth/me (US 7)
 │       │   ├── sync.py                 # POST /sync — stratégie Client Wins (US 7)
-│       │   └── games.py                # POST /api/v1/games/analyze (202), GET stats/summary (EPIC 1)
+│       │   └── games.py                # POST /games/analyze, GET stats/summary, GET stats/history
 │       ├── tests/
 │       │   ├── test_auth.py            # 24 TUs auth : hash, JWT, signup, login, me, sync
 │       │   ├── test_analyzer.py
@@ -160,18 +161,20 @@ ChessImprover/
 │       │   ├── test_virtual_elo.py     # US 3.1
 │       │   ├── test_move_class.py      # US 3.2
 │       │   ├── test_cadence.py         # EPIC 1 : classification cadence
-│       │   ├── test_db_games.py        # EPIC 1 : store games/game_moves
+│       │   ├── test_db_games.py        # EPIC 1 + US 5.1 : store games/moves/progress_history
 │       │   ├── test_analysis_pipeline.py # US 1.2 : worker d'analyse
 │       │   ├── test_stats_aggregator.py  # US 4.1 : agrégation
-│       │   ├── test_games_api.py       # US 1.1 : routes + worker async
+│       │   ├── test_progress_history.py  # US 5.1 : snapshot + fenêtre glissante
+│       │   ├── test_games_api.py       # US 1.1 + US 5.1 : routes + worker async
 │       │   ├── test_pg_repository.py   # Adaptateur Postgres + délégation db_client
 │       │   └── test_srs.py
 │       └── mutants/                    # Mutation testing mutmut
 │
 ├── supabase/
 │   └── migrations/
-│       ├── 20260630000000_init_auth.sql      # Tables profiles + user_data, RLS (US 7)
-│       └── 20260701000000_advanced_stats.sql # Tables games + game_moves, RLS (EPIC 1)
+│       ├── 20260630000000_init_auth.sql       # Tables profiles + user_data, RLS (US 7)
+│       ├── 20260701000000_advanced_stats.sql  # Tables games + game_moves, RLS (EPIC 1)
+│       └── 20260701120000_progress_history.sql # Table user_progress_history, RLS (US 5.1)
 │
 └── .github/
     └── workflows/
@@ -740,6 +743,28 @@ Vue plein écran (« type Chess.com Premium ») ouverte depuis la carte BILAN (b
 
 > **Câblage données :** ✅ vue + rendu opérationnels ; `fetchSummary` **délègue à `ApiClient`** dès qu'une base API est configurée (`window.API_BASE` / `localStorage['apiBase']`) et retombe sur `MOCK_SUMMARY` en cas d'échec. Clic sur une catégorie du deep-dive → vue détaillée (`categoryDetailHtml`, US 4.2). La logique pure est testée (`advanced_stats.test.js` + `api_client.test.js`) ; les `render*` (glue DOM) ne sont pas dans `collectCoverageFrom`, comme `app.js`.
 
+### 3.17 Courbe de progression (US 5.1)
+
+**Fichiers :** `js/advanced_stats.js`, `js/api_client.js`, `index.html` (carte PROGRESSION dans `#advstats-col`), `css/style.css`
+
+Carte **PROGRESSION**, première carte de la colonne principale de la vue Stats Avancées : courbe Chart.js à 4 séries (Ouvertures/Tactique/Stratégie/Finales) + 4 chips à cocher pour masquer/afficher une série sans reconstruire le graphe.
+
+**Fonctions ajoutées à `AdvancedStats` :**
+
+| Fonction | Rôle |
+|---|---|
+| `fetchHistory(cadence, days, base?)` | délègue à `ApiClient.getStatsHistory` si configuré, sinon `GET {base}/api/v1/stats/history` ; **fallback `MOCK_HISTORY`** |
+| `formatShortDate(iso)` | libellé d'axe `"JJ/MM"` ; renvoie les 10 premiers caractères si la date est invalide |
+| `buildProgressDatasets(history)` | transforme l'historique en `{labels, series:{openings,tactics,strategy,endgames}}` (pur, sans Chart.js) |
+| `renderProgressChart(canvas, history)` | trace la courbe (légende masquée, couleurs `PROGRESS_COLORS`) |
+| `toggleProgressSeries(chart, key, visible)` | `chart.setDatasetVisibility` + `update()`, no-op si graphe/clé introuvable |
+
+**`ApiClient.getStatsHistory(cadence, days, userId?)`** → `GET /api/v1/stats/history?cadence=&days=&user_id=`.
+
+**Câblage `app.js` :** `_loadProgressChart()` (fetch + rendu, détruit l'ancien graphe, état vide explicite si `history` vide) appelée depuis `_loadAdvStats()` (chargement initial + changement de période) et depuis le clic sur un onglet de cadence. Toggles délégués sur `#adv-progress-toggles` (`change` → `toggleProgressSeries`). Graphe détruit dans `_hideAdvStats()`.
+
+**UX mobile :** `.adv-progress-wrap { overflow-x: auto }` + largeur minimale du conteneur interne calculée en JS (`Math.max(600, history.length * 46)` px) : au-delà d'un certain nombre de points, l'utilisateur scrolle horizontalement plutôt que de voir une courbe tassée.
+
 ---
 
 ### 3.14 Système XP / Niveaux / Streaks
@@ -847,14 +872,27 @@ Modules **purs** (couche domaine), entièrement testés, indépendants de l'infr
 | `/api/v1/games/analyze` | POST | US 1.1 — crée la partie (`status=processing`), répond **202** + UUID, délègue à une `BackgroundTask`. Corps : `pgn` **ou** `game_ids`, + `user_id`, `user_color`, `time_control`, `evals` (multipv client optionnel). |
 | `/api/v1/games/{game_id}` | GET | Statut de la partie + métriques par coup. `404` si inconnue. |
 | `/api/v1/stats/summary` | GET | US 4.1 — résumé agrégé (`?period=`, `?user_id=`). |
+| `/api/v1/stats/history` | GET | US 5.1 — historique des snapshots Elo (`?cadence=`, `?days=` 1-365, `?user_id=`). |
 
-**Worker (`run_analysis`)** : choisit la source d'évals (client > Stockfish natif `STOCKFISH_PATH` > aucune), appelle `analysis_pipeline.analyze_pgn`, **bulk-insert** des coups (US 1.2), puis `status=completed` (`failed` sur exception).
+**Worker (`run_analysis`)** : choisit la source d'évals (client > Stockfish natif `STOCKFISH_PATH` > aucune), appelle `analysis_pipeline.analyze_pgn`, **bulk-insert** des coups (US 1.2), puis `status=completed` (`failed` sur exception). Depuis US 5.1, enregistre ensuite un **snapshot de progression** (garde-fou séparé : un échec du snapshot n'invalide jamais l'analyse déjà persistée).
 
 **`analysis_pipeline.analyze_pgn(pgn, engine=None)`** → `{result, moves:[…]}` : pour chaque coup, `phase` (US 2.1), `eval_before`/`eval_after`/`score_cp`, `cpl` plafonné (US 2.2), `is_mate`/`mate_in`, `position_type` (US 3.2). `build_client_engine(evals)` adapte les évals navigateur (`{fen: [[uci, cp, is_mate?, mate_in?], …]}`).
 
-**`stats_aggregator.build_summary(entries, ratings=None, period)`** → résumé attendu par le frontend : matrice `rows` (Elo virtuel par cadence × catégorie, défaut 1200), `acplTrend`, `gaffeRate` par phase, `finales` (conversion/résilience), `tactics`.
+**`stats_aggregator.build_summary(entries, ratings=None, period)`** → résumé attendu par le frontend : matrice `rows` (Elo virtuel par cadence × catégorie, défaut 1200), `acplTrend`, `gaffeRate` par phase, `finales` (conversion/résilience), `tactics`. **`category_elos(moves, tc)`** (ex-`_category_elos`, promue publique en US 5.1) : cœur du calcul, partagé avec `progress_history.build_snapshot`.
 
-> **Persistance :** en dev/test, `db_client` stocke `games`/`game_moves` en mémoire (resetable). La connexion Supabase réelle reste à brancher (§10.1).
+> **Persistance :** en dev/test, `db_client` stocke `games`/`game_moves`/`user_progress_history` en mémoire (resetable). L'adaptateur Postgres (`pg_repository.py`, §10.1) est prêt côté code.
+
+### 4.7 US 5.1 — Historisation de la progression
+
+**Fichiers :** `domain/progress_history.py`, `infrastructure/db_client.py` + `pg_repository.py`, `routers/games.py`, `supabase/migrations/20260701120000_progress_history.sql`
+
+**`progress_history.build_snapshot(moves, time_control, user_color="white", game_id=None, user_id=None)`** → `{user_id, game_id, cadence, elos:{openings,tactics,strategy,endgames}}`, ou **`None` si la cadence est inconnue** (aucun snapshot enregistré dans ce cas). Filtre d'abord `moves` par `user_color`, puis délègue à `stats_aggregator.category_elos`.
+
+**`progress_history.filter_history_by_days(history, days=30, now=None)`** → sous-ensemble de `history` dont `recorded_at` est dans la fenêtre `[now - days, now]` ; `days ≤ 0` renvoie `[]` ; les lignes sans date valide (absente/malformée) sont exclues plutôt que de faire planter le tri. `now` est injectable pour des tests déterministes.
+
+**`db_client.create_progress_snapshot(user_id, game_id, cadence, elos)`** / **`get_progress_history(user_id, cadence)`** : CRUD in-memory (append-only, triés par `recorded_at`) ou délégation `pg_repository` si `DATABASE_URL` défini. Même précaution SQL que `get_completed_games` (§10.1) : pas de paramètre `IS NULL` non typé, cast `::uuid` explicite.
+
+**`GET /api/v1/stats/history`** : dégrade en `history: []` (200) si l'accès aux données échoue (log de la trace), plutôt qu'un 500 — même pattern défensif que `/stats/summary`.
 
 ---
 
@@ -1014,6 +1052,15 @@ Finales : conversion = % victoires si entrée en finale avec éval ≥ +150
           résilience = % nulles/victoires si entrée en finale avec éval ≤ −150
 ```
 
+### 5.15 Historisation de la progression (US 5.1)
+
+```
+snapshot enregistré ⟺ classify_cadence(time_control) ≠ None   (sinon : rien)
+elos du snapshot     = category_elos(coups du joueur, cadence)   — identique à la matrice US 4.1
+fenêtre affichée      = { lignes | now - days ≤ recorded_at ≤ now }
+days ≤ 0               → fenêtre vide (aucune ligne)
+```
+
 ---
 
 ## 6. Tests & Qualité
@@ -1044,8 +1091,8 @@ npm run test:mutation # Stryker
 | `srs_sm2.test.js` | SRS (extrait de app.js) | createCard, SM-2 quality=5/3/1, EF clamp, due date |
 | `stats_dashboard.test.js` | StatsDashboard | wpFromCp, estimateEloLogistic, movingAverage, filterByDays, buildChartData, render (Chart mock) |
 | `personal_coach.test.js` | PersonalCoach | computeMetrics, diagnose (toutes les 6 branches), renderHTML, _detectResult, _detectUserColor, _extractOpening |
-| `advanced_stats.test.js` | AdvancedStats | cellClass, deltas, deepDiveFor, gaugeAngle, matrixRows, `categoryDetailHtml` (tactics/endgames/openings/strategy), fetchSummary (fallbacks) |
-| `api_client.test.js` | ApiClient | baseUrl/isConfigured (window/localStorage), url (query), analyzeGame (POST + erreur), getStatsSummary, getGame |
+| `advanced_stats.test.js` | AdvancedStats | cellClass, deltas, deepDiveFor, gaugeAngle, matrixRows, `categoryDetailHtml` (tactics/endgames/openings/strategy), fetchSummary (fallbacks), `formatShortDate`, `buildProgressDatasets`, `toggleProgressSeries`, `fetchHistory` (fallbacks) |
+| `api_client.test.js` | ApiClient | baseUrl/isConfigured (window/localStorage), url (query), analyzeGame (POST + erreur), getStatsSummary, getGame, getStatsHistory |
 
 > `advanced_stats.js` n'est pas dans `collectCoverageFrom` (comme `app.js`, `auth.js`, `board_manager.js`) : seules ses fonctions pures sont testées, les `render*` sont de la glue DOM.
 
@@ -1077,14 +1124,15 @@ JWT_SECRET=ci-test-secret pytest tests/ -v
 | `test_virtual_elo.py` | Anchors, Interpolation, CadenceBonus, AcplToElo | US 3.1 |
 | `test_move_class.py` | ClassifyPosition, TacticOutcome, SuccessRatio, TacticalElo, StrategicElo | US 3.2 |
 | `test_cadence.py` | EstimateSeconds, ClassifyCadence (bornes Bullet/Blitz/Rapide/Daily) | EPIC 1 |
-| `test_db_games.py` | create/get/update/completed games, bulk/clear moves | EPIC 1 |
+| `test_db_games.py` | create/get/update/completed games, bulk/clear moves, snapshot/history progression | EPIC 1 + US 5.1 |
 | `test_analysis_pipeline.py` | sans moteur (phases/SAN), avec moteur (CPL, plafond, tactique/stratégie), mat | US 1.2 |
 | `test_stats_aggregator.py` | user_outcome, build_summary (catégories, ratings, couleur), gaffeRate, finales, acplTrend | US 4.1 |
-| `test_games_api.py` | POST analyze (202, 400), worker→completed, réanalyse, GET game (404), stats/summary | US 1.1 |
-| `test_pg_repository.py` | PgRepository (dsn, colonnes), délégation db_client (in-memory sans `DATABASE_URL`) | EPIC 1 |
+| `test_progress_history.py` | build_snapshot (cadence inconnue, filtre couleur, IDs), filter_history_by_days (bornes, dates invalides/naïves) | US 5.1 |
+| `test_games_api.py` | POST analyze (202, 400), worker→completed, réanalyse, GET game (404), stats/summary, snapshot auto, GET stats/history | US 1.1 + US 5.1 |
+| `test_pg_repository.py` | PgRepository (dsn, colonnes, contrat progress_history, `_iso` générique), délégation db_client (in-memory sans `DATABASE_URL`) | EPIC 1 + US 5.1 |
 | `test_srs.py` | — | SM-2 backend |
 
-**Couverture backend :** 329 TUs au total, couverture globale **89 %** ; cœur Stats Avancées + EPIC 1 à 90–100 % (`stats_aggregator`, `cadence`, `models`, `engine` à 100 %, `analysis_pipeline` 90 %, `routers/games` 94 %, `db_client` 98 %). Les requêtes SQL réelles de `pg_repository` (nécessitant une base) sont marquées `pragma: no cover`.
+**Couverture backend :** 365 TUs au total, couverture globale **89 %** ; cœur Stats Avancées + EPIC 1/5.1 à 90–100 % (`stats_aggregator`, `cadence`, `progress_history`, `models`, `engine` à 100 %, `analysis_pipeline` 90 %, `routers/games` 92 %, `db_client` 98 %). Les requêtes SQL réelles de `pg_repository` (nécessitant une base) sont marquées `pragma: no cover`.
 
 **Architecture de test `test_auth.py` :**
 - App de test minimale (`FastAPI()` + routers auth/sync uniquement) pour éviter la dépendance `python-chess`
@@ -1199,7 +1247,8 @@ UNIQUE (user_id)
 | **Dashboard Stats Elo/Précision** (US 5) | `stats_dashboard.js` | Câblé dans `_switchTab("tab-stats")` |
 | **Coach Personnel** (US 6) | `personal_coach.js` | Câblé dans `_switchTab("tab-coach")` |
 | Backend auth/sync (US 7) | `routers/auth.py` + `routers/sync.py` | API opérationnelle |
-| **Backend EPIC 1 — analyse async + stats** | `routers/games.py` + `analysis_pipeline.py` + `stats_aggregator.py` | `POST /api/v1/games/analyze` (202 + BackgroundTask), `GET /api/v1/stats/summary`. Persistance in-memory (Supabase à brancher). |
+| **Backend EPIC 1 — analyse async + stats** | `routers/games.py` + `analysis_pipeline.py` + `stats_aggregator.py` | `POST /api/v1/games/analyze` (202 + BackgroundTask), `GET /api/v1/stats/summary`. Persistance in-memory (adaptateur Postgres prêt, §10.1). |
+| **Historisation de la progression** (US 5.1) | `progress_history.py` + `routers/games.py` + `advanced_stats.js` | Snapshot Elo auto après analyse (`user_progress_history`), `GET /api/v1/stats/history`, carte PROGRESSION (courbe + toggles) |
 | **Analyse Finale** (US 3) | `endgame_detector.js` + `app.js` | Câblé via `_runEndgameAnalysis()` dans `_enterReviewMode()` |
 | **UI Auth — Modal login/signup** (US 7) | `auth.js` + `index.html` + `app.js` | Modal overlay câblée, `Auth.autoConnect()` au boot |
 | **Auto-connect Chess.com depuis profil** (US 7) | `app.js:_onAuthSuccess()` | Appelle `_connectUser(username)` après login |
@@ -1222,10 +1271,7 @@ UNIQUE (user_id)
 
 | Fonctionnalité | Problème | Priorité |
 |---|---|---|
-| **Connexion Supabase réelle** (US 7) | `db_client.py` utilise un dict in-memory. La connexion à Supabase via `DATABASE_URL` n'est pas implémentée. | 🔴 Critique |
-| **Stockfish sur Render (Docker)** | `backend/Dockerfile` installe Stockfish natif (`STOCKFISH_PATH=/usr/games/stockfish`) — il suffit de passer le service Render en runtime Docker (ou via `render.yaml`). Le worker EPIC 1 l'utilisera alors automatiquement pour calculer `cpl`/`position_type`. | 🟢 Config Render |
-| **Frontend → backend stats** | Câblé : `ApiClient` POST les parties (`_syncToBackend`) et `fetchSummary` lit `/stats/summary`. Reste inactif tant que `window.API_BASE` n'est pas défini (retombe sur `MOCK_SUMMARY`). | 🟡 Config |
-| **Supabase réel non validé** | `pg_repository` + délégation `db_client` prêts, mais non exécutés contre une instance Supabase (requêtes SQL `pragma: no cover`). | 🟡 Important |
+| **Connexion Supabase réelle pour l'auth** (US 7) | `find_user_by_email`/`create_user`/`get_user_data`/`upsert_user_data` restent en dict in-memory. Seuls `games`/`game_moves`/`user_progress_history` ont un adaptateur Postgres (§10.1) ; les tables `profiles`/`user_data` (US 7) ne sont pas encore migrées. | 🟡 Important |
 | **Cache livre d'ouvertures** | Re-téléchargé à chaque refresh (~5 req. réseau, ~2s de parsing) | 🟡 Important |
 | **Qualité SRS nuancée** | Seul `quality=5` (succès) et `quality=1` (raté) sont utilisés. `quality=3` (correct mais non optimal) n'est jamais émis. | 🟢 Optionnel |
 
@@ -1245,19 +1291,18 @@ Le `PersonalCoach` lit `game.endgame_accuracy` pour évaluer la technique de fin
 
 ## 10. Ce qui reste à développer
 
-### 10.1 🟡 Connexion Supabase réelle — partiellement fait
+### 10.1 🟢 Connexion Supabase réelle — en production
 
-**Fait :** `infrastructure/pg_repository.py` implémente les tables `games`/`game_moves` en PostgreSQL (`psycopg` v3), et `db_client` **délègue automatiquement** à ce dépôt dès que `settings.database_url` est défini (sinon in-memory). La migration `20260701000000_advanced_stats.sql` crée le schéma.
+**Fait :** `infrastructure/pg_repository.py` implémente les tables `games`/`game_moves`/`user_progress_history` en PostgreSQL (`psycopg` v3), `db_client` **délègue automatiquement** dès que `DATABASE_URL` est défini, et le backend est **déployé sur Render avec `DATABASE_URL`/`JWT_SECRET` configurés**. Un bug réel (`psycopg.errors.IndeterminateDatatype` sur `get_completed_games`, paramètre `IS NULL` non typé) a été trouvé en production et corrigé (branchement de requête + cast `::uuid` explicite, cf. commit de fix EPIC 1).
 
-**Reste :** (1) valider contre une instance Supabase réelle (les requêtes SQL ne sont pas testées faute de base dans l'environnement) ; (2) migrer aussi `users`/`user_data` (US 7) vers Postgres — encore in-memory ; (3) ajouter un pool de connexions (actuellement une connexion par requête).
+**Reste :** (1) migrer aussi `users`/`user_data` (US 7) vers Postgres — encore in-memory (perdu au redémarrage Render) ; (2) ajouter un pool de connexions (actuellement une connexion par requête) ; (3) valider `create_progress_snapshot`/`get_progress_history` (US 5.1) contre l'instance Supabase de prod, par analogie avec le bug déjà corrigé sur `games`.
 
-### 10.1bis 🔴 CRITIQUE — Finaliser la chaîne Stats Avancées
+### 10.1bis 🟢 Chaîne Stats Avancées — bout-à-bout en production
 
-EPIC 2, 3, 4 (frontend) et **EPIC 1** (routes async + agrégation) sont implémentés et testés. Reste à brancher le **bout-à-bout réel** :
-- **Source d'évals** : faire poster par le frontend le PGN + les évaluations de son Stockfish WASM vers `POST /api/v1/games/analyze` (champ `evals`), **ou** déployer un binaire Stockfish sur Render (`STOCKFISH_PATH`).
-- **Supabase** : remplacer le store in-memory de `db_client` (games/game_moves) par des écritures Postgres réelles (cf. §10.1) ; appliquer la migration `20260701000000_advanced_stats.sql`.
-- **Frontend** : configurer `window.STATS_API_BASE` pour que la vue Stats Avancées lise les vraies données au lieu de `MOCK_SUMMARY`.
-- **US 4.2 (reste)** : top 3 ouvertures par code ECO dans l'onglet détaillé Ouvertures.
+EPIC 1 à 4 et US 5.1 sont implémentés, testés, **déployés** (backend Render Docker + Stockfish natif, frontend Vercel, Supabase). Reste :
+- **Source d'évals** : le frontend ne poste pas encore le PGN + évals de son Stockfish WASM vers `POST /api/v1/games/analyze` (champ `evals`) — Stockfish natif Render (`STOCKFISH_PATH=/usr/games/stockfish`, Docker) est la source active actuellement.
+- **US 4.2 (reste)** : top 3 ouvertures par code ECO dans l'onglet détaillé Ouvertures (placeholder `topOpenings` déjà prévu dans `categoryDetailHtml`).
+- **US 5.1 (reste)** : aucune vue de progression n'existe encore pour un utilisateur avec 0 ou 1 seul snapshot (le graphe affiche alors 0 ou 1 point ; pas de message pédagogique intermédiaire entre l'état vide et une vraie courbe).
 
 ### 10.2 🟡 IMPORTANT — Cache du livre d'ouvertures
 

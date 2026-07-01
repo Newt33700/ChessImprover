@@ -356,3 +356,28 @@ En tant qu'équipe, nous voulons que chaque modification de `supabase/migrations
 ## Endpoint d'agrégation `GET /api/v1/stats/summary` (US 4.1)
 
 **Statut :** ✅ Implémenté (`backend/app/domain/stats_aggregator.py`, `tests/test_stats_aggregator.py`) — alimente la matrice/le deep-dive du frontend ; le frontend bascule du mock au réel en pointant `window.STATS_API_BASE`.
+
+---
+
+## US 5.1 : Historisation et Visualisation de la Progression (Courbes)
+
+**En tant qu'** utilisateur de Chessimprover
+**Je veux** que le système enregistre un instantané de mes performances Elo virtuelles après chaque analyse de partie
+**Afin de** visualiser un graphique d'évolution de mon niveau sur les 30 derniers jours.
+
+**Critères d'Acceptation (DoD) :**
+- Une ligne est enregistrée automatiquement dans `user_progress_history` (`user_id`, `game_id`, `cadence`, `elo_openings`, `elo_tactics`, `elo_strategy`, `elo_endgames`, `recorded_at`) après chaque analyse réussie dont la cadence est reconnue.
+- `GET /api/v1/stats/history?cadence=blitz&days=30` renvoie l'historique chronologique (ascendant) filtré aux `days` derniers jours.
+- Frontend : courbe Chart.js (4 séries Ouvertures/Tactique/Stratégie/Finales) dans la carte PROGRESSION de la vue Stats Avancées, avec 4 chips à cocher pour masquer/afficher une série sans reconstruire le graphe.
+- UX mobile : le graphe est dans un conteneur `overflow-x: auto` dont la largeur minimale grandit avec le nombre de points, pour rester lisible en scrollant horizontalement sur petit écran.
+
+**Règles de gestion :**
+- Un snapshot n'est enregistré **que si la cadence est reconnue** (`classify_cadence` non `None`) — sinon aucune ligne n'est créée (évite de polluer une courbe avec une cadence indéterminée).
+- Les Elo par catégorie du snapshot réutilisent **exactement** `stats_aggregator.category_elos` (même calcul que la matrice US 4.1), pour que le dernier point de la courbe corresponde à la ligne courante de la matrice.
+- Le filtrage temporel (`days`) est fait en Python (`progress_history.filter_history_by_days`), pas en SQL, pour un comportement identique en in-memory et en Postgres. `days ≤ 0` renvoie une liste vide.
+- Un échec d'enregistrement du snapshot n'entraîne **jamais** l'échec de l'analyse (garde-fou séparé dans le worker) ; un échec d'accès à l'historique dégrade en `history: []` (200) plutôt qu'un 500.
+
+**Statut :** ✅ Implémenté :
+- Backend : `supabase/migrations/20260701120000_progress_history.sql`, `backend/app/domain/progress_history.py`, `backend/app/infrastructure/db_client.py` + `pg_repository.py` (méthodes `create_progress_snapshot`/`get_progress_history`), `backend/app/routers/games.py` (`GET /api/v1/stats/history`, snapshot auto dans `run_analysis`).
+- Frontend : `frontend/js/api_client.js` (`getStatsHistory`), `frontend/js/advanced_stats.js` (`fetchHistory`, `buildProgressDatasets`, `renderProgressChart`, `toggleProgressSeries`), carte PROGRESSION dans `index.html`.
+- Tests : `test_progress_history.py`, extensions `test_db_games.py`/`test_pg_repository.py`/`test_games_api.py`, `advanced_stats.test.js`/`api_client.test.js`.
