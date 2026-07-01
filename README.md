@@ -173,7 +173,10 @@ ChessImprover/
 │       │   ├── test_tactics.py         # US 8.1 : is_correct_move, select_nearest_problem
 │       │   ├── test_db_tactics.py      # US 8.1 : store tactique + intégrité du seed (python-chess)
 │       │   ├── test_tactics_api.py     # US 8.1/8.2 : routes GET next (+ filtre theme_id) / POST attempt
-│       │   └── test_srs.py
+│       │   ├── test_srs.py             # SM-2 backend + sm2_schedule (EPIC 9)
+│       │   ├── test_opening_repertoire.py # EPIC 9 : validation séquence + infer_quality
+│       │   ├── test_db_opening_repertoire.py # EPIC 9 : store répertoire (CRUD, isolation)
+│       │   └── test_openings_trainer_api.py # EPIC 9 : routes CRUD + révision SM-2
 │       └── mutants/                    # Mutation testing mutmut
 │
 ├── supabase/
@@ -186,7 +189,8 @@ ChessImprover/
 │       ├── 20260701185622_games_pgn_hash.sql   # Colonne pgn_hash + index unique (user_id, pgn_hash) (US 7.2)
 │       ├── 20260701191149_games_is_reviewed.sql # Colonne is_reviewed (défaut false) sur games (US 7.3)
 │       ├── 20260701194517_tactics_epic8.sql    # Table tactical_problems + profiles.tactical_elo + seed 15 problèmes (US 8.1)
-│       └── 20260701201530_tactical_attempts.sql # Table tactical_attempts (historique, RLS) (US 8.4)
+│       ├── 20260701201530_tactical_attempts.sql # Table tactical_attempts (historique, RLS) (US 8.4)
+│       └── 20260701223519_opening_repertoire.sql # Table opening_repertoire (répertoire + SRS, RLS) (EPIC 9)
 │
 └── .github/
     └── workflows/
@@ -971,6 +975,35 @@ Modules **purs** (couche domaine), entièrement testés, indépendants de l'infr
 - Frontend : badge **🔥 Série** dans la topbar du Coach Tactique (à côté du badge Elo), initialisé via `ApiClient.getTacticsStats()` à l'ouverture de la vue et rafraîchi après chaque tentative. Une réussite alimente également le système XP/Streak général déjà existant (`XPSystem`, `StreakSystem` — jours d'activité consécutifs, mode Exercice/Ghost), volontairement **non fusionné** avec le streak tactique quotidien (deux notions différentes : activité générale vs. série de réussites du jour sur les problèmes tactiques).
 - `time_taken` (secondes, optionnel) mesuré côté frontend entre l'affichage de l'échiquier et le coup joué, transmis au serveur pour persistance.
 
+### 4.9 EPIC 9 — Entraîneur d'Ouvertures (Répertoire + SRS) — fonctionnalité bonus auto-initiée
+
+**Fichiers :** `routers/openings_trainer.py`, `domain/opening_repertoire.py`, `domain/srs_engine.py` (fonction `sm2_schedule` extraite), `infrastructure/db_client.py` + `pg_repository.py`, `supabase/migrations/20260701223519_opening_repertoire.sql`, `js/api_client.js`, `js/app.js`, `index.html` (`#openings-trainer-col`)
+
+> **Contexte :** une fois l'intégralité du backlog EPIC 6/7/8 traité, l'utilisateur a explicitement autorisé le développement d'**une** fonctionnalité à ma discrétion, non spécifiée par une US existante. Choix retenu : un entraîneur de répertoire d'ouvertures par répétition espacée (SM-2), qui ferme la boucle entre le diagnostic déjà existant (§4.5, `top_openings`/`successRatio` par ouverture) et un entraînement ciblé — jusqu'ici absent du produit malgré un moteur SM-2 déjà présent (mode Exercice tactique, cartes 100 % `localStorage`).
+
+**Routes** (JWT requis) :
+
+| Route | Méthode | Comportement |
+|---|---|---|
+| `/api/v1/openings/repertoire` | POST | Ajoute une ligne `{name, color, moves[]}`. La séquence SAN est rejouée coup par coup côté serveur (`python-chess`) — une ligne illégale est rejetée en 422, jamais de confiance aveugle au client. |
+| `/api/v1/openings/repertoire` | GET | Liste tout le répertoire de l'utilisateur authentifié. |
+| `/api/v1/openings/repertoire/due` | GET | Lignes dont l'échéance SM-2 est arrivée ou dépassée aujourd'hui. |
+| `/api/v1/openings/repertoire/{id}/review` | POST | Corps `{mistake_count}`. Reprogramme la ligne (SM-2) — la qualité (0-5) est **déduite automatiquement** du nombre d'erreurs, jamais notée manuellement. |
+| `/api/v1/openings/repertoire/{id}` | DELETE | Retire une ligne (propriétaire uniquement, 404 sinon). |
+
+**Règles métier :**
+- **Pas de duplication d'algorithme** : un moteur SM-2 Python testé existait déjà (`domain/srs_engine.py`, utilisé par `/srs/review/full` pour les cartes tactiques du mode Exercice). Plutôt que d'écrire un second portage SM-2, la formule pure a été **extraite** de `review_card` en une fonction réutilisable `sm2_schedule(ease_factor, interval, repetitions, quality, today)` — `review_card` n'est plus qu'un fin wrapper autour de `SRSCard` qui délègue à cette fonction (comportement strictement identique, 31 tests existants inchangés + tests de non-régression d'équivalence ajoutés). L'entraîneur d'ouvertures appelle directement `sm2_schedule`, sans dupliquer la moindre formule.
+- **Qualité déduite automatiquement** (`domain/opening_repertoire.infer_quality`) : 0 erreur → 5 (rappel parfait), 1 erreur → 3, 2+ erreurs → 1 — pas de notation manuelle post-révision, pour rester ludique et rapide (contrainte explicite de la demande initiale : gamifier sans rendre l'expérience rébarbative).
+- **Validation de la séquence** (`domain/opening_repertoire.validate_move_sequence`) : rejoue chaque coup SAN depuis la position initiale via `python-chess` ; toute notation invalide/illégale est rejetée avant tout enregistrement.
+- **Persistance** : table `opening_repertoire` (colonne SQL `line_name` — `name` est un mot réservé sqlfluff/RF04, remappée en `name` côté `PgRepository._line_row` pour ne pas fuiter ce détail dans l'API), RLS scoping par utilisateur. `db_client`/`PgRepository` implémentent la délégation complète (create/list/due/update/delete), sans reproduire le gap `tactical_problems` de US 8.1 (§10.6).
+
+**Frontend :** carte **OUVERTURES** dans le dashboard → vue plein écran `#openings-trainer-col` (`body.openings-trainer-active`, même mécanisme de bascule que Coach Tactique/Stats Avancées).
+- **Ajout d'une ligne** : formulaire nom + couleur + coups SAN espacés (ex. `e4 e5 Nf3 Nc6 Bb5`).
+- **Révision** : échiquier indépendant (même approche que US 8.3, `Chess`/`Chessboard` directs) qui rejoue la ligne — les coups de la couleur adverse s'enchaînent automatiquement (`_advanceOpeningLine`, boucle de `setTimeout` pilotée par `chess.turn()`, pas par la parité de l'index), l'utilisateur ne joue que les coups de sa propre couleur ; un coup incorrect fait un « snapback » et incrémente le compteur d'erreurs sans bloquer la progression. À la fin de la ligne, la qualité est déduite et soumise automatiquement (`ApiClient.reviewOpeningLine`), puis la ligne suivante due s'enchaîne — ou un message gamifié (« 🎉 Aucune ligne à réviser aujourd'hui ») si le répertoire est à jour. Une révision sans erreur alimente aussi le système XP/Streak général existant.
+- **Garde-fou anti-double-soumission** (`_otFinished`) : ajouté après un test Playwright ayant révélé qu'un scénario artificiel (simulation de coups sans attendre les `setTimeout` réels) pouvait déclencher `_finishOpeningReview` plusieurs fois pour la même ligne ; en usage normal humain cela ne se produit pas (un seul `setTimeout` en vol à la fois), mais le garde-fou élimine le risque par construction.
+- Vérifié en navigateur (Playwright + Chromium, backend/frontend locaux) : ajout d'une ligne, échiquier de révision monté, ligne rejouée sans erreur → Elo... XP +10, prochaine échéance 2026-07-02 (J+1, cohérent avec un premier succès SM-2), état vide gamifié affiché ensuite. Captures à l'appui.
+- Tests : `backend/tests/test_opening_repertoire.py` (validation + `infer_quality`), `backend/tests/test_db_opening_repertoire.py` (CRUD + isolation), `backend/tests/test_openings_trainer_api.py` (17 tests d'intégration : création/liste/due/révision/suppression, 401/404/422, isolation entre utilisateurs), `backend/tests/test_srs.py` (`sm2_schedule` + équivalence avec `review_card`), `backend/tests/test_pg_repository.py` (contrat de signature + mapping `line_name`↔`name`), `frontend/tests/api_client.test.js` (6 nouveaux tests).
+
 ---
 
 ## 5. Règles métier
@@ -1181,7 +1214,7 @@ npm run test:mutation # Stryker
 | `stats_dashboard.test.js` | StatsDashboard | wpFromCp, estimateEloLogistic, movingAverage, filterByDays, buildChartData, render (Chart mock) |
 | `personal_coach.test.js` | PersonalCoach | computeMetrics, diagnose (toutes les 6 branches), renderHTML, _detectResult, _detectUserColor, _extractOpening |
 | `advanced_stats.test.js` | AdvancedStats | cellClass, deltas, deepDiveFor, gaugeAngle, matrixRows, `categoryDetailHtml` (tactics/endgames/openings/strategy), `tacticSuccessGaugeHtml` (bornes, clamp, NaN-safe), fetchSummary (fallbacks), `formatShortDate`, `buildProgressDatasets`, `toggleProgressSeries`, `fetchHistory` (fallbacks) |
-| `api_client.test.js` | ApiClient | baseUrl/isConfigured (window/localStorage), url (query), analyzeGame (POST + erreur), getStatsSummary, getGame, getStatsHistory, **en-tête `Authorization: Bearer` présent/absent selon `Auth.getToken()` (US 6.4)**, **getGames (US 7.1)**, **updateGameStatus (US 7.3)**, **getNextTacticalProblem + régression bug `?` orphelin (US 8.2)**, **submitTacticalAttempt + time_taken, getTacticsStats (US 8.3/8.4)** |
+| `api_client.test.js` | ApiClient | baseUrl/isConfigured (window/localStorage), url (query), analyzeGame (POST + erreur), getStatsSummary, getGame, getStatsHistory, **en-tête `Authorization: Bearer` présent/absent selon `Auth.getToken()` (US 6.4)**, **getGames (US 7.1)**, **updateGameStatus (US 7.3)**, **getNextTacticalProblem + régression bug `?` orphelin (US 8.2)**, **submitTacticalAttempt + time_taken, getTacticsStats (US 8.3/8.4)**, **createOpeningLine/getOpeningLines/getDueOpeningLines/reviewOpeningLine/deleteOpeningLine (EPIC 9)** |
 | `auth.test.js` (US 6.1/6.3) | Auth | signup/login (succès, `detail` chaîne, `detail` liste Pydantic 422 — un ou plusieurs champs, absence de `detail`), `updateChessUsername` (sans token, succès + PATCH + persistance session, format invalide), isLoggedIn/logout |
 
 > `advanced_stats.js` n'est pas dans `collectCoverageFrom` (comme `app.js`, `auth.js`, `board_manager.js`) : seules ses fonctions pures sont testées, les `render*` sont de la glue DOM.
@@ -1219,14 +1252,17 @@ JWT_SECRET=ci-test-secret pytest tests/ -v
 | `test_stats_aggregator.py` | user_outcome, build_summary (catégories, ratings, couleur), gaffeRate, finales, acplTrend | US 4.1 |
 | `test_progress_history.py` | build_snapshot (cadence inconnue, filtre couleur, IDs), filter_history_by_days (bornes, dates invalides/naïves) | US 5.1 |
 | `test_games_api.py` | POST analyze (202, 400), worker→completed, réanalyse, GET game (404), stats/summary, snapshot auto, GET stats/history, **401 sans JWT sur les 6 routes, isolation entre 2 utilisateurs (get_game/réanalyse/stats/GET games/PATCH status)**, **GET /games (liste, vide, isolation)**, **dédup PGN par hash (même game_id, pas de doublon, statut réel, isolation par utilisateur, PGN différent → parties distinctes)**, **PATCH /games/{id}/status (marque/démarque, persistance, 404 non-propriétaire, 422 body invalide)** | US 1.1 + US 5.1 + US 6.4 + US 7.1 + US 7.2 + US 7.3 |
-| `test_pg_repository.py` | PgRepository (dsn, colonnes, contrat progress_history, `_iso` générique, **contrat `create_game`/`find_game_by_pgn_hash`**, **contrat `record_tactical_attempt`/`get_tactical_attempts` (US 8.4)**), délégation db_client (in-memory sans `DATABASE_URL`) | EPIC 1 + US 5.1 + US 7.2 + US 8.4 |
+| `test_pg_repository.py` | PgRepository (dsn, colonnes, contrat progress_history, `_iso` générique, **contrat `create_game`/`find_game_by_pgn_hash`**, **contrat `record_tactical_attempt`/`get_tactical_attempts` (US 8.4)**, **contrat CRUD `opening_repertoire` + mapping `line_name`↔`name` (EPIC 9)**), délégation db_client (in-memory sans `DATABASE_URL`) | EPIC 1 + US 5.1 + US 7.2 + US 8.4 + EPIC 9 |
 | `test_tactical_elo.py` | `update_elo` (+15/-15, constantes, plancher, pas de plafond) | US 8.1 |
 | `test_tactics.py` | `is_correct_move` (match exact, notation équivalente, coup faux/illégal/invalide), `select_nearest_problem` (vide, exact, plus proche haut/bas, tirage aléatoire équidistant), **`compute_daily_streak` (vide, série du jour, arrêt au premier échec, hier ne compte pas), `compute_stats_by_theme` (regroupement + taux par catégorie)** | US 8.1 + US 8.4 |
 | `test_db_tactics.py` | Store tactique (Elo par défaut, persistance), **intégrité des 15 problèmes du seed vérifiée par python-chess** (mat effectif, capture non défendue), sélection/filtre par catégorie, **`TestTacticalAttempts` (enregistrement, isolation entre utilisateurs, reset)** | US 8.1 + US 8.4 |
 | `test_tactics_api.py` | `GET /tactics/next` (sans solution, 401, **filtre theme_id ×3 + 422 si inconnu**), `POST /tactics/attempt` (succès/échec ±15, notation équivalente, persistance, 404, 401, isolation entre utilisateurs, **`streak` croissant/remis à zéro, `time_taken` optionnel**), **`GET /tactics/stats` (vide, agrégation par catégorie, 401)** | US 8.1 + US 8.2 + US 8.4 |
-| `test_srs.py` | — | SM-2 backend |
+| `test_srs.py` | `create_card`/`review_card`/`get_due_cards` (SM-2, toutes branches qualité/EF/intervalle), **`sm2_schedule` (équivalence exacte avec `review_card`, EPIC 9)** | EPIC 9 |
+| `test_opening_repertoire.py` | `validate_move_sequence` (ligne valide, vide, coup illégal, entrée invalide), `infer_quality` (0/1/2+ erreurs) | EPIC 9 |
+| `test_db_opening_repertoire.py` | Store répertoire : création (calendrier SM-2 initial), liste/isolation par utilisateur, lignes dues (bornes de date), mise à jour de calendrier, suppression (propriétaire/non-propriétaire), reset | EPIC 9 |
+| `test_openings_trainer_api.py` | `POST /openings/repertoire` (création, 422 séquence/couleur invalide, 401), `GET` (liste, isolation), `GET /due`, `POST /{id}/review` (planification J+1, échec réinitialise, 404 ligne inconnue/non-propriétaire, 401), `DELETE /{id}` (propriétaire/non-propriétaire, 404, 401) | EPIC 9 |
 
-**Couverture backend :** 480 TUs au total, couverture globale **89 %** ; cœur Stats Avancées + EPIC 1/5.1/US 4.2 à 92–100 % (`stats_aggregator`, `cadence`, `progress_history`, `models`, `engine` à 100 %, `analysis_pipeline` 92 %, `routers/games` 92 %, `db_client` 98 %). Les requêtes SQL réelles de `pg_repository` (nécessitant une base) sont marquées `pragma: no cover`.
+**Couverture backend :** 540 TUs au total, couverture globale **89 %+** ; cœur Stats Avancées + EPIC 1/5.1/US 4.2 à 92–100 % (`stats_aggregator`, `cadence`, `progress_history`, `models`, `engine` à 100 %, `analysis_pipeline` 92 %, `routers/games` 92 %, `db_client` 98 %). Les requêtes SQL réelles de `pg_repository` (nécessitant une base) sont marquées `pragma: no cover`.
 
 **Architecture de test `test_auth.py` :**
 - App de test minimale (`FastAPI()` + routers auth/sync uniquement) pour éviter la dépendance `python-chess`
@@ -1372,6 +1408,7 @@ UNIQUE (user_id)
 | **Dashboard de catégories tactiques** (US 8.2) | `index.html:#tactics-col` + `app.js:_showTactics/_loadTacticalProblem` + `api_client.js:getNextTacticalProblem` | Carte TACTIQUE → vue plein écran, menu 4 catégories, badge Elo |
 | **Échiquier tactique jouable** (US 8.3) | `app.js:_initTacticsBoard/_onTacticsDrop/_submitTacticsAttempt` + `api_client.js:submitTacticalAttempt` + `index.html`/`style.css` (`.tactics-board`) | Échiquier indépendant (`Chess`/`Chessboard` directs, pas de `BoardManager`), validation de la solution 100 % serveur, feedback vert/rouge, enchaînement auto vers le problème suivant |
 | **Persistance + série du jour** (US 8.4) | `tactical_attempts` (migration) + `db_client.record_tactical_attempt`/`get_tactical_attempts` + `domain/tactics.compute_daily_streak`/`compute_stats_by_theme` + `GET /tactics/stats` + `app.js:#tactics-streak-badge` | Chaque tentative est persistée ; badge 🔥 Série (problèmes résolus d'affilée aujourd'hui) mis à jour en direct ; taux de réussite par catégorie calculable via `/tactics/stats` |
+| **Entraîneur d'Ouvertures** (EPIC 9, bonus) | `routers/openings_trainer.py` + `domain/opening_repertoire.py` + `domain/srs_engine.sm2_schedule` + `index.html:#openings-trainer-col` + `app.js:_startOpeningReview/_onOtDrop/_finishOpeningReview` | Carte OUVERTURES → vue plein écran : ajout de ligne (validée serveur), révision SRS avec échiquier auto-enchaîné, qualité SM-2 déduite automatiquement (0 notation manuelle), CRUD complet opérationnel et testé |
 
 ### ❌ Non câblé ou incomplet
 
@@ -1473,6 +1510,12 @@ Swipe pour naviguer entre coups, touch targets plus grands, layout vertical pour
 ### 11.9 Répertoire d'ouvertures personnalisé
 
 Identifier les ouvertures jouées le plus souvent, montrer leurs performances par cadence et couleur, recommander des variantes à améliorer.
+
+> **Volet entraînement implémenté (EPIC 9, §4.9)** : l'entraîneur de répertoire (ajout de lignes + révision SM-2) répond au besoin de mémorisation active. Le volet **diagnostic** décrit ci-dessus (performances par cadence/couleur sur les ouvertures *déjà jouées*, recommandation automatique de variantes à ajouter au répertoire depuis les stats existantes `top_openings`/`successRatio`) reste à faire — connecter les deux fonctionnalités serait la suite naturelle.
+
+### 11.10 Entraîneur de finales essentielles
+
+Sur le modèle de l'EPIC 9 (répertoire + SRS) et de l'EPIC 8 (échiquier jouable + validation serveur), un deck de positions de finales incontournables (opposition, Lucena, Philidor, R+P vs R, mats de base) avec sélection adaptative et répétition espacée — pour couvrir le second axe (« les finales ») évoqué par l'utilisateur en plus des ouvertures, non traité dans cette session faute de temps/crédits restants.
 
 ---
 

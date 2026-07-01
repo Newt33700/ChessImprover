@@ -586,3 +586,31 @@ En tant qu'équipe, nous voulons que chaque modification de `supabase/migrations
 - Frontend : badge **🔥 Série** dans la barre du Coach Tactique (à côté du badge Elo), initialisé via `ApiClient.getTacticsStats()` à l'ouverture de la vue, mis à jour après chaque tentative. Une réussite alimente aussi le système XP/Streak général existant (`XPSystem.add`, `StreakSystem.record`, comme le mode Exercice/Ghost) — deux notions de « streak » distinctes et volontairement non fusionnées : le streak général (jours d'activité consécutifs, `StreakSystem`) et le streak tactique du jour (`compute_daily_streak`).
 - Tests : `backend/tests/test_tactics.py` (`compute_daily_streak`, `compute_stats_by_theme`), `backend/tests/test_db_tactics.py` (`TestTacticalAttempts`), `backend/tests/test_tactics_api.py` (`streak` sur `/attempt`, nouvelle classe `TestTacticsStats`), `backend/tests/test_pg_repository.py` (contrat de signature), `frontend/tests/api_client.test.js` (`submitTacticalAttempt` + `time_taken`, `getTacticsStats`).
 - Vérifié en navigateur (Playwright) : badge Série passe de 🔥 0 à 🔥 1 après un coup correct.
+
+## EPIC 9 : Entraîneur d'Ouvertures (Répertoire personnel + SRS) — Fonctionnalité auto-initiée
+
+**Contexte :** l'intégralité du backlog EPIC 6/7/8 enregistré étant traitée, l'utilisateur a explicitement autorisé le développement d'**une** fonctionnalité non spécifiée par une US existante, à ma discrétion, alignée sur la mission du produit (« un coach personnel qui aide à gommer nos faiblesses »), avec les ouvertures et les finales citées comme pistes, le tout gamifié pour rester ludique.
+
+**Choix retenu :** un **entraîneur de répertoire d'ouvertures par répétition espacée (SM-2)**, plutôt qu'un entraîneur de finales, pour deux raisons : (1) le site dispose déjà d'un algorithme SM-2 testé et éprouvé côté frontend (`SRS`, mode Exercice) mais uniquement pour rejouer les propres gaffes tactiques du joueur — aucune fonctionnalité n'existe pour mémoriser délibérément des lignes d'ouverture ; (2) les statistiques par ouverture (EPIC 3/4, `top_openings`/`successRatio`) diagnostiquent déjà les ouvertures faibles du joueur mais rien ne permet de les travailler explicitement — cette US ferme la boucle diagnostic → entraînement ciblé.
+
+**Objectif :** permettre à l'utilisateur de constituer un répertoire de lignes d'ouverture (Blancs/Noirs) et de les réviser selon un calendrier de répétition espacée, avec correction automatique de la qualité de rappel (pas de notation manuelle fastidieuse) pour rester ludique.
+
+### US 9.1 : Constitution du répertoire
+
+**Description :** ajouter une ligne d'ouverture (nom, couleur, séquence de coups) à son répertoire personnel.
+
+**Critères d'Acceptation (DoD) :**
+- Formulaire : nom, couleur (Blancs/Noirs), séquence de coups en notation SAN.
+- La séquence est validée (légalité des coups) avant enregistrement.
+- Persistée côté serveur (visible depuis n'importe quel appareil, contrairement au SRS tactique 100 % `localStorage`/`IndexedDB` existant).
+
+### US 9.2 : Révision par répétition espacée (SM-2)
+
+**Description :** réviser aujourd'hui les lignes dont l'échéance est arrivée, avec correction automatique.
+
+**Critères d'Acceptation (DoD) :**
+- Un échiquier interactif rejoue la ligne : les coups de l'adversaire s'enchaînent automatiquement, l'utilisateur doit jouer ses propres coups (couleur de la ligne).
+- La qualité de rappel (0-5, échelle SM-2) est **déduite automatiquement** du nombre d'erreurs commises pendant la révision (aucune notation manuelle) — pour rester ludique et rapide.
+- Le calendrier (facteur de facilité, intervalle, prochaine échéance) est recalculé côté serveur selon l'algorithme SM-2 déjà utilisé et testé côté frontend pour le mode Exercice (portage à l'identique, pour cohérence de comportement).
+
+**Statut (US 9.1 + 9.2) :** ✅ Implémenté — voir §4.9 du README pour le détail technique complet (routes, règles métier, câblage frontend, tests).
