@@ -386,3 +386,92 @@ En tant qu'équipe, nous voulons que chaque modification de `supabase/migrations
 - Backend : `supabase/migrations/20260701120000_progress_history.sql`, `backend/app/domain/progress_history.py`, `backend/app/infrastructure/db_client.py` + `pg_repository.py` (méthodes `create_progress_snapshot`/`get_progress_history`), `backend/app/routers/games.py` (`GET /api/v1/stats/history`, snapshot auto dans `run_analysis`).
 - Frontend : `frontend/js/api_client.js` (`getStatsHistory`), `frontend/js/advanced_stats.js` (`fetchHistory`, `buildProgressDatasets`, `renderProgressChart`, `toggleProgressSeries`), carte PROGRESSION dans `index.html`.
 - Tests : `test_progress_history.py`, extensions `test_db_games.py`/`test_pg_repository.py`/`test_games_api.py`, `advanced_stats.test.js`/`api_client.test.js`.
+
+---
+
+## EPIC 6 : Gestion d'Identité et Personnalisation (Auth & Profil)
+
+**Objectif :** garantir l'isolation des données par utilisateur et permettre la synchronisation avec l'écosystème Chess.com.
+
+> **Note d'architecture :** l'app dispose déjà d'un système d'authentification JWT maison (US 7 : `POST /auth/signup`, `POST /auth/login`, `GET /auth/me`, tokens HMAC-SHA256, table `profiles`), déployé en production. Les US ci-dessous sont adaptées à cette architecture existante plutôt qu'à un remplacement par le service Auth natif de Supabase (`supabase.auth.signUp`/`auth.users`/`auth.uid()`), ce qui casserait l'auth déjà livrée. Concrètement : « l'utilisateur authentifié » = le `sub` du JWT maison décodé par la dépendance FastAPI `_current_user`, et « déclencheur à la création du compte » = le code de `POST /auth/signup` (pas un trigger Postgres sur `auth.users`, table qui n'existe pas dans ce schéma).
+
+### US 6.1 : Inscription et Authentification Sécurisée
+
+**Description :** en tant qu'utilisateur, je veux créer un compte et me connecter de façon sécurisée, avec un retour clair en cas d'erreur (email invalide, mot de passe trop court).
+
+**Critères d'Acceptation (DoD) :**
+- Inscription (`Auth.signup`) et connexion (`Auth.login`) via les endpoints JWT maison existants ; succès → fermeture de la modale et accès au tableau de bord.
+- Le format de l'email est validé (rejet si absence de `@`/domaine), pas seulement sa longueur minimale.
+- Les erreurs (email invalide, mot de passe trop court, identifiants incorrects) sont affichées de façon lisible dans l'UI, y compris pour les erreurs de validation Pydantic (422, qui renvoient une liste de détails et non une simple chaîne).
+
+**Statut :** 🔜 Backlog (base signup/login/redirection déjà livrée par US 7 ; reste la validation stricte de l'email et l'affichage propre des erreurs 422).
+
+### US 6.2 : Création automatique du Profil Utilisateur
+
+**Description :** à la création d'un compte, un profil doit être créé automatiquement, sans étape manuelle supplémentaire.
+
+**Critères d'Acceptation (DoD) :**
+- Équivalent du « trigger » : `POST /auth/signup` crée atomiquement la ligne `profiles` (`id`, `email`, `username`, `password_hash`, `created_at`) — déjà le cas dans `db_client.create_user`/`pg_repository`.
+- Ajouter une colonne `chess_username` (nullable) sur `profiles`, distincte du `username` de connexion.
+
+**Statut :** 🔜 Backlog (création atomique déjà couverte par US 7 ; reste la colonne `chess_username`, cf. US 6.3).
+
+### US 6.3 : Liaison au compte Chess.com
+
+**Description :** en tant qu'utilisateur, je veux enregistrer mon pseudo Chess.com sur mon profil (au lieu d'un simple champ local perdu si je change de navigateur), pour que le tableau de bord précharge automatiquement mes parties.
+
+**Critères d'Acceptation (DoD) :**
+- Page/section profil permettant de lire et modifier `chess_username`.
+- Validation basique du format (pseudo Chess.com : caractères alphanumériques/`_`/`-`, longueur raisonnable).
+- `PATCH /auth/me` (ou équivalent) restreint à l'utilisateur courant (identifié via le JWT) — un utilisateur ne peut modifier que son propre `chess_username`.
+- Le champ `signup-chess-username` actuellement stocké uniquement en `localStorage` (`frontend/js/app.js`) est migré vers ce nouveau champ persistant côté serveur.
+
+**Statut :** 🔜 Backlog.
+
+### US 6.4 : Isolation des données par user_id
+
+**Description :** garantir qu'un utilisateur ne peut jamais lire ou écrire les données d'un autre utilisateur, y compris en cas de manipulation du payload côté client.
+
+**Critères d'Acceptation (DoD) :**
+- Les routes `games`/`stats` dérivent `user_id` du JWT (dépendance FastAPI `Depends`) et **non** d'un champ `user_id` fourni par le client dans le body/query — faille actuelle : `POST /api/v1/games/analyze` et `GET /api/v1/stats/summary` acceptent aujourd'hui un `user_id` arbitraire non authentifié.
+- Toutes les requêtes SQL sur `games`/`game_moves`/`user_progress_history` restent filtrées par ce `user_id` authentifié (déjà le cas au niveau SQL dans `pg_repository.py`, la faille est en amont au niveau des routes).
+
+**Statut :** 🔜 Backlog.
+
+---
+
+## EPIC 7 : Gestion du Cycle de Vie des Analyses (Persistance & Cache)
+
+**Objectif :** offrir une UX instantanée après une première analyse et garantir que chaque utilisateur ne voit que ses propres données.
+
+### US 7.1 : Récupération des parties par utilisateur
+
+**Description :** au chargement du tableau de bord, l'utilisateur retrouve la liste de ses parties déjà analysées, sans tout ré-analyser.
+
+**Critères d'Acceptation (DoD) :**
+- `GET /api/v1/games` (nouveau) filtré côté SQL par l'utilisateur authentifié (JWT), réutilisant `get_games_for_user`.
+- Le frontend appelle cet endpoint au chargement du dashboard, avec un état de chargement (loader).
+
+**Statut :** 🔜 Backlog.
+
+### US 7.2 : Hashage PGN et prévention du recalcul
+
+**Description :** éviter de ré-analyser (coûteux en CPU/Stockfish) un PGN déjà soumis.
+
+**Critères d'Acceptation (DoD) :**
+- Hash SHA-256 du PGN calculé avant analyse (`hashlib`).
+- Colonne `pgn_hash` sur `games` (index unique).
+- Avant analyse : `SELECT * FROM games WHERE pgn_hash = %s AND user_id = %s` ; si trouvé → renvoyer la partie existante sans relancer Stockfish, sinon analyser normalement (US 2.1/1.1).
+
+**Statut :** 🔜 Backlog.
+
+### US 7.3 : Table de correspondance « Partie-Étude »
+
+**Description :** permettre de marquer une partie comme « déjà étudiée » pour la distinguer visuellement des parties encore à revoir.
+
+**Critères d'Acceptation (DoD) :**
+- Colonne `is_reviewed` (boolean, défaut `false`) sur `games`.
+- `PATCH /api/v1/games/{game_id}/status` pour basculer l'état (restreint à l'utilisateur propriétaire).
+- Distinction visuelle (coche verte) dans le dashboard pour les parties `is_reviewed = true`.
+
+**Statut :** 🔜 Backlog.
