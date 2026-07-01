@@ -414,7 +414,7 @@ En tant qu'équipe, nous voulons que chaque modification de `supabase/migrations
 - Équivalent du « trigger » : `POST /auth/signup` crée atomiquement la ligne `profiles` (`id`, `email`, `username`, `password_hash`, `created_at`) — déjà le cas dans `db_client.create_user`/`pg_repository`.
 - Ajouter une colonne `chess_username` (nullable) sur `profiles`, distincte du `username` de connexion.
 
-**Statut :** 🔜 Backlog (création atomique déjà couverte par US 7 ; reste la colonne `chess_username`, cf. US 6.3).
+**Statut :** ✅ Implémenté — migration `supabase/migrations/20260701172219_profiles_chess_username.sql` (`ALTER TABLE profiles ADD COLUMN IF NOT EXISTS chess_username TEXT`), `db_client.create_user` initialise `chess_username: None`, `UserProfile` (modèle Pydantic) et les réponses `/auth/signup`/`/auth/login`/`/auth/me` exposent le champ. Pas encore modifiable via API (cf. US 6.3, qui ajoutera l'endpoint d'écriture + la validation de format + l'UI profil). Tests : `test_signup_response_includes_chess_username_field`, `test_signup_stores_chess_username_none_in_db`, `test_me_includes_chess_username_field` dans `backend/tests/test_auth.py`.
 
 ### US 6.3 : Liaison au compte Chess.com
 
