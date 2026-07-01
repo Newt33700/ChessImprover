@@ -542,7 +542,13 @@ En tant qu'équipe, nous voulons que chaque modification de `supabase/migrations
 - Menu de sélection : « Aléatoire », « Mat en 1 », « Mat en 2 », « Tactique Positionnelle ».
 - L'API backend filtre la base de problèmes selon le `theme_id` transmis.
 
-**Statut :** 🔜 Backlog.
+**Statut :** ✅ Implémenté :
+- **Décision d'interprétation documentée** : le spec pasté nommait la 4ᵉ catégorie « Tactique Positionnelle » dans le menu tout en titrant l'US « Non-protégés » — incohérence interne au spec. Faute d'un dataset de tactique positionnelle dédié (le seed US 8.1 ne couvre que `mate_in_1`/`mate_in_2`/`hanging_piece`), le 4ᵉ bouton du menu a été implémenté comme **« Pièces non protégées »** (`hanging_piece`), cohérent avec le titre de l'US et le seed existant.
+- Backend : `GET /api/v1/tactics/next?theme_id=` (`routers/tactics.py`), filtre via `db_client.get_next_tactical_problem(elo, category=theme_id)` (déjà pré-câblé en US 8.1). `theme_id` absent = « Aléatoire » (toutes catégories) ; valeur hors de `domain.tactics.TACTICAL_THEMES` → 422 (plutôt qu'un 404 silencieux, pour distinguer une erreur client d'une simple absence de résultat).
+- Frontend : nouvelle carte **TACTIQUE** dans le dashboard (`index.html`), ouvrant une vue plein écran dédiée (`#tactics-col`, `body.tactics-active`, même mécanisme de bascule que Stats Avancées) avec le menu à 4 boutons, un badge Elo tactique, et un affichage temporaire du problème (catégorie + FEN texte — l'échiquier jouable est explicitement la portée de US 8.3). `ApiClient.getNextTacticalProblem(themeId)`.
+- **Bug latent corrigé pendant l'implémentation** : `ApiClient.url(path, query)` ajoutait un `?` orphelin (`/x?`) quand tous les paramètres de la query étaient `null`/absents (cas jamais rencontré avant `theme_id`, optionnel par nature) — corrigé pour n'ajouter le `?` que si au moins un paramètre reste après filtrage.
+- Vérifié en navigateur (Playwright + Chromium, backend/frontend locaux) : les 3 filtres (Aléatoire, Mat en 1, Mat en 2) renvoient bien des problèmes de la bonne catégorie, bascule visuelle du bouton actif ; captures d'écran à l'appui.
+- Tests : `backend/tests/test_tactics_api.py` (5 nouveaux tests : filtre par catégorie ×3, `theme_id` inconnu → 422), `backend/tests/test_tactics.py` (`TACTICAL_THEMES`), `frontend/tests/api_client.test.js` (`getNextTacticalProblem`, + régression sur le bug `url()`).
 
 ### US 8.3 : Interface de jeu interactive (échiquier jouable)
 
