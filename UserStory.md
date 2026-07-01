@@ -440,7 +440,13 @@ En tant qu'équipe, nous voulons que chaque modification de `supabase/migrations
 - Les routes `games`/`stats` dérivent `user_id` du JWT (dépendance FastAPI `Depends`) et **non** d'un champ `user_id` fourni par le client dans le body/query — faille actuelle : `POST /api/v1/games/analyze` et `GET /api/v1/stats/summary` acceptent aujourd'hui un `user_id` arbitraire non authentifié.
 - Toutes les requêtes SQL sur `games`/`game_moves`/`user_progress_history` restent filtrées par ce `user_id` authentifié (déjà le cas au niveau SQL dans `pg_repository.py`, la faille est en amont au niveau des routes).
 
-**Statut :** 🔜 Backlog.
+**Statut :** ✅ Implémenté :
+- `backend/app/routers/deps.py` (nouveau) : `get_current_user`/`get_current_user_id`, factorisés depuis `auth.py` (qui les réutilise désormais) pour être partagés par tous les routeurs.
+- `backend/app/routers/games.py` : `POST /api/v1/games/analyze`, `GET /api/v1/games/{id}`, `GET /api/v1/stats/summary`, `GET /api/v1/stats/history` exigent toutes un JWT valide (`Depends(get_current_user_id)`) — faille corrigée : ces routes acceptaient auparavant un `user_id` arbitraire non authentifié (body ou query param), permettant à quiconque de lire les statistiques/parties de n'importe quel utilisateur en devinant/forgeant un UUID.
+- `AnalyzeGamesRequest` n'a plus de champ `user_id` (uniquement dérivé du token). `GET /games/{id}` et la réanalyse par `game_ids` renvoient 404/ignorent silencieusement une partie n'appartenant pas à l'utilisateur authentifié (pas de distinction avec « partie introuvable », pour ne rien révéler sur l'existence de parties tierces).
+- Frontend : `api_client.js` attache `Authorization: Bearer <token>` (via `Auth.getToken()`) sur les 4 appels ; les paramètres `user_id`/`userId` sont retirés de son API publique. `app.js:_syncToBackend` ne tente plus l'appel si l'utilisateur n'est pas connecté (et ne référence plus `Auth.currentUser`, qui n'existait pas — toujours `null` en pratique).
+- Vérifié en intégration réelle (serveur local + `curl`) : 401 sans token, 200 avec token, **404** en tentant de lire la partie d'un autre utilisateur.
+- Tests : `backend/tests/test_games_api.py` réécrit intégralement avec JWT (401 sans token sur les 4 routes, isolation testée entre 2 utilisateurs sur `get_game`/réanalyse/stats summary/history), `frontend/tests/api_client.test.js` étendu (en-tête `Authorization` présent/absent selon `Auth.getToken()`).
 
 ---
 
