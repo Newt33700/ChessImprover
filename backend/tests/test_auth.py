@@ -123,6 +123,16 @@ class TestSignup:
         r = client.post("/auth/signup", json={"email": "gina@ex.com", "username": "gina", "password": "abc"})
         assert r.status_code == 422
 
+    def test_signup_response_includes_chess_username_field(self):
+        r = client.post("/auth/signup", json={"email": "henri@ex.com", "username": "henri", "password": "pass123"})
+        assert r.json()["user"]["chess_username"] is None
+
+    def test_signup_stores_chess_username_none_in_db(self):
+        client.post("/auth/signup", json={"email": "iris@ex.com", "username": "iris", "password": "pass123"})
+        from app.infrastructure.db_client import find_user_by_email
+        user = find_user_by_email("iris@ex.com")
+        assert user["chess_username"] is None
+
 
 # ── POST /auth/login ──────────────────────────────────────────────────────────
 
@@ -173,6 +183,11 @@ class TestMe:
     def test_me_with_invalid_token_returns_401(self):
         r = client.get("/auth/me", headers={"Authorization": "Bearer invalidtoken"})
         assert r.status_code == 401
+
+    def test_me_includes_chess_username_field(self):
+        token = self._signup_and_token()
+        r = client.get("/auth/me", headers={"Authorization": f"Bearer {token}"})
+        assert r.json()["chess_username"] is None
 
 
 # ── POST /sync ─────────────────────────────────────────────────────────────────

@@ -37,7 +37,10 @@ def signup(body: UserCreate) -> AuthResponse:
     token = auth_domain.create_token(user["id"], user["email"])
     return AuthResponse(
         token=token,
-        user=UserProfile(id=user["id"], email=user["email"], username=user["username"]),
+        user=UserProfile(
+            id=user["id"], email=user["email"], username=user["username"],
+            chess_username=user.get("chess_username"),
+        ),
     )
 
 
@@ -49,10 +52,16 @@ def login(body: UserLogin) -> AuthResponse:
     token = auth_domain.create_token(user["id"], user["email"])
     return AuthResponse(
         token=token,
-        user=UserProfile(id=user["id"], email=user["email"], username=user["username"]),
+        user=UserProfile(
+            id=user["id"], email=user["email"], username=user["username"],
+            chess_username=user.get("chess_username"),
+        ),
     )
 
 
 @router.get("/me", response_model=UserProfile)
 def me(user: dict = Depends(_current_user)) -> UserProfile:
-    return UserProfile(id=user["id"], email=user["email"], username=user["username"])
+    return UserProfile(
+        id=user["id"], email=user["email"], username=user["username"],
+        chess_username=user.get("chess_username"),
+    )

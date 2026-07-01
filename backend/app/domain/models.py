@@ -171,6 +171,9 @@ class UserProfile(BaseModel):
     id: str
     email: str
     username: str
+    chess_username: Optional[str] = Field(
+        None, description="Pseudo Chess.com lié (US 6.3), distinct du username de connexion"
+    )
 
 
 class AuthResponse(BaseModel):
