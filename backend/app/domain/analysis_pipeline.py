@@ -10,6 +10,7 @@ Module PUR (hormis l'appel au moteur injecté) : testable avec un moteur stub.
 
 from __future__ import annotations
 
+import hashlib
 import io as _io
 from typing import Any, Dict, List, Optional
 
@@ -25,6 +26,13 @@ from app.infrastructure.engine import (
     MoveScore,
     PositionEval,
 )
+
+
+def compute_pgn_hash(pgn: str) -> str:
+    """SHA-256 du PGN (US 7.2) — sert de clé de déduplication par utilisateur,
+    pour éviter de relancer une analyse Stockfish déjà effectuée.
+    """
+    return hashlib.sha256(pgn.encode("utf-8")).hexdigest()
 
 
 def build_client_engine(evals: Dict[str, List[List[Any]]]) -> ClientProvidedEngine:

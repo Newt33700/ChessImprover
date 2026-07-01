@@ -127,11 +127,12 @@ def create_game(
     time_control: Optional[str] = None,
     user_color: str = "white",
     status: str = "processing",
+    pgn_hash: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Crée une ligne `games` au statut initial et renvoie l'enregistrement."""
     repo = _pg()
     if repo is not None:  # pragma: no cover - nécessite DATABASE_URL
-        return repo.create_game(pgn, user_id, time_control, user_color, status)
+        return repo.create_game(pgn, user_id, time_control, user_color, status, pgn_hash)
 
     import datetime as _dt
 
@@ -144,11 +145,23 @@ def create_game(
         "user_color": user_color,
         "result": None,
         "status": status,
+        "pgn_hash": pgn_hash,
         "created_at": _dt.datetime.now(_dt.timezone.utc).isoformat(),
     }
     _games[game_id] = game
     _game_moves[game_id] = []
     return game
+
+
+def find_game_by_pgn_hash(user_id: Optional[str], pgn_hash: str) -> Optional[Dict[str, Any]]:
+    """US 7.2 — Retrouve une partie déjà soumise par cet utilisateur pour ce PGN."""
+    repo = _pg()
+    if repo is not None:  # pragma: no cover - nécessite DATABASE_URL
+        return repo.find_game_by_pgn_hash(user_id, pgn_hash)
+    for game in _games.values():
+        if game.get("user_id") == user_id and game.get("pgn_hash") == pgn_hash:
+            return game
+    return None
 
 
 def get_game(game_id: str) -> Optional[Dict[str, Any]]:

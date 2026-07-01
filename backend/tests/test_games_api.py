@@ -174,6 +174,67 @@ class TestAnalyzeEndpoint:
         assert r.json()["accepted"] == []
 
 
+class TestPgnHashDedup:
+    """US 7.2 — un PGN déjà soumis par le même utilisateur n'est jamais réanalysé."""
+
+    def test_same_pgn_same_user_returns_existing_game(self):
+        token = _signup_and_token()
+        first = client.post(
+            "/api/v1/games/analyze", json={"pgn": PGN, "evals": _evals(PGN)}, headers=_auth(token),
+        )
+        second = client.post(
+            "/api/v1/games/analyze", json={"pgn": PGN, "evals": _evals(PGN)}, headers=_auth(token),
+        )
+        assert first.json()["accepted"][0]["game_id"] == second.json()["accepted"][0]["game_id"]
+
+    def test_same_pgn_same_user_does_not_duplicate_game(self):
+        token = _signup_and_token()
+        client.post(
+            "/api/v1/games/analyze", json={"pgn": PGN, "evals": _evals(PGN)}, headers=_auth(token),
+        )
+        client.post(
+            "/api/v1/games/analyze", json={"pgn": PGN, "evals": _evals(PGN)}, headers=_auth(token),
+        )
+        r = client.get("/api/v1/games", headers=_auth(token))
+        assert len(r.json()["games"]) == 1
+
+    def test_second_submission_reports_actual_status(self):
+        token = _signup_and_token()
+        client.post(
+            "/api/v1/games/analyze", json={"pgn": PGN, "evals": _evals(PGN)}, headers=_auth(token),
+        )
+        # Le worker a déjà tourné (BackgroundTasks synchrones du TestClient) :
+        # la 2e soumission doit refléter le statut réel, pas "processing" par défaut.
+        second = client.post(
+            "/api/v1/games/analyze", json={"pgn": PGN, "evals": _evals(PGN)}, headers=_auth(token),
+        )
+        assert second.json()["accepted"][0]["status"] == "completed"
+
+    def test_same_pgn_different_users_creates_separate_games(self):
+        token_a = _signup_and_token(email="a@ex.com", username="usera")
+        token_b = _signup_and_token(email="b@ex.com", username="userb")
+        r_a = client.post(
+            "/api/v1/games/analyze", json={"pgn": PGN, "evals": _evals(PGN)}, headers=_auth(token_a),
+        )
+        r_b = client.post(
+            "/api/v1/games/analyze", json={"pgn": PGN, "evals": _evals(PGN)}, headers=_auth(token_b),
+        )
+        assert r_a.json()["accepted"][0]["game_id"] != r_b.json()["accepted"][0]["game_id"]
+        assert len(client.get("/api/v1/games", headers=_auth(token_a)).json()["games"]) == 1
+        assert len(client.get("/api/v1/games", headers=_auth(token_b)).json()["games"]) == 1
+
+    def test_different_pgn_same_user_creates_separate_games(self):
+        token = _signup_and_token()
+        other_pgn = '[Event "y"][Result "0-1"]\n\n1. d4 d5 0-1'
+        r1 = client.post(
+            "/api/v1/games/analyze", json={"pgn": PGN, "evals": _evals(PGN)}, headers=_auth(token),
+        )
+        r2 = client.post(
+            "/api/v1/games/analyze", json={"pgn": other_pgn}, headers=_auth(token),
+        )
+        assert r1.json()["accepted"][0]["game_id"] != r2.json()["accepted"][0]["game_id"]
+
+
 class TestListGames:
     def test_lists_own_games(self):
         token = _signup_and_token()
