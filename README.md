@@ -622,6 +622,10 @@ Auth.getUser()                          // → {id, email, username, chessUserna
 **Stockage :** `localStorage["ci_jwt"]` (token), `localStorage["ci_user"]` (profil JSON).  
 **URL API :** `window.CI_API_URL || "http://localhost:8000"` (configurable).
 
+#### Messages d'erreur exploitables (US 6.1)
+
+`_extractErrorMessage(data)` (interne à `auth.js`) normalise la réponse d'erreur FastAPI avant de la remonter dans `Error.message` : si `detail` est une chaîne (400/401 métier, ex. « Email déjà utilisé »), elle est utilisée telle quelle ; si `detail` est une liste d'erreurs de validation Pydantic (422, un objet `{msg, loc, type}` par champ), les `msg` sont concaténés (`" ; "`) au lieu d'afficher `[object Object]`. `_submitSignup`/`_submitLogin` (`app.js`) affichent ce message dans `#signup-error`/`#login-error`.
+
 ---
 
 ### 3.15 Refonte UX — Dashboard grille 2 colonnes & page Review plein écran
@@ -802,7 +806,8 @@ Carte **PROGRESSION**, première carte de la colonne principale de la vue Stats 
 **Règles métier :**
 - Email unique (case-insensitive) → 400 `"Email déjà utilisé"`
 - Username unique (case-insensitive) → 400 `"Pseudo déjà pris"`
-- Mot de passe haché via bcrypt (salt aléatoire, facteur de coût par défaut ~12)
+- **Format email validé (US 6.1)** : `UserCreate` (`app/domain/models.py`) rejette (422) toute valeur ne correspondant pas au motif `^[^@\s]+@[^@\s]+\.[^@\s]+$` (au moins un caractère avant `@`, un domaine, un `.` — pas de dépendance externe type `email-validator`, juste une regex stdlib) — avant, seule la longueur minimale (5 caractères) était vérifiée
+- Mot de passe haché via bcrypt (salt aléatoire, facteur de coût par défaut ~12), longueur minimale 6 caractères (422 sinon)
 - Token JWT HS256 (stdlib Python : `hmac` + `hashlib.sha256`), expiration 30 jours
 - Payload JWT : `{sub: user_id, email, exp}`
 
@@ -1108,6 +1113,7 @@ npm run test:mutation # Stryker
 | `personal_coach.test.js` | PersonalCoach | computeMetrics, diagnose (toutes les 6 branches), renderHTML, _detectResult, _detectUserColor, _extractOpening |
 | `advanced_stats.test.js` | AdvancedStats | cellClass, deltas, deepDiveFor, gaugeAngle, matrixRows, `categoryDetailHtml` (tactics/endgames/openings/strategy), `tacticSuccessGaugeHtml` (bornes, clamp, NaN-safe), fetchSummary (fallbacks), `formatShortDate`, `buildProgressDatasets`, `toggleProgressSeries`, `fetchHistory` (fallbacks) |
 | `api_client.test.js` | ApiClient | baseUrl/isConfigured (window/localStorage), url (query), analyzeGame (POST + erreur), getStatsSummary, getGame, getStatsHistory |
+| `auth.test.js` (US 6.1) | Auth | signup/login (succès, `detail` chaîne, `detail` liste Pydantic 422 — un ou plusieurs champs, absence de `detail`), isLoggedIn/logout |
 
 > `advanced_stats.js` n'est pas dans `collectCoverageFrom` (comme `app.js`, `auth.js`, `board_manager.js`) : seules ses fonctions pures sont testées, les `render*` sont de la glue DOM.
 
@@ -1130,7 +1136,7 @@ JWT_SECRET=ci-test-secret pytest tests/ -v
 
 | Fichier | Classes | TUs |
 |---|---|---|
-| `test_auth.py` | TestPasswordHashing (5), TestJWT (4), TestSignup (4), TestLogin (4), TestMe (3), TestSync (4) | **24 TUs** |
+| `test_auth.py` | TestPasswordHashing (5), TestJWT (4), TestSignup (4+3 US 6.1), TestLogin (4), TestMe (3), TestSync (4) | **27 TUs** |
 | `test_analyzer.py` | — | Analyse géométrique |
 | `test_elo.py` | — | Formules Elo/précision backend |
 | `test_phases.py` | Constantes, Material, IsEndgame, OpeningEndPly, SegmentPhases, SegmentPgn | US 2.1 |
@@ -1147,7 +1153,7 @@ JWT_SECRET=ci-test-secret pytest tests/ -v
 | `test_pg_repository.py` | PgRepository (dsn, colonnes, contrat progress_history, `_iso` générique), délégation db_client (in-memory sans `DATABASE_URL`) | EPIC 1 + US 5.1 |
 | `test_srs.py` | — | SM-2 backend |
 
-**Couverture backend :** 387 TUs au total, couverture globale **89 %** ; cœur Stats Avancées + EPIC 1/5.1/US 4.2 à 92–100 % (`stats_aggregator`, `cadence`, `progress_history`, `models`, `engine` à 100 %, `analysis_pipeline` 92 %, `routers/games` 92 %, `db_client` 98 %). Les requêtes SQL réelles de `pg_repository` (nécessitant une base) sont marquées `pragma: no cover`.
+**Couverture backend :** 390 TUs au total, couverture globale **89 %** ; cœur Stats Avancées + EPIC 1/5.1/US 4.2 à 92–100 % (`stats_aggregator`, `cadence`, `progress_history`, `models`, `engine` à 100 %, `analysis_pipeline` 92 %, `routers/games` 92 %, `db_client` 98 %). Les requêtes SQL réelles de `pg_repository` (nécessitant une base) sont marquées `pragma: no cover`.
 
 **Architecture de test `test_auth.py` :**
 - App de test minimale (`FastAPI()` + routers auth/sync uniquement) pour éviter la dépendance `python-chess`
@@ -1281,6 +1287,7 @@ UNIQUE (user_id)
 | **Modal PGN overlay** | `index.html` + `app.js` | Remplace section-pgn ; `_openPgnModal()/_closePgnModal()` |
 | **Mobile / bascule Review** | CSS `body.board-active` | `.dash-grid` masquée / `.board-col` plein écran via classe `body` |
 | **Vue Statistiques Avancées** (US 4.1/4.2) | `advanced_stats.js` + `index.html` + `app.js` | Plein écran `body.advstats-active` : matrice colorée + gauge Héros + deep-dive + tuiles Finales + carte Tactiques (gauge circulaire `successRatio`) + top 3 ouvertures ECO (données réelles via `/stats/summary`, `MOCK_SUMMARY` en secours) |
+| **Validation email + erreurs UI inscription** (US 6.1) | `models.py:UserCreate` + `auth.js:_extractErrorMessage` | Format email validé (regex) en plus de la longueur ; erreurs 422 Pydantic (liste) affichées lisiblement au lieu de `[object Object]` |
 
 ### ❌ Non câblé ou incomplet
 

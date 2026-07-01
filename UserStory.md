@@ -404,7 +404,7 @@ En tant qu'équipe, nous voulons que chaque modification de `supabase/migrations
 - Le format de l'email est validé (rejet si absence de `@`/domaine), pas seulement sa longueur minimale.
 - Les erreurs (email invalide, mot de passe trop court, identifiants incorrects) sont affichées de façon lisible dans l'UI, y compris pour les erreurs de validation Pydantic (422, qui renvoient une liste de détails et non une simple chaîne).
 
-**Statut :** 🔜 Backlog (base signup/login/redirection déjà livrée par US 7 ; reste la validation stricte de l'email et l'affichage propre des erreurs 422).
+**Statut :** ✅ Implémenté — `backend/app/domain/models.py` (`UserCreate._validate_email_format`, regex `_EMAIL_RE`), `frontend/js/auth.js` (`_extractErrorMessage`, gère `detail` chaîne ou liste Pydantic 422). Tests : `backend/tests/test_auth.py` (`test_signup_invalid_email_format_returns_422`, `test_signup_invalid_email_error_mentions_email`, `test_signup_password_too_short_returns_422`), `frontend/tests/auth.test.js` (nouveau fichier, 7 tests).
 
 ### US 6.2 : Création automatique du Profil Utilisateur
 
