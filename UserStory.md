@@ -559,7 +559,14 @@ En tant qu'équipe, nous voulons que chaque modification de `supabase/migrations
 - Chaque coup est envoyé au backend, qui valide via le moteur si c'est le « Best Move » attendu du problème (jamais de validation frontend seule).
 - Feedback visuel immédiat (vert succès / rouge erreur), son optionnel.
 
-**Statut :** 🔜 Backlog.
+**Statut :** ✅ Implémenté :
+- Le backend de validation (`POST /api/v1/tactics/attempt`) était déjà entièrement câblé depuis US 8.1 — cette US ne portait que sur le frontend.
+- **Décision d'architecture** : ne pas réutiliser la classe `BoardManager` existante (`board_manager.js`), trop couplée au `#board` partagé unique et au worker Stockfish embarqué (non désiré ici). À la place, un échiquier léger et indépendant est instancié directement avec `Chess`/`Chessboard` (déjà chargés globalement) dans `#tactics-board`, propre à la vue Coach Tactique.
+- `app.js` : `_initTacticsBoard(problem)` crée l'échiquier (orientation = couleur au trait) ; `_onTacticsDragStart` bloque le glisser hors-tour/hors-tour-du-joueur et une fois le problème résolu ; `_onTacticsDrop` valide la légalité localement (chess.js, pour le snapback immédiat) puis délègue la validation de la *solution* exclusivement au serveur via `_submitTacticsAttempt` (anti-triche : le frontend ne connaît jamais la solution avant réponse serveur).
+- `ApiClient.submitTacticalAttempt(problemId, move)` — `POST /api/v1/tactics/attempt`.
+- Feedback visuel : classes CSS `.tactics-board--success`/`--error` (halo vert/rouge autour de l'échiquier) + message `#tactics-feedback` (résultat, et révélation de la solution en cas d'échec) ; badge Elo mis à jour avec la nouvelle valeur renvoyée par le serveur ; enchaînement automatique vers un nouveau problème (même thème) après un court délai. Son : explicitement omis (marqué « optionnel » dans le DoD).
+- Vérifié en navigateur (Playwright + Chromium, backend/frontend locaux, `chess.js`/`chessboard.js` simulés car CDN bloqué par le bac à sable — la logique de validation réelle passe par le vrai backend local) : coup correct → halo vert, Elo 1000→1015, message de succès, avance auto ; coup incorrect → halo rouge, Elo inchangé, solution révélée. Captures à l'appui.
+- Tests : `frontend/tests/api_client.test.js` (`submitTacticalAttempt`, succès + 404).
 
 ### US 8.4 : Persistance et historique des exercices
 

@@ -934,7 +934,7 @@ Modules **purs** (couche domaine), entièrement testés, indépendants de l'infr
 
 **`GET /api/v1/stats/history`** : dégrade en `history: []` (200) si l'accès aux données échoue (log de la trace), plutôt qu'un 500 — même pattern défensif que `/stats/summary`.
 
-### 4.8 EPIC 8 — Coaching Tactique Adaptatif (US 8.1/8.2)
+### 4.8 EPIC 8 — Coaching Tactique Adaptatif (US 8.1/8.2/8.3)
 
 **Fichiers :** `routers/tactics.py`, `domain/tactical_elo.py`, `domain/tactics.py`, `infrastructure/db_client.py`, `supabase/migrations/20260701194517_tactics_epic8.sql`, `js/api_client.js`, `js/app.js`, `index.html` (`#tactics-col`)
 
@@ -954,9 +954,14 @@ Modules **purs** (couche domaine), entièrement testés, indépendants de l'infr
 - **Catégories (`domain.tactics.TACTICAL_THEMES`, US 8.2)** : `mate_in_1`, `mate_in_2`, `hanging_piece`. **Décision d'interprétation** : le spec pasté par l'utilisateur nommait le 4ᵉ item du menu « Tactique Positionnelle » tout en titrant l'US « Non-protégés » (incohérence interne) ; en l'absence d'un dataset de tactique positionnelle dédié, le menu expose **« Pièces non protégées »** (`hanging_piece`), cohérent avec le seed existant.
 - **Seed de données (MVP)** : 15 problèmes (5 `mate_in_1`, 4 `hanging_piece`, 6 `mate_in_2`, Elo 650-1400), **chacun vérifié programmatiquement par python-chess** avant intégration (coup légal + `board.is_checkmate()` pour les catégories mat — y compris une recherche exhaustive « pour toute réponse adverse, un mat existe » pour `mate_in_2` — et capture d'une pièce sans défenseur pour `hanging_piece`). Choix motivé par l'absence d'accès réseau à un dataset externe (Lichess, etc.) dans cet environnement d'exécution ; le même jeu est répliqué en dur dans `db_client._TACTICAL_PROBLEMS_SEED` pour le mode in-memory dev/test et dans la migration SQL pour Supabase. **Reste à faire** : remplacer/enrichir par un import de dataset externe plus large (cf. §10).
 
-**Frontend (US 8.2) :** carte **TACTIQUE** dans le dashboard → vue plein écran `#tactics-col` (`body.tactics-active`, même mécanisme de bascule que Stats Avancées) : menu de 4 boutons de catégorie, badge Elo tactique, et un affichage temporaire du problème sélectionné (catégorie + FEN texte — l'échiquier jouable est la portée de US 8.3). `ApiClient.getNextTacticalProblem(themeId)` ; nécessite d'être connecté (message explicite sinon, comme les autres fonctionnalités liées au compte).
+**Frontend (US 8.2) :** carte **TACTIQUE** dans le dashboard → vue plein écran `#tactics-col` (`body.tactics-active`, même mécanisme de bascule que Stats Avancées) : menu de 4 boutons de catégorie, badge Elo tactique.
 
 > **Bug latent corrigé (US 8.2) :** `ApiClient.url(path, query)` ajoutait un `?` orphelin (`/x?`) quand tous les paramètres de la query étaient `null`/absents — jamais rencontré avant `theme_id`, premier paramètre de query entièrement optionnel de l'API. Corrigé pour n'ajouter le `?` que si au moins un paramètre subsiste après filtrage ; couvert par un test de régression.
+
+**Échiquier jouable (US 8.3) :** `app.js:_initTacticsBoard` instancie un échiquier **indépendant** de `BoardManager` (pas de couplage au `#board` partagé, pas de worker Stockfish embarqué) directement avec `Chess`/`Chessboard` (déjà chargés globalement), scopé à `#tactics-board`. Orientation = couleur au trait de la position.
+- `_onTacticsDragStart` bloque le glisser hors-tour ou une fois le problème déjà résolu.
+- `_onTacticsDrop` valide la légalité du coup localement (chess.js, pour le retour immédiat « snapback » si illégal) mais délègue **exclusivement au serveur** la validation de la *solution* via `ApiClient.submitTacticalAttempt(problemId, moveSan)` (`POST /api/v1/tactics/attempt`, déjà opérationnel depuis US 8.1) — le frontend ne connaît jamais la solution avant la réponse serveur (anti-triche, DoD).
+- Feedback visuel : halo vert/rouge autour de l'échiquier (`.tactics-board--success`/`--error`), message de résultat sous l'échiquier (révèle la solution en cas d'échec), badge Elo mis à jour, puis enchaînement automatique vers un nouveau problème (même catégorie) après un court délai. Son : omis (marqué optionnel dans le DoD).
 
 ---
 
@@ -1168,7 +1173,7 @@ npm run test:mutation # Stryker
 | `stats_dashboard.test.js` | StatsDashboard | wpFromCp, estimateEloLogistic, movingAverage, filterByDays, buildChartData, render (Chart mock) |
 | `personal_coach.test.js` | PersonalCoach | computeMetrics, diagnose (toutes les 6 branches), renderHTML, _detectResult, _detectUserColor, _extractOpening |
 | `advanced_stats.test.js` | AdvancedStats | cellClass, deltas, deepDiveFor, gaugeAngle, matrixRows, `categoryDetailHtml` (tactics/endgames/openings/strategy), `tacticSuccessGaugeHtml` (bornes, clamp, NaN-safe), fetchSummary (fallbacks), `formatShortDate`, `buildProgressDatasets`, `toggleProgressSeries`, `fetchHistory` (fallbacks) |
-| `api_client.test.js` | ApiClient | baseUrl/isConfigured (window/localStorage), url (query), analyzeGame (POST + erreur), getStatsSummary, getGame, getStatsHistory, **en-tête `Authorization: Bearer` présent/absent selon `Auth.getToken()` (US 6.4)**, **getGames (US 7.1)**, **updateGameStatus (US 7.3)**, **getNextTacticalProblem + régression bug `?` orphelin (US 8.2)** |
+| `api_client.test.js` | ApiClient | baseUrl/isConfigured (window/localStorage), url (query), analyzeGame (POST + erreur), getStatsSummary, getGame, getStatsHistory, **en-tête `Authorization: Bearer` présent/absent selon `Auth.getToken()` (US 6.4)**, **getGames (US 7.1)**, **updateGameStatus (US 7.3)**, **getNextTacticalProblem + régression bug `?` orphelin (US 8.2)**, **submitTacticalAttempt (US 8.3)** |
 | `auth.test.js` (US 6.1/6.3) | Auth | signup/login (succès, `detail` chaîne, `detail` liste Pydantic 422 — un ou plusieurs champs, absence de `detail`), `updateChessUsername` (sans token, succès + PATCH + persistance session, format invalide), isLoggedIn/logout |
 
 > `advanced_stats.js` n'est pas dans `collectCoverageFrom` (comme `app.js`, `auth.js`, `board_manager.js`) : seules ses fonctions pures sont testées, les `render*` sont de la glue DOM.
@@ -1356,7 +1361,8 @@ UNIQUE (user_id)
 | **Hashage PGN et prévention du recalcul** (US 7.2) | `analysis_pipeline.compute_pgn_hash` + `db_client.find_game_by_pgn_hash` + `routers/games.py` | Une 2ᵉ soumission du même PGN par le même utilisateur renvoie la partie existante (statut réel) au lieu de relancer Stockfish ; index unique `(user_id, pgn_hash)` |
 | **Table « Partie-Étude » — bouton Marquer étudiée** (US 7.3) | `PATCH /games/{id}/status` + `api_client.js:updateGameStatus` + `index.html:#btn-mark-reviewed` + `app.js:_toggleReviewed` | Bouton du topbar Review, masqué sans `serverGameId` connu ; bascule visuelle (texte + fond vert) après clic |
 | **Moteur de sélection adaptative tactique** (US 8.1) | `routers/tactics.py` + `domain/tactical_elo.py` + `domain/tactics.py` | Backend : `GET /tactics/next` + `POST /tactics/attempt` opérationnels et testés (curl/pytest) |
-| **Dashboard de catégories tactiques** (US 8.2) | `index.html:#tactics-col` + `app.js:_showTactics/_loadTacticalProblem` + `api_client.js:getNextTacticalProblem` | Carte TACTIQUE → vue plein écran, menu 4 catégories, badge Elo ; affichage FEN texte en attendant l'échiquier jouable (US 8.3) |
+| **Dashboard de catégories tactiques** (US 8.2) | `index.html:#tactics-col` + `app.js:_showTactics/_loadTacticalProblem` + `api_client.js:getNextTacticalProblem` | Carte TACTIQUE → vue plein écran, menu 4 catégories, badge Elo |
+| **Échiquier tactique jouable** (US 8.3) | `app.js:_initTacticsBoard/_onTacticsDrop/_submitTacticsAttempt` + `api_client.js:submitTacticalAttempt` + `index.html`/`style.css` (`.tactics-board`) | Échiquier indépendant (`Chess`/`Chessboard` directs, pas de `BoardManager`), validation de la solution 100 % serveur, feedback vert/rouge, enchaînement auto vers le problème suivant |
 
 ### ❌ Non câblé ou incomplet
 
@@ -1411,11 +1417,11 @@ L'utilisateur ne voit pas que le livre ECO se télécharge (~2s). Ajouter un spi
 
 L'API Chess.com retourne `g.accuracies.white/black`. Les afficher dans les barres de précision de la `.match-card` au lieu de `null` (les barres restent à 0% si Stockfish n'a pas encore analysé la partie).
 
-### 10.6 🟡 IMPORTANT — EPIC 8, jeu de données tactiques (US 8.1/8.2)
+### 10.6 🟡 IMPORTANT — EPIC 8, jeu de données tactiques (US 8.1/8.2/8.3)
 
-**Fait :** moteur de sélection adaptative + validation serveur (US 8.1), filtre par catégorie + dashboard de sélection (US 8.2), avec un seed de 15 problèmes vérifiés.
+**Fait :** moteur de sélection adaptative + validation serveur (US 8.1), filtre par catégorie + dashboard de sélection (US 8.2), échiquier jouable avec feedback visuel et anti-triche serveur (US 8.3), avec un seed de 15 problèmes vérifiés.
 
-**Reste :** (1) remplacer/enrichir le seed par un dataset externe plus large (ex. export CSV Lichess Puzzle Database) — non fait dans cet environnement d'exécution faute d'accès réseau vers les sources habituelles (proxy sortant restreint) ; (2) échiquier jouable côté client (US 8.3) — la vue Coach Tactique affiche pour l'instant la position en FEN texte, sans board interactif ni soumission de coup depuis l'UI ; (3) persistance/historique des tentatives (US 8.4).
+**Reste :** (1) remplacer/enrichir le seed par un dataset externe plus large (ex. export CSV Lichess Puzzle Database) — non fait dans cet environnement d'exécution faute d'accès réseau vers les sources habituelles (proxy sortant restreint) ; (2) persistance/historique des tentatives (US 8.4).
 
 ---
 
