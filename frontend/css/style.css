@@ -1851,3 +1851,70 @@ body.advstats-active .advstats-col { display: block; }
   .advstats-grid { grid-template-columns: 1fr; }
   .advstats-side { order: -1; }
 }
+
+/* ==========================================================================
+   Vues détaillées par catégorie (US 4.2 — maquettes Finales / Tactiques)
+   ========================================================================== */
+.adv-detail { display: none; }
+body.adv-detail-open .advstats-grid { display: none; }
+body.adv-detail-open .adv-detail { display: block; }
+
+.adv-detail-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-md);
+  margin-bottom: var(--space-lg);
+}
+.adv-detail-title { font-size: 1.3rem; font-weight: 800; color: var(--text-primary); }
+
+.tac-banner {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  background: var(--bg-800);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: var(--space-lg);
+  margin-bottom: var(--space-lg);
+}
+
+.theme-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: var(--space-md);
+}
+
+.theme-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-sm);
+  background: var(--bg-800);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: var(--space-lg) var(--space-md);
+  text-align: center;
+  transition: border-color var(--t-fast), transform var(--t-fast);
+}
+.theme-card:hover { border-color: var(--green); transform: translateY(-2px); }
+.theme-icon {
+  font-size: 2.4rem;
+  line-height: 1;
+  color: var(--text-primary);
+  filter: drop-shadow(0 2px 3px rgba(0,0,0,0.4));
+}
+.theme-name { font-size: 0.9rem; font-weight: 700; color: var(--text-primary); min-height: 2.4em; display: flex; align-items: center; }
+
+.open-list { display: flex; flex-direction: column; gap: var(--space-sm); }
+.open-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  background: var(--bg-800);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: 12px var(--space-md);
+}
+.open-name { font-weight: 600; color: var(--text-primary); }
+.open-elo { font-family: var(--font-data); font-weight: 700; color: var(--gold); }
