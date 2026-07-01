@@ -19,7 +19,7 @@ from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, R
 logger = logging.getLogger(__name__)
 
 from app.config import settings
-from app.domain.analysis_pipeline import analyze_pgn, build_client_engine
+from app.domain.analysis_pipeline import analyze_pgn, build_client_engine, compute_pgn_hash
 from app.domain.models import (
     AnalyzeAccepted,
     AnalyzeAcceptedItem,
@@ -111,18 +111,29 @@ async def analyze_games(
     accepted: List[AnalyzeAcceptedItem] = []
 
     if body.pgn:
-        game = db_client.create_game(
-            pgn=body.pgn,
-            user_id=user_id,
-            time_control=body.time_control,
-            user_color=body.user_color,
-            status=GameStatus.PROCESSING.value,
-        )
-        background.add_task(
-            run_analysis, game["id"], body.pgn, body.evals,
-            user_id, body.user_color, body.time_control,
-        )
-        accepted.append(AnalyzeAcceptedItem(game_id=game["id"]))
+        # US 7.2 : un PGN déjà soumis par cet utilisateur ne relance jamais
+        # l'analyse Stockfish (coûteuse) — on renvoie la partie existante
+        # avec son statut réel, quel qu'il soit (processing/completed/failed).
+        pgn_hash = compute_pgn_hash(body.pgn)
+        existing = db_client.find_game_by_pgn_hash(user_id, pgn_hash)
+        if existing is not None:
+            accepted.append(
+                AnalyzeAcceptedItem(game_id=existing["id"], status=existing["status"])
+            )
+        else:
+            game = db_client.create_game(
+                pgn=body.pgn,
+                user_id=user_id,
+                time_control=body.time_control,
+                user_color=body.user_color,
+                status=GameStatus.PROCESSING.value,
+                pgn_hash=pgn_hash,
+            )
+            background.add_task(
+                run_analysis, game["id"], body.pgn, body.evals,
+                user_id, body.user_color, body.time_control,
+            )
+            accepted.append(AnalyzeAcceptedItem(game_id=game["id"]))
 
     for gid in body.game_ids or []:
         game = db_client.get_game(gid)

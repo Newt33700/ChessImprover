@@ -36,6 +36,21 @@ class TestPgRepository:
         get_sig = inspect.signature(PgRepository.get_progress_history)
         assert list(get_sig.parameters) == ["self", "user_id", "cadence"]
 
+    def test_create_game_accepts_pgn_hash(self):
+        # Verrouille le contrat US 7.2 : create_game doit accepter pgn_hash.
+        import inspect
+
+        sig = inspect.signature(PgRepository.create_game)
+        assert list(sig.parameters) == [
+            "self", "pgn", "user_id", "time_control", "user_color", "status", "pgn_hash",
+        ]
+
+    def test_find_game_by_pgn_hash_method_exists(self):
+        import inspect
+
+        sig = inspect.signature(PgRepository.find_game_by_pgn_hash)
+        assert list(sig.parameters) == ["self", "user_id", "pgn_hash"]
+
     def test_iso_converts_any_datetime_field(self):
         import datetime as _dt
 

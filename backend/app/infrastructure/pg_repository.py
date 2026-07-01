@@ -52,13 +52,14 @@ class PgRepository:
         time_control: Optional[str] = None,
         user_color: str = "white",
         status: str = "processing",
+        pgn_hash: Optional[str] = None,
     ) -> Dict[str, Any]:  # pragma: no cover - nécessite une base réelle
         sql = (
-            "INSERT INTO games (user_id, pgn, time_control, user_color, status) "
-            "VALUES (%s, %s, %s, %s, %s) RETURNING *"
+            "INSERT INTO games (user_id, pgn, time_control, user_color, status, pgn_hash) "
+            "VALUES (%s, %s, %s, %s, %s, %s) RETURNING *"
         )
         with self._connect() as conn, conn.cursor() as cur:
-            cur.execute(sql, (user_id, pgn, time_control, user_color, status))
+            cur.execute(sql, (user_id, pgn, time_control, user_color, status, pgn_hash))
             row = cur.fetchone()
             conn.commit()
         return self._iso(dict(row))
@@ -73,6 +74,15 @@ class PgRepository:
         with self._connect() as conn, conn.cursor() as cur:
             cur.execute("SELECT * FROM games WHERE user_id = %s::uuid", (user_id,))
             return [self._iso(dict(r)) for r in cur.fetchall()]
+
+    def find_game_by_pgn_hash(
+        self, user_id: Optional[str], pgn_hash: str
+    ) -> Optional[Dict[str, Any]]:  # pragma: no cover - nécessite une base réelle
+        sql = "SELECT * FROM games WHERE user_id = %s::uuid AND pgn_hash = %s"
+        with self._connect() as conn, conn.cursor() as cur:
+            cur.execute(sql, (user_id, pgn_hash))
+            row = cur.fetchone()
+        return self._iso(dict(row)) if row else None
 
     def update_game(self, game_id: str, **fields: Any) -> Optional[Dict[str, Any]]:  # pragma: no cover
         if not fields:

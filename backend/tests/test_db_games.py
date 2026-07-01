@@ -33,6 +33,29 @@ class TestGames:
         db_client.create_game(pgn="b", user_id="u2")
         assert len(db_client.get_games_for_user("u1")) == 1
 
+    def test_create_game_stores_pgn_hash(self):
+        g = db_client.create_game(pgn="x", user_id="u1", pgn_hash="abc123")
+        assert g["pgn_hash"] == "abc123"
+
+    def test_create_game_pgn_hash_defaults_to_none(self):
+        g = db_client.create_game(pgn="x", user_id="u1")
+        assert g["pgn_hash"] is None
+
+    def test_find_game_by_pgn_hash_found(self):
+        g = db_client.create_game(pgn="x", user_id="u1", pgn_hash="abc123")
+        found = db_client.find_game_by_pgn_hash("u1", "abc123")
+        assert found["id"] == g["id"]
+
+    def test_find_game_by_pgn_hash_not_found(self):
+        db_client.create_game(pgn="x", user_id="u1", pgn_hash="abc123")
+        assert db_client.find_game_by_pgn_hash("u1", "does-not-exist") is None
+
+    def test_find_game_by_pgn_hash_scoped_per_user(self):
+        # Deux utilisateurs différents peuvent soumettre le même PGN (même hash)
+        # sans collision : l'unicité est scopée par utilisateur.
+        db_client.create_game(pgn="x", user_id="u1", pgn_hash="abc123")
+        assert db_client.find_game_by_pgn_hash("u2", "abc123") is None
+
     def test_update_game(self):
         g = db_client.create_game(pgn="x")
         db_client.update_game(g["id"], status="completed", result="1-0")

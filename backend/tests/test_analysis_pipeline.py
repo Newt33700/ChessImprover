@@ -7,7 +7,12 @@ import io
 import chess
 import chess.pgn
 
-from app.domain.analysis_pipeline import _extract_opening, analyze_pgn, build_client_engine
+from app.domain.analysis_pipeline import (
+    _extract_opening,
+    analyze_pgn,
+    build_client_engine,
+    compute_pgn_hash,
+)
 
 PGN = '[Event "x"][Result "1-0"]\n\n1. e4 e5 2. Nf3 Nc6 3. Bb5 a6 1-0'
 
@@ -25,6 +30,19 @@ def _evals_for(pgn, played=50, best_delta=0, extra_line=None):
         evals[fen] = lines
         board.push(move)
     return evals
+
+
+class TestComputePgnHash:
+    def test_deterministic_for_same_pgn(self):
+        assert compute_pgn_hash(PGN) == compute_pgn_hash(PGN)
+
+    def test_different_for_different_pgn(self):
+        assert compute_pgn_hash(PGN) != compute_pgn_hash(PGN + " ")
+
+    def test_is_sha256_hex_digest(self):
+        h = compute_pgn_hash(PGN)
+        assert len(h) == 64
+        int(h, 16)  # lève ValueError si ce n'est pas de l'hexadécimal
 
 
 class TestWithoutEngine:
