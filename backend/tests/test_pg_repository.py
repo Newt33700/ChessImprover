@@ -1,0 +1,43 @@
+"""Tests — adaptateur Postgres & délégation db_client (EPIC 1).
+
+Les requêtes SQL réelles nécessitent une base ; on vérifie ici le contrat sans
+connexion : construction, colonnes, et le fait que db_client reste en in-memory
+tant que ``DATABASE_URL`` n'est pas défini.
+"""
+
+from __future__ import annotations
+
+import pytest
+
+from app.config import settings
+from app.infrastructure import db_client
+from app.infrastructure.pg_repository import PgRepository
+
+
+class TestPgRepository:
+    def test_stores_dsn(self):
+        repo = PgRepository("postgresql://user:pw@host/db")
+        assert repo.dsn == "postgresql://user:pw@host/db"
+
+    def test_move_columns_match_schema(self):
+        assert PgRepository._MOVE_COLS == (
+            "move_number", "color", "move_san", "eval_before", "eval_after",
+            "score_cp", "cpl", "is_mate", "mate_in", "phase", "position_type",
+        )
+
+
+class TestDelegation:
+    def test_pg_none_without_database_url(self):
+        # Par défaut aucune base → mode in-memory.
+        assert settings.database_url is None
+        assert db_client._pg() is None
+
+    def test_pg_repo_built_when_configured(self, monkeypatch):
+        monkeypatch.setattr(settings, "database_url", "postgresql://x/y")
+        db_client._pg_repo = None
+        try:
+            repo = db_client._pg()
+            assert isinstance(repo, PgRepository)
+            assert repo.dsn == "postgresql://x/y"
+        finally:
+            db_client._pg_repo = None

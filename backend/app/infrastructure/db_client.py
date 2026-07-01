@@ -23,6 +23,27 @@ _user_data: Dict[str, Dict[str, Any]] = {}  # keyed by user_id
 _games: Dict[str, Dict[str, Any]] = {}        # keyed by game_id
 _game_moves: Dict[str, List[Dict[str, Any]]] = {}  # keyed by game_id
 
+# Dépôt PostgreSQL construit paresseusement si DATABASE_URL est défini.
+_pg_repo: Any = None
+
+
+def _pg():
+    """Renvoie le dépôt Postgres si ``DATABASE_URL`` est configuré, sinon ``None``.
+
+    L'import de ``pg_repository`` (et donc de ``psycopg``) est différé pour ne
+    pas exiger la dépendance dans les environnements 100 % in-memory.
+    """
+    from app.config import settings
+
+    if not settings.database_url:
+        return None
+    global _pg_repo
+    if _pg_repo is None:  # pragma: no cover - nécessite DATABASE_URL
+        from app.infrastructure.pg_repository import PgRepository
+
+        _pg_repo = PgRepository(settings.database_url)
+    return _pg_repo
+
 
 def find_user_by_email(email: str) -> Optional[Dict[str, Any]]:
     for user in _users.values():
@@ -90,6 +111,10 @@ def create_game(
     status: str = "processing",
 ) -> Dict[str, Any]:
     """Crée une ligne `games` au statut initial et renvoie l'enregistrement."""
+    repo = _pg()
+    if repo is not None:  # pragma: no cover - nécessite DATABASE_URL
+        return repo.create_game(pgn, user_id, time_control, user_color, status)
+
     import datetime as _dt
 
     game_id = str(uuid.uuid4())
@@ -109,15 +134,24 @@ def create_game(
 
 
 def get_game(game_id: str) -> Optional[Dict[str, Any]]:
+    repo = _pg()
+    if repo is not None:  # pragma: no cover - nécessite DATABASE_URL
+        return repo.get_game(game_id)
     return _games.get(game_id)
 
 
 def get_games_for_user(user_id: Optional[str]) -> List[Dict[str, Any]]:
+    repo = _pg()
+    if repo is not None:  # pragma: no cover - nécessite DATABASE_URL
+        return repo.get_games_for_user(user_id)
     return [g for g in _games.values() if g.get("user_id") == user_id]
 
 
 def update_game(game_id: str, **fields: Any) -> Optional[Dict[str, Any]]:
     """Met à jour des champs arbitraires d'une partie (ex. status, result)."""
+    repo = _pg()
+    if repo is not None:  # pragma: no cover - nécessite DATABASE_URL
+        return repo.update_game(game_id, **fields)
     game = _games.get(game_id)
     if game is None:
         return None
@@ -127,6 +161,9 @@ def update_game(game_id: str, **fields: Any) -> Optional[Dict[str, Any]]:
 
 def bulk_insert_moves(game_id: str, moves: List[Dict[str, Any]]) -> int:
     """Insère en bloc les métriques par coup d'une partie. Renvoie le nombre inséré."""
+    repo = _pg()
+    if repo is not None:  # pragma: no cover - nécessite DATABASE_URL
+        return repo.bulk_insert_moves(game_id, moves)
     if game_id not in _game_moves:
         _game_moves[game_id] = []
     _game_moves[game_id].extend(moves)
@@ -134,16 +171,26 @@ def bulk_insert_moves(game_id: str, moves: List[Dict[str, Any]]) -> int:
 
 
 def get_moves_for_game(game_id: str) -> List[Dict[str, Any]]:
+    repo = _pg()
+    if repo is not None:  # pragma: no cover - nécessite DATABASE_URL
+        return repo.get_moves_for_game(game_id)
     return list(_game_moves.get(game_id, []))
 
 
 def clear_moves(game_id: str) -> None:
     """Purge les coups d'une partie (avant réanalyse)."""
+    repo = _pg()
+    if repo is not None:  # pragma: no cover - nécessite DATABASE_URL
+        repo.clear_moves(game_id)
+        return
     _game_moves[game_id] = []
 
 
 def get_completed_games(user_id: Optional[str] = None) -> List[Dict[str, Any]]:
     """Parties analysées (status=completed), filtrées par utilisateur si fourni."""
+    repo = _pg()
+    if repo is not None:  # pragma: no cover - nécessite DATABASE_URL
+        return repo.get_completed_games(user_id)
     games = [g for g in _games.values() if g.get("status") == "completed"]
     if user_id is not None:
         games = [g for g in games if g.get("user_id") == user_id]
