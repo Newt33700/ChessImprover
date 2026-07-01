@@ -149,6 +149,24 @@ describe("getNextTacticalProblem (US 8.1/8.2)", () => {
   });
 });
 
+describe("submitTacticalAttempt (US 8.3)", () => {
+  test("POST /api/v1/tactics/attempt avec problem_id + move et renvoie le JSON", async () => {
+    global.fetch = jest.fn().mockResolvedValue({
+      ok: true, json: async () => ({ success: true, new_elo: 1015, solution: "Qh5#" }),
+    });
+    const out = await ApiClient.submitTacticalAttempt("p1", "Qh5#");
+    expect(global.fetch.mock.calls[0][0]).toBe("/api/v1/tactics/attempt");
+    expect(global.fetch.mock.calls[0][1].method).toBe("POST");
+    expect(JSON.parse(global.fetch.mock.calls[0][1].body)).toEqual({ problem_id: "p1", move: "Qh5#" });
+    expect(out).toEqual({ success: true, new_elo: 1015, solution: "Qh5#" });
+  });
+
+  test("rejette sur HTTP non-ok", async () => {
+    global.fetch = jest.fn().mockResolvedValue({ ok: false, status: 404 });
+    await expect(ApiClient.submitTacticalAttempt("missing", "e4")).rejects.toThrow("HTTP 404");
+  });
+});
+
 describe("getStatsSummary / getGame", () => {
   test("getStatsSummary construit la query period (sans user_id, dérivé du JWT serveur)", async () => {
     global.fetch = jest.fn().mockResolvedValue({ ok: true, json: async () => ({ rows: {} }) });

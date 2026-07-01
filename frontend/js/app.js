@@ -1651,6 +1651,7 @@ class ChessImproverApp {
   async _loadTacticalProblem(themeId) {
     const body = document.getElementById("tactics-problem-body");
     if (!body) return;
+    this._currentTacticsTheme = themeId || null;
     if (!window.ApiClient || !ApiClient.isConfigured() || !window.Auth?.isLoggedIn()) {
       body.innerHTML = `<p class="empty-state">Connectez-vous pour accéder au Coach Tactique.</p>`;
       return;
@@ -1662,12 +1663,77 @@ class ChessImproverApp {
       if (badge) badge.textContent = `Elo ${problem.difficulty_elo}`;
       body.innerHTML = `
         <span class="tactics-category-badge">${problem.category.replace(/_/g, " ")}</span>
-        <div class="tactics-fen">${problem.fen}</div>
-        <p class="empty-state">Échiquier interactif à venir (US 8.3).</p>
+        <div class="tactics-board" id="tactics-board"></div>
+        <p class="tactics-feedback" id="tactics-feedback"></p>
       `;
       this._currentTacticalProblem = problem;
+      this._tacticsSolved = false;
+      this._initTacticsBoard(problem);
     } catch {
       body.innerHTML = `<p class="empty-state">Impossible de charger un problème pour le moment.</p>`;
+    }
+  }
+
+  /**
+   * Crée un échiquier jouable indépendant du `BoardManager` (pas de moteur
+   * Stockfish, pas de couplage au `#board` partagé) pour le problème donné.
+   * Utilise chess.js/chessboard.js directement, déjà chargés globalement.
+   */
+  _initTacticsBoard(problem) {
+    if (typeof Chess === "undefined" || typeof Chessboard === "undefined") return;
+    this._tacticsChess = new Chess(problem.fen);
+    const orientation = this._tacticsChess.turn() === "w" ? "white" : "black";
+    this._tacticsBoard = Chessboard("tactics-board", {
+      draggable: true,
+      position: problem.fen,
+      orientation,
+      pieceTheme: "https://lichess1.org/assets/piece/cburnett/{piece}.svg",
+      onDragStart: (src, piece) => this._onTacticsDragStart(src, piece),
+      onDrop: (src, tgt) => this._onTacticsDrop(src, tgt),
+      onSnapEnd: () => this._tacticsBoard.position(this._tacticsChess.fen()),
+    });
+  }
+
+  _onTacticsDragStart(src, piece) {
+    if (this._tacticsSolved || !this._tacticsChess || this._tacticsChess.game_over()) return false;
+    const turn = this._tacticsChess.turn();
+    if ((turn === "w" && piece.startsWith("b")) || (turn === "b" && piece.startsWith("w"))) return false;
+    return true;
+  }
+
+  /**
+   * Coup relâché sur l'échiquier : la légalité est vérifiée localement
+   * (chess.js) pour le feedback immédiat, mais la validation de la
+   * *solution* reste 100 % côté serveur (US 8.3 DoD anti-triche) via
+   * `ApiClient.submitTacticalAttempt`.
+   */
+  _onTacticsDrop(src, tgt) {
+    if (this._tacticsSolved) return "snapback";
+    const move = this._tacticsChess.move({ from: src, to: tgt, promotion: "q" });
+    if (move === null) return "snapback";
+    this._tacticsSolved = true;
+    this._submitTacticsAttempt(move.san);
+  }
+
+  async _submitTacticsAttempt(san) {
+    const boardEl = document.getElementById("tactics-board");
+    const feedback = document.getElementById("tactics-feedback");
+    const problem = this._currentTacticalProblem;
+    try {
+      const result = await ApiClient.submitTacticalAttempt(problem.id, san);
+      const badge = document.getElementById("tactics-elo-badge");
+      if (badge) badge.textContent = `Elo ${result.new_elo}`;
+      boardEl?.classList.add(result.success ? "tactics-board--success" : "tactics-board--error");
+      if (feedback) {
+        feedback.classList.add(result.success ? "tactics-feedback--success" : "tactics-feedback--error");
+        feedback.textContent = result.success
+          ? "Bravo, coup correct !"
+          : `Coup incorrect. Solution : ${result.solution}`;
+      }
+      setTimeout(() => this._loadTacticalProblem(this._currentTacticsTheme), 1600);
+    } catch {
+      if (feedback) feedback.textContent = "Erreur lors de la validation du coup.";
+      this._tacticsSolved = false;
     }
   }
 

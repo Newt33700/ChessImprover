@@ -101,6 +101,20 @@ const ApiClient = (() => {
     );
   }
 
+  /**
+   * Soumet le coup joué pour un problème tactique (US 8.3). La validation
+   * (coup correct ou non) est faite côté serveur exclusivement — le
+   * frontend ne fait que relayer le SAN joué, jamais la solution attendue.
+   */
+  async function submitTacticalAttempt(problemId, move) {
+    const res = await fetch(url("/api/v1/tactics/attempt"), {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ..._authHeaders() },
+      body: JSON.stringify({ problem_id: problemId, move }),
+    });
+    return _json(res);
+  }
+
   /** Récupère le résumé agrégé des statistiques (US 4.1). */
   async function getStatsSummary(period = "30d") {
     return _json(await fetch(url("/api/v1/stats/summary", { period }), { headers: _authHeaders() }));
@@ -120,7 +134,8 @@ const ApiClient = (() => {
 
   return {
     baseUrl, url, analyzeGame, getGame, getGames, updateGameStatus,
-    getNextTacticalProblem, getStatsSummary, getStatsHistory, isConfigured,
+    getNextTacticalProblem, submitTacticalAttempt,
+    getStatsSummary, getStatsHistory, isConfigured,
   };
 })();
 

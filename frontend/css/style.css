@@ -1979,6 +1979,26 @@ body.tactics-active .tactics-col { display: block; }
   color: var(--text-muted);
 }
 
+.tactics-board {
+  width: 100%;
+  max-width: 420px;
+  margin: var(--space-md) auto;
+  border-radius: var(--radius-sm);
+  transition: box-shadow 0.2s;
+}
+.tactics-board--success { box-shadow: 0 0 0 4px rgba(129,182,76,0.6); }
+.tactics-board--error { box-shadow: 0 0 0 4px rgba(202,52,49,0.6); }
+
+.tactics-feedback {
+  text-align: center;
+  font-weight: 700;
+  font-size: 0.9rem;
+  min-height: 1.2em;
+  margin-top: var(--space-sm);
+}
+.tactics-feedback--success { color: var(--green-light); }
+.tactics-feedback--error { color: var(--col-blunder, #ca3431); }
+
 /* ==========================================================================
    Vues détaillées par catégorie (US 4.2 — maquettes Finales / Tactiques)
    ========================================================================== */
