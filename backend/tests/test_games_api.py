@@ -263,6 +263,75 @@ class TestListGames:
         r_b = client.get("/api/v1/games", headers=_auth(token_b))
         assert r_b.json()["games"] == []
 
+    def test_new_game_defaults_to_not_reviewed(self):
+        token = _signup_and_token()
+        client.post(
+            "/api/v1/games/analyze", json={"pgn": PGN, "evals": _evals(PGN)}, headers=_auth(token),
+        )
+        r = client.get("/api/v1/games", headers=_auth(token))
+        assert r.json()["games"][0]["is_reviewed"] is False
+
+
+class TestUpdateGameStatus:
+    """US 7.3 — PATCH /api/v1/games/{game_id}/status."""
+
+    def _create_game(self, token: str) -> str:
+        r = client.post(
+            "/api/v1/games/analyze", json={"pgn": PGN, "evals": _evals(PGN)}, headers=_auth(token),
+        )
+        return r.json()["accepted"][0]["game_id"]
+
+    def test_marks_game_as_reviewed(self):
+        token = _signup_and_token()
+        gid = self._create_game(token)
+        r = client.patch(
+            f"/api/v1/games/{gid}/status", json={"is_reviewed": True}, headers=_auth(token),
+        )
+        assert r.status_code == 200
+        assert r.json()["game"]["is_reviewed"] is True
+
+    def test_unmarks_game_as_reviewed(self):
+        token = _signup_and_token()
+        gid = self._create_game(token)
+        client.patch(f"/api/v1/games/{gid}/status", json={"is_reviewed": True}, headers=_auth(token))
+        r = client.patch(f"/api/v1/games/{gid}/status", json={"is_reviewed": False}, headers=_auth(token))
+        assert r.json()["game"]["is_reviewed"] is False
+
+    def test_persists_across_get(self):
+        token = _signup_and_token()
+        gid = self._create_game(token)
+        client.patch(f"/api/v1/games/{gid}/status", json={"is_reviewed": True}, headers=_auth(token))
+        r = client.get(f"/api/v1/games/{gid}", headers=_auth(token))
+        assert r.json()["game"]["is_reviewed"] is True
+
+    def test_without_token_returns_401_or_403(self):
+        assert client.patch("/api/v1/games/whatever/status", json={"is_reviewed": True}).status_code in (401, 403)
+
+    def test_unknown_game_returns_404(self):
+        token = _signup_and_token()
+        r = client.patch(
+            "/api/v1/games/missing/status", json={"is_reviewed": True}, headers=_auth(token),
+        )
+        assert r.status_code == 404
+
+    def test_other_users_game_returns_404(self):
+        token_a = _signup_and_token(email="a@ex.com", username="usera")
+        token_b = _signup_and_token(email="b@ex.com", username="userb")
+        gid = self._create_game(token_a)
+        r = client.patch(
+            f"/api/v1/games/{gid}/status", json={"is_reviewed": True}, headers=_auth(token_b),
+        )
+        assert r.status_code == 404
+        # Vérifie que la partie de usera n'a pas été modifiée par la tentative.
+        g = client.get(f"/api/v1/games/{gid}", headers=_auth(token_a))
+        assert g.json()["game"]["is_reviewed"] is False
+
+    def test_missing_body_field_returns_422(self):
+        token = _signup_and_token()
+        gid = self._create_game(token)
+        r = client.patch(f"/api/v1/games/{gid}/status", json={}, headers=_auth(token))
+        assert r.status_code == 422
+
 
 class TestGetGame:
     def test_get_game_with_moves(self):

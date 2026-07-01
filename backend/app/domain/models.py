@@ -249,6 +249,11 @@ class AnalyzeAccepted(BaseModel):
     accepted: List[AnalyzeAcceptedItem] = Field(default_factory=list)
 
 
+class GameStatusUpdate(BaseModel):
+    """US 7.3 — Bascule le statut « déjà étudiée » d'une partie."""
+    is_reviewed: bool = Field(..., description="Vrai si la partie a déjà été étudiée")
+
+
 class GameMoveRecord(BaseModel):
     """Métriques persistées d'un coup (US 1.2)."""
     move_number: int

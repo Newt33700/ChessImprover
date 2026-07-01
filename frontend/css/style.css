@@ -325,6 +325,14 @@ input, textarea { font-family: inherit; }
 }
 .btn--ghost:hover { background: rgba(202,52,49,0.2); }
 
+/* US 7.3 — Distinction visuelle "partie déjà étudiée" */
+#btn-mark-reviewed.is-reviewed {
+  background: var(--green);
+  color: #fff;
+  border-color: var(--green-dark);
+}
+#btn-mark-reviewed.is-reviewed:hover { background: var(--green-light); }
+
 .btn--full { width: 100%; margin-top: var(--space-sm); }
 .btn--sm { font-size: 0.78rem; padding: 5px 10px; }
 .btn--lg { font-size: 0.95rem; font-weight: 700; padding: 12px 18px; }

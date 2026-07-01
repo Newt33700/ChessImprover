@@ -146,6 +146,7 @@ def create_game(
         "result": None,
         "status": status,
         "pgn_hash": pgn_hash,
+        "is_reviewed": False,
         "created_at": _dt.datetime.now(_dt.timezone.utc).isoformat(),
     }
     _games[game_id] = game

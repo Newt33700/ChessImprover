@@ -80,6 +80,16 @@ const ApiClient = (() => {
     return _json(await fetch(url("/api/v1/games"), { headers: _authHeaders() }));
   }
 
+  /** Bascule le statut « déjà étudiée » d'une partie (US 7.3). */
+  async function updateGameStatus(gameId, isReviewed) {
+    const res = await fetch(url(`/api/v1/games/${gameId}/status`), {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json", ..._authHeaders() },
+      body: JSON.stringify({ is_reviewed: isReviewed }),
+    });
+    return _json(res);
+  }
+
   /** Récupère le résumé agrégé des statistiques (US 4.1). */
   async function getStatsSummary(period = "30d") {
     return _json(await fetch(url("/api/v1/stats/summary", { period }), { headers: _authHeaders() }));
@@ -97,7 +107,10 @@ const ApiClient = (() => {
     return baseUrl() !== "";
   }
 
-  return { baseUrl, url, analyzeGame, getGame, getGames, getStatsSummary, getStatsHistory, isConfigured };
+  return {
+    baseUrl, url, analyzeGame, getGame, getGames, updateGameStatus,
+    getStatsSummary, getStatsHistory, isConfigured,
+  };
 })();
 
 if (typeof window !== "undefined") window.ApiClient = ApiClient;

@@ -476,6 +476,7 @@ class ChessImproverApp {
     if (prompt) prompt.hidden = true;
     this._renderMovesList(analysis.moves);
     this._renderGameStats(analysis);
+    this._renderReviewedButton();
 
     this.boardMgr.startReview(analysis.moves.map((m) => ({
       san: m.san, classification: m.classification, fen: m.fen, color: m.color,
@@ -1531,18 +1532,63 @@ class ChessImproverApp {
    * et stats serveur. No-op si aucune base API n'est configurée ou si
    * l'utilisateur n'est pas connecté (US 6.4 : la route exige un JWT, le
    * propriétaire n'est plus fourni par le client).
+   *
+   * En cas de succès, mémorise `serverGameId` sur l'objet `analysis` (US 7.3 :
+   * nécessaire pour basculer le statut « déjà étudiée » via `_toggleReviewed`).
    */
-  _syncToBackend(analysis) {
+  async _syncToBackend(analysis) {
     if (!window.ApiClient || !ApiClient.isConfigured()) return;
     if (!window.Auth?.isLoggedIn()) return;
     const pgn = analysis?.pgn;
     if (!pgn) return;
     const userColor = (this._detectPlayerColor?.(pgn) === "b") ? "black" : "white";
     const tcMatch = pgn.match(/\[TimeControl\s+"([^"]+)"\]/);
-    ApiClient.analyzeGame(pgn, {
-      userColor,
-      timeControl: tcMatch ? tcMatch[1] : null,
-    }).catch(() => { /* best-effort */ });
+    try {
+      const data = await ApiClient.analyzeGame(pgn, {
+        userColor,
+        timeControl: tcMatch ? tcMatch[1] : null,
+      });
+      const gameId = data?.accepted?.[0]?.game_id;
+      if (gameId) {
+        analysis.serverGameId = gameId;
+        // US 7.2 : une re-soumission du même PGN peut renvoyer une partie déjà
+        // marquée comme étudiée — on lit son statut réel plutôt que de
+        // supposer false.
+        const { game } = await ApiClient.getGame(gameId);
+        analysis.isReviewed = !!game?.is_reviewed;
+        this._renderReviewedButton();
+      }
+    } catch { /* best-effort */ }
+  }
+
+  /**
+   * Affiche/masque #btn-mark-reviewed selon que la partie en cours a un
+   * pendant serveur connu (US 7.3), et reflète son statut is_reviewed.
+   */
+  _renderReviewedButton() {
+    const btn = document.getElementById("btn-mark-reviewed");
+    if (!btn) return;
+    const hasServerGame = !!this.currentGame?.serverGameId;
+    btn.hidden = !hasServerGame;
+    if (!hasServerGame) return;
+    const reviewed = !!this.currentGame.isReviewed;
+    btn.classList.toggle("is-reviewed", reviewed);
+    btn.textContent = reviewed ? "✓ Étudiée" : "✓ Marquer étudiée";
+  }
+
+  /** Bascule le statut « déjà étudiée » de la partie en cours (US 7.3). */
+  async _toggleReviewed() {
+    const gameId = this.currentGame?.serverGameId;
+    if (!gameId || !window.ApiClient) return;
+    const next = !this.currentGame.isReviewed;
+    try {
+      await ApiClient.updateGameStatus(gameId, next);
+      this.currentGame.isReviewed = next;
+      this._renderReviewedButton();
+      this._toast(next ? "Partie marquée comme étudiée" : "Partie remise à étudier", "success");
+    } catch {
+      this._toast("Impossible de mettre à jour le statut", "error");
+    }
   }
 
   async _showAdvStats() {
