@@ -1074,6 +1074,20 @@ input[type="text"]::placeholder { color: var(--text-muted); }
 }
 .auth-error[hidden] { display: none; }
 
+.auth-success {
+  color: var(--green);
+  font-size: 0.8rem;
+  margin: 0;
+}
+.auth-success[hidden] { display: none; }
+
+.auth-title {
+  color: var(--text);
+  font-size: 1rem;
+  font-weight: 600;
+  margin: 0 0 var(--space-lg);
+}
+
 /* Auth username chip in header */
 .auth-username-chip {
   display: flex;

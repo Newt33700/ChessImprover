@@ -62,6 +62,23 @@
   </div>
 </div>
 
+<!-- ══════════════════ PROFILE MODAL (US 6.3) ══════════════════ -->
+<div id="profile-modal" class="auth-overlay" hidden aria-modal="true" role="dialog" aria-label="Profil">
+  <div class="auth-card card">
+    <button class="auth-close btn-icon" aria-label="Fermer" onclick="window.app?._closeProfileModal()">✕</button>
+    <h2 class="auth-title">Mon profil</h2>
+    <form id="profile-form" class="auth-form" onsubmit="window.app?._submitProfile(event)">
+      <div class="form-group">
+        <label class="form-label" for="profile-chess-username">Pseudo Chess.com <span class="form-label-hint">(3-25 caractères, lettres/chiffres/_/-)</span></label>
+        <input class="text-input" type="text" id="profile-chess-username" autocomplete="off" placeholder="VotrePseudoChessCom"/>
+      </div>
+      <button type="submit" class="btn btn--primary btn--full">Enregistrer</button>
+      <p id="profile-error" class="auth-error" hidden></p>
+      <p id="profile-success" class="auth-success" hidden></p>
+    </form>
+  </div>
+</div>
+
 <!-- ══════════════════ PGN MODAL ══════════════════ -->
 <div id="pgn-modal" class="pgn-modal-overlay" hidden aria-modal="true" role="dialog" aria-label="Analyser un PGN">
   <div class="pgn-modal-card card">

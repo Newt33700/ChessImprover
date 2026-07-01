@@ -376,7 +376,9 @@ class ChessImproverApp {
       tab.addEventListener("click", () => {
         document.querySelectorAll(".auth-tab").forEach((t) => t.classList.remove("active"));
         tab.classList.add("active");
-        document.querySelectorAll(".auth-form").forEach((f) => { f.hidden = true; });
+        // Scopé à #auth-modal : le profile-modal (US 6.3) réutilise aussi
+        // la classe .auth-form et ne doit pas être affecté par ce toggle.
+        document.querySelectorAll("#auth-modal .auth-form").forEach((f) => { f.hidden = true; });
         const target = document.getElementById(tab.dataset.form);
         if (target) target.hidden = false;
       });
@@ -983,7 +985,9 @@ class ChessImproverApp {
     const user = window.Auth?.getUser();
     if (user) {
       el.innerHTML = `<span class="auth-username">${user.username}</span>
+        <button class="btn btn--sm btn--ghost auth-profile-btn">Profil</button>
         <button class="btn btn--sm btn--ghost auth-logout-btn">Déconnexion</button>`;
+      el.querySelector(".auth-profile-btn")?.addEventListener("click", () => this._openProfileModal());
       el.querySelector(".auth-logout-btn")?.addEventListener("click", () => this._onAuthLogout());
     } else {
       el.innerHTML = `<button class="btn btn--sm btn--secondary" id="btn-open-auth">Connexion</button>`;
@@ -1028,16 +1032,64 @@ class ChessImproverApp {
     const password    = document.getElementById("signup-password")?.value;
     try {
       const data = await Auth.signup(email, username, password);
+      let profileUser = data.user;
+      if (chessUser) {
+        Store.set(STORAGE_KEYS.USERNAME, chessUser);
+        this.username = chessUser;
+        const input = document.getElementById("username-input");
+        if (input) input.value = chessUser;
+        // Persiste le pseudo Chess.com sur le profil (US 6.3) ; un format
+        // invalide ne doit jamais bloquer une inscription déjà réussie.
+        try {
+          profileUser = await Auth.updateChessUsername(chessUser);
+        } catch { /* le compte est créé ; l'utilisateur pourra corriger via son profil */ }
+      }
+      this._onAuthSuccess(profileUser);
+    } catch (err) {
+      const el = document.getElementById("signup-error");
+      if (el) { el.textContent = err.message; el.hidden = false; }
+    }
+  }
+
+  // ─── Profil : liaison Chess.com (US 6.3) ────────────────────────
+
+  _openProfileModal() {
+    const input = document.getElementById("profile-chess-username");
+    if (input) input.value = window.Auth?.getUser()?.chess_username || "";
+    const modal = document.getElementById("profile-modal");
+    if (modal) modal.hidden = false;
+    const form = document.getElementById("profile-form");
+    if (form) form.hidden = false;
+  }
+
+  _closeProfileModal() {
+    const modal = document.getElementById("profile-modal");
+    if (modal) modal.hidden = true;
+    ["profile-error", "profile-success"].forEach((id) => {
+      const el = document.getElementById(id);
+      if (el) { el.textContent = ""; el.hidden = true; }
+    });
+  }
+
+  async _submitProfile(event) {
+    event.preventDefault();
+    if (!window.Auth) return;
+    const chessUser = document.getElementById("profile-chess-username")?.value.trim();
+    const errorEl   = document.getElementById("profile-error");
+    const successEl = document.getElementById("profile-success");
+    if (errorEl)   { errorEl.hidden = true; }
+    if (successEl) { successEl.hidden = true; }
+    try {
+      await Auth.updateChessUsername(chessUser);
       if (chessUser) {
         Store.set(STORAGE_KEYS.USERNAME, chessUser);
         this.username = chessUser;
         const input = document.getElementById("username-input");
         if (input) input.value = chessUser;
       }
-      this._onAuthSuccess(data.user);
+      if (successEl) { successEl.textContent = "Pseudo Chess.com mis à jour."; successEl.hidden = false; }
     } catch (err) {
-      const el = document.getElementById("signup-error");
-      if (el) { el.textContent = err.message; el.hidden = false; }
+      if (errorEl) { errorEl.textContent = err.message; errorEl.hidden = false; }
     }
   }
 
