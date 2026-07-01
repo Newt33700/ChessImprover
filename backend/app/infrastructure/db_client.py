@@ -68,7 +68,13 @@ def find_user_by_id(user_id: str) -> Optional[Dict[str, Any]]:
 
 def create_user(email: str, username: str, password_hash: str) -> Dict[str, Any]:
     user_id = str(uuid.uuid4())
-    user = {"id": user_id, "email": email, "username": username, "password_hash": password_hash}
+    user = {
+        "id": user_id,
+        "email": email,
+        "username": username,
+        "password_hash": password_hash,
+        "chess_username": None,
+    }
     _users[user_id] = user
     _user_data[user_id] = {"games": [], "srs_cards": []}
     return user
