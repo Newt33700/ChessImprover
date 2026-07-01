@@ -122,6 +122,7 @@ ChessImprover/
 │       └── api_client.test.js          # Tests ApiClient (base URL, analyze, stats/summary)
 │
 ├── backend/
+│   ├── Dockerfile                      # Image Docker + Stockfish natif (Render) — EPIC 2
 │   ├── requirements.txt                # fastapi, uvicorn, httpx, pydantic, python-chess, bcrypt, psycopg
 │   ├── pyproject.toml / setup.cfg      # Config pytest + mutmut
 │   └── app/
@@ -1222,7 +1223,7 @@ UNIQUE (user_id)
 | Fonctionnalité | Problème | Priorité |
 |---|---|---|
 | **Connexion Supabase réelle** (US 7) | `db_client.py` utilise un dict in-memory. La connexion à Supabase via `DATABASE_URL` n'est pas implémentée. | 🔴 Critique |
-| **Stockfish réel non branché** | Le worker EPIC 1 accepte des évals client (`evals`) ou un binaire natif (`STOCKFISH_PATH`), mais aucune des deux sources n'est encore alimentée en prod : le frontend ne POST pas encore le PGN + évals, et aucun binaire n'est déployé sur Render. Tant que c'est le cas, `cpl`/`position_type` restent `None` et la vue affiche `MOCK_SUMMARY`. | 🔴 Critique |
+| **Stockfish sur Render (Docker)** | `backend/Dockerfile` installe Stockfish natif (`STOCKFISH_PATH=/usr/games/stockfish`) — il suffit de passer le service Render en runtime Docker (ou via `render.yaml`). Le worker EPIC 1 l'utilisera alors automatiquement pour calculer `cpl`/`position_type`. | 🟢 Config Render |
 | **Frontend → backend stats** | Câblé : `ApiClient` POST les parties (`_syncToBackend`) et `fetchSummary` lit `/stats/summary`. Reste inactif tant que `window.API_BASE` n'est pas défini (retombe sur `MOCK_SUMMARY`). | 🟡 Config |
 | **Supabase réel non validé** | `pg_repository` + délégation `db_client` prêts, mais non exécutés contre une instance Supabase (requêtes SQL `pragma: no cover`). | 🟡 Important |
 | **Cache livre d'ouvertures** | Re-téléchargé à chaque refresh (~5 req. réseau, ~2s de parsing) | 🟡 Important |

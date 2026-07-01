@@ -1,0 +1,26 @@
+# Blueprint Render — backend Chess Improver en Docker (Stockfish natif).
+# Pour l'adopter : Render → New → Blueprint (ou "Sync" sur le service existant),
+# puis renseigner les valeurs marquées `sync: false` dans le dashboard.
+
+services:
+  - type: web
+    name: chess-improver-api
+    runtime: docker
+    dockerfilePath: ./backend/Dockerfile
+    dockerContext: ./backend
+    plan: free
+    healthCheckPath: /health
+    envVars:
+      # Stockfish natif fourni par l'image (voir backend/Dockerfile)
+      - key: STOCKFISH_PATH
+        value: /usr/games/stockfish
+      - key: ENGINE_DEPTH
+        value: "14"
+      # Origines autorisées (CORS) — ajoute ici tes domaines front
+      - key: ALLOWED_ORIGINS
+        value: https://chess-improver-nu.vercel.app
+      # Secrets à renseigner dans le dashboard (non versionnés)
+      - key: DATABASE_URL
+        sync: false
+      - key: JWT_SECRET
+        sync: false
