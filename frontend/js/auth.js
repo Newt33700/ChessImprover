@@ -37,6 +37,17 @@ const Auth = (() => {
 
   // ── Appels API ──────────────────────────────────────────────────────
 
+  // FastAPI renvoie soit une chaîne (`detail`), soit une liste d'erreurs de
+  // validation Pydantic (422, un objet `{msg, loc, type}` par champ invalide).
+  function _extractErrorMessage(data) {
+    const detail = data && data.detail;
+    if (typeof detail === "string" && detail) return detail;
+    if (Array.isArray(detail) && detail.length) {
+      return detail.map((d) => (d && d.msg) || String(d)).join(" ; ");
+    }
+    return "Erreur serveur";
+  }
+
   async function _post(path, body, token) {
     const headers = { "Content-Type": "application/json" };
     if (token) headers["Authorization"] = `Bearer ${token}`;
@@ -46,7 +57,7 @@ const Auth = (() => {
       body: JSON.stringify(body),
     });
     const data = await res.json();
-    if (!res.ok) throw new Error(data.detail || "Erreur serveur");
+    if (!res.ok) throw new Error(_extractErrorMessage(data));
     return data;
   }
 

@@ -110,6 +110,19 @@ class TestSignup:
         assert user is not None
         assert user["username"] == "dave"
 
+    def test_signup_invalid_email_format_returns_422(self):
+        r = client.post("/auth/signup", json={"email": "not-an-email", "username": "gina", "password": "pass123"})
+        assert r.status_code == 422
+
+    def test_signup_invalid_email_error_mentions_email(self):
+        r = client.post("/auth/signup", json={"email": "not-an-email", "username": "gina", "password": "pass123"})
+        detail = r.json()["detail"]
+        assert any("email" in str(d.get("loc", "")) for d in detail)
+
+    def test_signup_password_too_short_returns_422(self):
+        r = client.post("/auth/signup", json={"email": "gina@ex.com", "username": "gina", "password": "abc"})
+        assert r.status_code == 422
+
 
 # ── POST /auth/login ──────────────────────────────────────────────────────────
 
