@@ -34,5 +34,17 @@ class Settings(BaseSettings):
         env_file = ".env"
         env_file_encoding = "utf-8"
 
+        @classmethod
+        def parse_env_var(cls, field_name: str, raw_val: str):
+            """Accepte `ALLOWED_ORIGINS` en liste séparée par des virgules.
+
+            Pydantic v1 exigerait sinon du JSON pour un champ `List[str]`, ce
+            qui ferait planter le démarrage si l'on met simplement
+            `ALLOWED_ORIGINS=https://a,https://b`.
+            """
+            if field_name == "allowed_origins":
+                return [origin.strip() for origin in raw_val.split(",") if origin.strip()]
+            return cls.json_loads(raw_val)  # comportement par défaut
+
 
 settings = Settings()
