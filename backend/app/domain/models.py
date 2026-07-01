@@ -6,10 +6,11 @@ Ces modèles sont purs et sérialisables ; aucun comportement métier ici.
 
 from __future__ import annotations
 
+import re
 from enum import Enum
 from typing import Any, Dict, List, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, validator
 
 
 # ---------------------------------------------------------------------------
@@ -140,14 +141,23 @@ class ExerciseResult(BaseModel):
 
 
 # ---------------------------------------------------------------------------
-# Auth & Sync (US 7)
+# Auth & Sync (US 7 / US 6.1)
 # ---------------------------------------------------------------------------
+
+_EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+
 
 class UserCreate(BaseModel):
     """Demande d'inscription."""
     email: str = Field(..., min_length=5, description="Adresse email")
     username: str = Field(..., min_length=2, max_length=32, description="Pseudo unique")
     password: str = Field(..., min_length=6, description="Mot de passe (min 6 caractères)")
+
+    @validator("email")
+    def _validate_email_format(cls, v: str) -> str:  # noqa: N805
+        if not _EMAIL_RE.match(v):
+            raise ValueError("Adresse email invalide")
+        return v
 
 
 class UserLogin(BaseModel):
