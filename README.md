@@ -107,6 +107,7 @@ ChessImprover/
 │   │   ├── stats_dashboard.js          # Dashboard Elo/Précision lissé (US 5)
 │   │   ├── personal_coach.js           # Coach arbre de décision offline (US 6)
 │   │   ├── advanced_stats.js           # Stats Avancées : matrice + deep-dive (US 4.1/4.2)
+│   │   ├── api_client.js               # Client HTTP backend (analyze, stats/summary) — EPIC 1
 │   │   └── auth.js                     # Auth JWT frontend (US 7) — chargé dans index.html
 │   └── tests/
 │       ├── setup.js                    # Mocks globaux : IDBFactory, localStorage, Chart, document
@@ -117,10 +118,11 @@ ChessImprover/
 │       ├── srs_sm2.test.js             # Tests algorithme SM-2
 │       ├── stats_dashboard.test.js     # Tests StatsDashboard (Elo logistique + render)
 │       ├── personal_coach.test.js      # Tests PersonalCoach (toutes les branches)
-│       └── advanced_stats.test.js      # Tests AdvancedStats (couleurs, deltas, gauge, fallback API)
+│       ├── advanced_stats.test.js      # Tests AdvancedStats (couleurs, deltas, gauge, détails)
+│       └── api_client.test.js          # Tests ApiClient (base URL, analyze, stats/summary)
 │
 ├── backend/
-│   ├── requirements.txt                # fastapi, uvicorn, httpx, pydantic, python-chess, bcrypt
+│   ├── requirements.txt                # fastapi, uvicorn, httpx, pydantic, python-chess, bcrypt, psycopg
 │   ├── pyproject.toml / setup.cfg      # Config pytest + mutmut
 │   └── app/
 │       ├── main.py                     # Routes FastAPI + inclusion routers auth/sync
@@ -141,7 +143,8 @@ ChessImprover/
 │       ├── infrastructure/
 │       │   ├── chess_com_client.py     # Proxy httpx vers Chess.com API
 │       │   ├── engine.py               # EngineProvider (évals client / Stockfish natif) — EPIC 2
-│       │   └── db_client.py            # Store in-memory : users, user_data, games, game_moves
+│       │   ├── pg_repository.py        # Dépôt Postgres/Supabase games+game_moves (si DATABASE_URL)
+│       │   └── db_client.py            # Store in-memory + délégation Postgres (EPIC 1)
 │       ├── routers/
 │       │   ├── auth.py                 # POST /auth/signup /auth/login GET /auth/me (US 7)
 │       │   ├── sync.py                 # POST /sync — stratégie Client Wins (US 7)
@@ -160,6 +163,7 @@ ChessImprover/
 │       │   ├── test_analysis_pipeline.py # US 1.2 : worker d'analyse
 │       │   ├── test_stats_aggregator.py  # US 4.1 : agrégation
 │       │   ├── test_games_api.py       # US 1.1 : routes + worker async
+│       │   ├── test_pg_repository.py   # Adaptateur Postgres + délégation db_client
 │       │   └── test_srs.py
 │       └── mutants/                    # Mutation testing mutmut
 │
@@ -733,7 +737,7 @@ Vue plein écran (« type Chess.com Premium ») ouverte depuis la carte BILAN (b
 
 **Câblage `app.js` :** `_showAdvStats()` (ajoute la classe + `_loadAdvStats()`), `_loadAdvStats()` (fetch + `renderMatrix/DeepDive/FinalesTiles/TacticsCard` + 2 graphes Chart.js détruits/recréés), onglets de cadence (re-render deep-dive) et sélecteur de période (re-fetch).
 
-> **Câblage données :** ✅ vue + rendu opérationnels ; ⏳ alimentés par `MOCK_SUMMARY` tant que l'endpoint d'agrégation backend (EPIC 1) n'existe pas. La logique pure est testée (`tests/advanced_stats.test.js`, 17 TUs) ; les fonctions `render*` (glue DOM) ne sont pas dans `collectCoverageFrom`, comme `app.js`.
+> **Câblage données :** ✅ vue + rendu opérationnels ; `fetchSummary` **délègue à `ApiClient`** dès qu'une base API est configurée (`window.API_BASE` / `localStorage['apiBase']`) et retombe sur `MOCK_SUMMARY` en cas d'échec. Clic sur une catégorie du deep-dive → vue détaillée (`categoryDetailHtml`, US 4.2). La logique pure est testée (`advanced_stats.test.js` + `api_client.test.js`) ; les `render*` (glue DOM) ne sont pas dans `collectCoverageFrom`, comme `app.js`.
 
 ---
 
@@ -1039,7 +1043,8 @@ npm run test:mutation # Stryker
 | `srs_sm2.test.js` | SRS (extrait de app.js) | createCard, SM-2 quality=5/3/1, EF clamp, due date |
 | `stats_dashboard.test.js` | StatsDashboard | wpFromCp, estimateEloLogistic, movingAverage, filterByDays, buildChartData, render (Chart mock) |
 | `personal_coach.test.js` | PersonalCoach | computeMetrics, diagnose (toutes les 6 branches), renderHTML, _detectResult, _detectUserColor, _extractOpening |
-| `advanced_stats.test.js` | AdvancedStats | cellClass (5 cas), phaseDelta/formatDelta, deepDiveFor (deltas maquette), gaugeAngle (bornes), matrixRows, fetchSummary (succès + 2 fallbacks) — **17 TUs** |
+| `advanced_stats.test.js` | AdvancedStats | cellClass, deltas, deepDiveFor, gaugeAngle, matrixRows, `categoryDetailHtml` (tactics/endgames/openings/strategy), fetchSummary (fallbacks) |
+| `api_client.test.js` | ApiClient | baseUrl/isConfigured (window/localStorage), url (query), analyzeGame (POST + erreur), getStatsSummary, getGame |
 
 > `advanced_stats.js` n'est pas dans `collectCoverageFrom` (comme `app.js`, `auth.js`, `board_manager.js`) : seules ses fonctions pures sont testées, les `render*` sont de la glue DOM.
 
@@ -1075,9 +1080,10 @@ JWT_SECRET=ci-test-secret pytest tests/ -v
 | `test_analysis_pipeline.py` | sans moteur (phases/SAN), avec moteur (CPL, plafond, tactique/stratégie), mat | US 1.2 |
 | `test_stats_aggregator.py` | user_outcome, build_summary (catégories, ratings, couleur), gaffeRate, finales, acplTrend | US 4.1 |
 | `test_games_api.py` | POST analyze (202, 400), worker→completed, réanalyse, GET game (404), stats/summary | US 1.1 |
+| `test_pg_repository.py` | PgRepository (dsn, colonnes), délégation db_client (in-memory sans `DATABASE_URL`) | EPIC 1 |
 | `test_srs.py` | — | SM-2 backend |
 
-**Couverture backend :** 325 TUs au total, couverture globale **89 %** ; cœur Stats Avancées + EPIC 1 à 90–100 % (`stats_aggregator`, `cadence`, `models`, `engine` à 100 %, `analysis_pipeline` 90 %, `routers/games` 94 %).
+**Couverture backend :** 329 TUs au total, couverture globale **89 %** ; cœur Stats Avancées + EPIC 1 à 90–100 % (`stats_aggregator`, `cadence`, `models`, `engine` à 100 %, `analysis_pipeline` 90 %, `routers/games` 94 %, `db_client` 98 %). Les requêtes SQL réelles de `pg_repository` (nécessitant une base) sont marquées `pragma: no cover`.
 
 **Architecture de test `test_auth.py` :**
 - App de test minimale (`FastAPI()` + routers auth/sync uniquement) pour éviter la dépendance `python-chess`
@@ -1217,7 +1223,8 @@ UNIQUE (user_id)
 |---|---|---|
 | **Connexion Supabase réelle** (US 7) | `db_client.py` utilise un dict in-memory. La connexion à Supabase via `DATABASE_URL` n'est pas implémentée. | 🔴 Critique |
 | **Stockfish réel non branché** | Le worker EPIC 1 accepte des évals client (`evals`) ou un binaire natif (`STOCKFISH_PATH`), mais aucune des deux sources n'est encore alimentée en prod : le frontend ne POST pas encore le PGN + évals, et aucun binaire n'est déployé sur Render. Tant que c'est le cas, `cpl`/`position_type` restent `None` et la vue affiche `MOCK_SUMMARY`. | 🔴 Critique |
-| **Frontend → backend stats** | La vue Stats Avancées appelle `GET /api/v1/stats/summary` mais retombe sur `MOCK_SUMMARY` faute de `window.STATS_API_BASE` configuré et de parties analysées. | 🟡 Important |
+| **Frontend → backend stats** | Câblé : `ApiClient` POST les parties (`_syncToBackend`) et `fetchSummary` lit `/stats/summary`. Reste inactif tant que `window.API_BASE` n'est pas défini (retombe sur `MOCK_SUMMARY`). | 🟡 Config |
+| **Supabase réel non validé** | `pg_repository` + délégation `db_client` prêts, mais non exécutés contre une instance Supabase (requêtes SQL `pragma: no cover`). | 🟡 Important |
 | **Cache livre d'ouvertures** | Re-téléchargé à chaque refresh (~5 req. réseau, ~2s de parsing) | 🟡 Important |
 | **Qualité SRS nuancée** | Seul `quality=5` (succès) et `quality=1` (raté) sont utilisés. `quality=3` (correct mais non optimal) n'est jamais émis. | 🟢 Optionnel |
 
@@ -1237,9 +1244,11 @@ Le `PersonalCoach` lit `game.endgame_accuracy` pour évaluer la technique de fin
 
 ## 10. Ce qui reste à développer
 
-### 10.1 🔴 CRITIQUE — Connexion Supabase réelle
+### 10.1 🟡 Connexion Supabase réelle — partiellement fait
 
-**Dans `db_client.py` :** implémenter la connexion PostgreSQL via `psycopg2` ou `asyncpg` quand `settings.database_url` est défini. L'interface (`find_user_by_email`, `create_user`, etc.) reste identique — seul le backend de stockage change.
+**Fait :** `infrastructure/pg_repository.py` implémente les tables `games`/`game_moves` en PostgreSQL (`psycopg` v3), et `db_client` **délègue automatiquement** à ce dépôt dès que `settings.database_url` est défini (sinon in-memory). La migration `20260701000000_advanced_stats.sql` crée le schéma.
+
+**Reste :** (1) valider contre une instance Supabase réelle (les requêtes SQL ne sont pas testées faute de base dans l'environnement) ; (2) migrer aussi `users`/`user_data` (US 7) vers Postgres — encore in-memory ; (3) ajouter un pool de connexions (actuellement une connexion par requête).
 
 ### 10.1bis 🔴 CRITIQUE — Finaliser la chaîne Stats Avancées
 
