@@ -75,6 +75,11 @@ const ApiClient = (() => {
     return _json(await fetch(url(`/api/v1/games/${gameId}`), { headers: _authHeaders() }));
   }
 
+  /** Liste les parties déjà soumises/analysées de l'utilisateur authentifié (US 7.1). */
+  async function getGames() {
+    return _json(await fetch(url("/api/v1/games"), { headers: _authHeaders() }));
+  }
+
   /** Récupère le résumé agrégé des statistiques (US 4.1). */
   async function getStatsSummary(period = "30d") {
     return _json(await fetch(url("/api/v1/stats/summary", { period }), { headers: _authHeaders() }));
@@ -92,7 +97,7 @@ const ApiClient = (() => {
     return baseUrl() !== "";
   }
 
-  return { baseUrl, url, analyzeGame, getGame, getStatsSummary, getStatsHistory, isConfigured };
+  return { baseUrl, url, analyzeGame, getGame, getGames, getStatsSummary, getStatsHistory, isConfigured };
 })();
 
 if (typeof window !== "undefined") window.ApiClient = ApiClient;

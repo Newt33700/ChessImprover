@@ -174,6 +174,35 @@ class TestAnalyzeEndpoint:
         assert r.json()["accepted"] == []
 
 
+class TestListGames:
+    def test_lists_own_games(self):
+        token = _signup_and_token()
+        client.post(
+            "/api/v1/games/analyze", json={"pgn": PGN, "evals": _evals(PGN)}, headers=_auth(token),
+        )
+        r = client.get("/api/v1/games", headers=_auth(token))
+        assert r.status_code == 200
+        assert len(r.json()["games"]) == 1
+
+    def test_empty_when_no_games(self):
+        token = _signup_and_token()
+        r = client.get("/api/v1/games", headers=_auth(token))
+        assert r.status_code == 200
+        assert r.json()["games"] == []
+
+    def test_without_token_returns_401_or_403(self):
+        assert client.get("/api/v1/games").status_code in (401, 403)
+
+    def test_does_not_include_other_users_games(self):
+        token_a = _signup_and_token(email="a@ex.com", username="usera")
+        token_b = _signup_and_token(email="b@ex.com", username="userb")
+        client.post(
+            "/api/v1/games/analyze", json={"pgn": PGN, "evals": _evals(PGN)}, headers=_auth(token_a),
+        )
+        r_b = client.get("/api/v1/games", headers=_auth(token_b))
+        assert r_b.json()["games"] == []
+
+
 class TestGetGame:
     def test_get_game_with_moves(self):
         token = _signup_and_token()

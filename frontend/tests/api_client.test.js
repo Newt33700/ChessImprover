@@ -86,6 +86,24 @@ describe("authentification (US 6.4)", () => {
     global.fetch.mockResolvedValue({ ok: true, json: async () => ({ accepted: [] }) });
     await ApiClient.analyzeGame("1. e4");
     expect(global.fetch.mock.calls[3][1].headers.Authorization).toBe("Bearer jwt-123");
+
+    global.fetch.mockResolvedValue({ ok: true, json: async () => ({ games: [] }) });
+    await ApiClient.getGames();
+    expect(global.fetch.mock.calls[4][1].headers.Authorization).toBe("Bearer jwt-123");
+  });
+});
+
+describe("getGames (US 7.1)", () => {
+  test("appelle GET /api/v1/games et renvoie le JSON", async () => {
+    global.fetch = jest.fn().mockResolvedValue({ ok: true, json: async () => ({ games: [{ id: "g1" }] }) });
+    const out = await ApiClient.getGames();
+    expect(global.fetch.mock.calls[0][0]).toBe("/api/v1/games");
+    expect(out).toEqual({ games: [{ id: "g1" }] });
+  });
+
+  test("rejette sur HTTP non-ok", async () => {
+    global.fetch = jest.fn().mockResolvedValue({ ok: false, status: 401 });
+    await expect(ApiClient.getGames()).rejects.toThrow("HTTP 401");
   });
 });
 

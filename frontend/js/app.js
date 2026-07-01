@@ -256,6 +256,7 @@ class ChessImproverApp {
     this.boardMgr    = null;
     this.currentGame = null;
     this.recentGames = [];
+    this.serverGames = []; // US 7.1 — parties déjà soumises/analysées côté serveur
 
     this._openingBookPromise = this._buildOpeningBook();
     this._initBoard();
@@ -1097,11 +1098,31 @@ class ChessImproverApp {
     this._closeAuthModal();
     this._toast(`Bienvenue ${user.username} !`, "success");
     this._renderAuthState();
+    this._loadServerGames();
     // Auto-charger les parties Chess.com si un username est mémorisé
     if (this.username && !this.recentGames.length) {
       const input = document.getElementById("username-input");
       if (input) input.value = this.username;
       this._connectUser(this.username);
+    }
+  }
+
+  /**
+   * Récupère la liste des parties déjà soumises/analysées côté serveur
+   * (US 7.1), pour permettre plus tard d'éviter de re-soumettre une partie
+   * déjà connue (US 7.2). Best-effort : n'affecte jamais le reste du
+   * chargement du dashboard en cas d'échec.
+   */
+  async _loadServerGames() {
+    if (!window.ApiClient || !ApiClient.isConfigured()) return;
+    this._setLoading(true, "Chargement de vos parties…");
+    try {
+      const data = await ApiClient.getGames();
+      this.serverGames = data?.games || [];
+    } catch {
+      this.serverGames = [];
+    } finally {
+      this._setLoading(false);
     }
   }
 
