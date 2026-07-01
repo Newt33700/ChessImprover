@@ -25,6 +25,7 @@ from app.domain.models import (
     AnalyzeAcceptedItem,
     AnalyzeGamesRequest,
     GameStatus,
+    GameStatusUpdate,
 )
 from app.domain.progress_history import build_snapshot, filter_history_by_days
 from app.domain.stats_aggregator import build_summary
@@ -168,6 +169,18 @@ async def get_game(
     if game is None or game.get("user_id") != user_id:
         raise HTTPException(status_code=404, detail="Partie introuvable.")
     return {"game": game, "moves": db_client.get_moves_for_game(game_id)}
+
+
+@router.patch("/games/{game_id}/status")
+async def update_game_status(
+    game_id: str, body: GameStatusUpdate, user_id: str = Depends(get_current_user_id),
+) -> Dict[str, Any]:
+    """US 7.3 — Bascule le statut « déjà étudiée » d'une partie de l'utilisateur authentifié."""
+    game = db_client.get_game(game_id)
+    if game is None or game.get("user_id") != user_id:
+        raise HTTPException(status_code=404, detail="Partie introuvable.")
+    updated = db_client.update_game(game_id, is_reviewed=body.is_reviewed)
+    return {"game": updated}
 
 
 @router.get("/stats/summary")

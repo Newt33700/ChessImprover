@@ -107,6 +107,24 @@ describe("getGames (US 7.1)", () => {
   });
 });
 
+describe("updateGameStatus (US 7.3)", () => {
+  test("PATCH /api/v1/games/{id}/status avec is_reviewed", async () => {
+    global.fetch = jest.fn().mockResolvedValue({
+      ok: true, json: async () => ({ game: { id: "g1", is_reviewed: true } }),
+    });
+    const out = await ApiClient.updateGameStatus("g1", true);
+    expect(global.fetch.mock.calls[0][0]).toBe("/api/v1/games/g1/status");
+    expect(global.fetch.mock.calls[0][1].method).toBe("PATCH");
+    expect(JSON.parse(global.fetch.mock.calls[0][1].body)).toEqual({ is_reviewed: true });
+    expect(out).toEqual({ game: { id: "g1", is_reviewed: true } });
+  });
+
+  test("rejette sur HTTP non-ok", async () => {
+    global.fetch = jest.fn().mockResolvedValue({ ok: false, status: 404 });
+    await expect(ApiClient.updateGameStatus("missing", true)).rejects.toThrow("HTTP 404");
+  });
+});
+
 describe("getStatsSummary / getGame", () => {
   test("getStatsSummary construit la query period (sans user_id, dérivé du JWT serveur)", async () => {
     global.fetch = jest.fn().mockResolvedValue({ ok: true, json: async () => ({ rows: {} }) });
