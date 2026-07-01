@@ -98,6 +98,7 @@ class TestSubmitAttempt:
         assert body["success"] is True
         assert body["new_elo"] == 1015
         assert body["solution"] == "Ra8#"
+        assert body["streak"] == 1
 
     def test_wrong_move_decreases_elo_by_15(self):
         token = _signup_and_token()
@@ -108,6 +109,7 @@ class TestSubmitAttempt:
         body = r.json()
         assert body["success"] is False
         assert body["new_elo"] == 985
+        assert body["streak"] == 0
 
     def test_equivalent_notation_without_check_symbol_is_accepted(self):
         token = _signup_and_token()
@@ -145,3 +147,51 @@ class TestSubmitAttempt:
         r_b = client.get("/api/v1/tactics/next", headers=_auth(token_b))
         # userb n'a fait aucune tentative : son elo est resté à 1000 par défaut.
         assert r_b.json()["difficulty_elo"] in {950, 1000, 1250}
+
+    def test_streak_increments_across_consecutive_successes_only(self):
+        token = _signup_and_token()
+        pid = self._get_mate_in_1_problem_id(token)
+        r1 = client.post("/api/v1/tactics/attempt", json={"problem_id": pid, "move": "Ra8#"}, headers=_auth(token))
+        r2 = client.post("/api/v1/tactics/attempt", json={"problem_id": pid, "move": "Ra8#"}, headers=_auth(token))
+        r3 = client.post("/api/v1/tactics/attempt", json={"problem_id": pid, "move": "Kg1"}, headers=_auth(token))
+        assert [r1.json()["streak"], r2.json()["streak"], r3.json()["streak"]] == [1, 2, 0]
+
+    def test_time_taken_is_optional(self):
+        token = _signup_and_token()
+        pid = self._get_mate_in_1_problem_id(token)
+        r = client.post(
+            "/api/v1/tactics/attempt",
+            json={"problem_id": pid, "move": "Ra8#", "time_taken": 3.5},
+            headers=_auth(token),
+        )
+        assert r.status_code == 200
+
+
+class TestTacticsStats:
+    def _get_mate_in_1_problem_id(self) -> str:
+        for problem_id, p in db_client._tactical_problems.items():
+            if p["solution"] == MATE_IN_1_SOLUTION:
+                return problem_id
+        raise AssertionError("aucun problème Ra8# dans le seed")
+
+    def test_no_attempts_returns_empty_stats(self):
+        token = _signup_and_token()
+        r = client.get("/api/v1/tactics/stats", headers=_auth(token))
+        assert r.status_code == 200
+        assert r.json() == {"by_theme": [], "streak": 0}
+
+    def test_stats_reflect_recorded_attempts(self):
+        token = _signup_and_token()
+        pid = self._get_mate_in_1_problem_id()
+        client.post("/api/v1/tactics/attempt", json={"problem_id": pid, "move": "Ra8#"}, headers=_auth(token))
+        client.post("/api/v1/tactics/attempt", json={"problem_id": pid, "move": "Kg1"}, headers=_auth(token))
+
+        r = client.get("/api/v1/tactics/stats", headers=_auth(token))
+        body = r.json()
+        assert body["by_theme"] == [
+            {"category": "mate_in_1", "attempts": 2, "successes": 1, "success_rate": 0.5},
+        ]
+        assert body["streak"] == 0  # dernière tentative = échec
+
+    def test_without_token_returns_401_or_403(self):
+        assert client.get("/api/v1/tactics/stats").status_code in (401, 403)

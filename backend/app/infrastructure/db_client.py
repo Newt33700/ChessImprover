@@ -10,6 +10,7 @@ need no real database and the domain layer stays decoupled.
 from __future__ import annotations
 
 import uuid
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 from app.domain.tactical_elo import DEFAULT_TACTICAL_ELO
@@ -350,6 +351,123 @@ def get_next_tactical_problem(
     return select_nearest_problem(pool, tactical_elo)
 
 
+# US 8.4 — historique des tentatives, append-only
+_tactical_attempts: List[Dict[str, Any]] = []
+
+
+def record_tactical_attempt(
+    user_id: str,
+    problem_id: str,
+    category: str,
+    success: bool,
+    time_taken: float,
+) -> Dict[str, Any]:
+    """Enregistre une tentative résolue (US 8.4), pour le calcul du taux de
+    réussite par catégorie et de la série en cours (streak)."""
+    repo = _pg()
+    if repo is not None:  # pragma: no cover - nécessite DATABASE_URL
+        return repo.record_tactical_attempt(user_id, problem_id, category, success, time_taken)
+    attempt = {
+        "attempt_id": str(uuid.uuid4()),
+        "user_id": user_id,
+        "problem_id": problem_id,
+        "category": category,
+        "success": success,
+        "time_taken": time_taken,
+        "created_at": datetime.now(timezone.utc),
+    }
+    _tactical_attempts.append(attempt)
+    return attempt
+
+
+def get_tactical_attempts(user_id: str) -> List[Dict[str, Any]]:
+    """Historique des tentatives d'un utilisateur (US 8.4), du plus ancien au plus récent."""
+    repo = _pg()
+    if repo is not None:  # pragma: no cover - nécessite DATABASE_URL
+        return repo.get_tactical_attempts(user_id)
+    return [a for a in _tactical_attempts if a["user_id"] == user_id]
+
+
+# EPIC 9 — répertoire d'ouvertures (US 9.1/9.2)
+_opening_lines: Dict[str, Dict[str, Any]] = {}  # keyed by line id
+
+
+def create_opening_line(user_id: str, name: str, color: str, moves: List[str]) -> Dict[str, Any]:
+    repo = _pg()
+    if repo is not None:  # pragma: no cover - nécessite DATABASE_URL
+        return repo.create_opening_line(user_id, name, color, moves)
+    from app.domain.opening_repertoire import DEFAULT_EASE_FACTOR, DEFAULT_INTERVAL_DAYS
+
+    line_id = str(uuid.uuid4())
+    line = {
+        "id": line_id,
+        "user_id": user_id,
+        "name": name,
+        "color": color,
+        "moves": list(moves),
+        "ease_factor": DEFAULT_EASE_FACTOR,
+        "interval_days": DEFAULT_INTERVAL_DAYS,
+        "repetitions": 0,
+        "due_date": datetime.now(timezone.utc).date().isoformat(),
+    }
+    _opening_lines[line_id] = line
+    return line
+
+
+def get_opening_lines(user_id: str) -> List[Dict[str, Any]]:
+    repo = _pg()
+    if repo is not None:  # pragma: no cover - nécessite DATABASE_URL
+        return repo.get_opening_lines(user_id)
+    return [line for line in _opening_lines.values() if line["user_id"] == user_id]
+
+
+def get_due_opening_lines(user_id: str, today: str) -> List[Dict[str, Any]]:
+    """Lignes dont l'échéance de révision (US 9.2) est arrivée ou dépassée."""
+    repo = _pg()
+    if repo is not None:  # pragma: no cover - nécessite DATABASE_URL
+        return repo.get_due_opening_lines(user_id, today)
+    return [
+        line for line in _opening_lines.values()
+        if line["user_id"] == user_id and line["due_date"] <= today
+    ]
+
+
+def get_opening_line(line_id: str) -> Optional[Dict[str, Any]]:
+    repo = _pg()
+    if repo is not None:  # pragma: no cover - nécessite DATABASE_URL
+        return repo.get_opening_line(line_id)
+    return _opening_lines.get(line_id)
+
+
+def update_opening_line_schedule(
+    line_id: str, ease_factor: float, interval_days: int, repetitions: int, due_date: str
+) -> Optional[Dict[str, Any]]:
+    repo = _pg()
+    if repo is not None:  # pragma: no cover - nécessite DATABASE_URL
+        return repo.update_opening_line_schedule(
+            line_id, ease_factor, interval_days, repetitions, due_date
+        )
+    line = _opening_lines.get(line_id)
+    if line is None:
+        return None
+    line["ease_factor"] = ease_factor
+    line["interval_days"] = interval_days
+    line["repetitions"] = repetitions
+    line["due_date"] = due_date
+    return line
+
+
+def delete_opening_line(line_id: str, user_id: str) -> bool:
+    repo = _pg()
+    if repo is not None:  # pragma: no cover - nécessite DATABASE_URL
+        return repo.delete_opening_line(line_id, user_id)
+    line = _opening_lines.get(line_id)
+    if line is None or line["user_id"] != user_id:
+        return False
+    del _opening_lines[line_id]
+    return True
+
+
 def _reset_store() -> None:
     """Reset in-memory store between tests."""
     _users.clear()
@@ -357,3 +475,5 @@ def _reset_store() -> None:
     _games.clear()
     _game_moves.clear()
     _progress_history.clear()
+    _tactical_attempts.clear()
+    _opening_lines.clear()

@@ -9,7 +9,7 @@ Référence : https://super-memory.com/english/ol/sm2.htm
 from __future__ import annotations
 
 from datetime import date, timedelta
-from typing import List
+from typing import List, TypedDict
 
 from app.domain.models import SRSCard
 
@@ -18,6 +18,49 @@ from app.domain.models import SRSCard
 # ---------------------------------------------------------------------------
 
 EF_MIN: float = 1.3  # Facteur de facilité minimum
+
+
+class Sm2Schedule(TypedDict):
+    ease_factor: float
+    interval: int
+    repetitions: int
+    due_date: date
+
+
+def sm2_schedule(
+    ease_factor: float, interval: int, repetitions: int, quality: int, today: date
+) -> Sm2Schedule:
+    """Calcule le prochain état SM-2, indépendamment de toute carte tactique.
+
+    Extrait de ``review_card`` pour être réutilisable par d'autres domaines
+    de répétition espacée (ex. l'entraîneur d'ouvertures, EPIC 9) sans
+    dupliquer la formule — une seule source de vérité pour l'algorithme.
+    """
+    if quality < 3:
+        return {
+            "ease_factor": ease_factor,
+            "interval": 1,
+            "repetitions": 0,
+            "due_date": today,
+        }
+
+    delta = 0.1 - (5 - quality) * (0.08 + (5 - quality) * 0.02)
+    new_ef = max(EF_MIN, ease_factor + delta)
+    new_reps = repetitions + 1
+
+    if new_reps == 1:
+        new_interval = 1
+    elif new_reps == 2:
+        new_interval = 6
+    else:
+        new_interval = max(1, round(interval * new_ef))
+
+    return {
+        "ease_factor": round(new_ef, 4),
+        "interval": new_interval,
+        "repetitions": new_reps,
+        "due_date": today + timedelta(days=new_interval),
+    }
 
 # Qualité de réponse (0-5) :
 #   0 = pas de souvenir
@@ -85,43 +128,15 @@ def review_card(card: SRSCard, quality: int) -> SRSCard:
     SRSCard
         Carte mise à jour (nouveau objet immuable).
     """
-    today = date.today()
-
-    # Échec : réinitialisation complète
-    if quality < 3:
-        return SRSCard(
-            id=card.id,
-            fen=card.fen,
-            solution=card.solution,
-            ef=card.ef,
-            interval=1,
-            reps=0,
-            due=today.isoformat(),
-        )
-
-    # Succès : mise à jour SM-2
-    delta = 0.1 - (5 - quality) * (0.08 + (5 - quality) * 0.02)
-    new_ef = max(EF_MIN, card.ef + delta)
-    new_reps = card.reps + 1
-
-    # Calcul de l'intervalle
-    if new_reps == 1:
-        new_interval = 1
-    elif new_reps == 2:
-        new_interval = 6
-    else:
-        new_interval = max(1, round(card.interval * new_ef))
-
-    due_date = today + timedelta(days=new_interval)
-
+    schedule = sm2_schedule(card.ef, card.interval, card.reps, quality, date.today())
     return SRSCard(
         id=card.id,
         fen=card.fen,
         solution=card.solution,
-        ef=round(new_ef, 4),
-        interval=new_interval,
-        reps=new_reps,
-        due=due_date.isoformat(),
+        ef=schedule["ease_factor"],
+        interval=schedule["interval"],
+        reps=schedule["repetitions"],
+        due=schedule["due_date"].isoformat(),
     )
 
 

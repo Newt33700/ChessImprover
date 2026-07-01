@@ -149,21 +149,50 @@ describe("getNextTacticalProblem (US 8.1/8.2)", () => {
   });
 });
 
-describe("submitTacticalAttempt (US 8.3)", () => {
+describe("submitTacticalAttempt (US 8.3/8.4)", () => {
   test("POST /api/v1/tactics/attempt avec problem_id + move et renvoie le JSON", async () => {
     global.fetch = jest.fn().mockResolvedValue({
-      ok: true, json: async () => ({ success: true, new_elo: 1015, solution: "Qh5#" }),
+      ok: true, json: async () => ({ success: true, new_elo: 1015, solution: "Qh5#", streak: 1 }),
     });
     const out = await ApiClient.submitTacticalAttempt("p1", "Qh5#");
     expect(global.fetch.mock.calls[0][0]).toBe("/api/v1/tactics/attempt");
     expect(global.fetch.mock.calls[0][1].method).toBe("POST");
-    expect(JSON.parse(global.fetch.mock.calls[0][1].body)).toEqual({ problem_id: "p1", move: "Qh5#" });
-    expect(out).toEqual({ success: true, new_elo: 1015, solution: "Qh5#" });
+    expect(JSON.parse(global.fetch.mock.calls[0][1].body)).toEqual({
+      problem_id: "p1", move: "Qh5#", time_taken: null,
+    });
+    expect(out).toEqual({ success: true, new_elo: 1015, solution: "Qh5#", streak: 1 });
+  });
+
+  test("transmet time_taken (secondes écoulées, US 8.4) quand fourni", async () => {
+    global.fetch = jest.fn().mockResolvedValue({
+      ok: true, json: async () => ({ success: true, new_elo: 1015, solution: "Qh5#", streak: 2 }),
+    });
+    await ApiClient.submitTacticalAttempt("p1", "Qh5#", 4.2);
+    expect(JSON.parse(global.fetch.mock.calls[0][1].body)).toEqual({
+      problem_id: "p1", move: "Qh5#", time_taken: 4.2,
+    });
   });
 
   test("rejette sur HTTP non-ok", async () => {
     global.fetch = jest.fn().mockResolvedValue({ ok: false, status: 404 });
     await expect(ApiClient.submitTacticalAttempt("missing", "e4")).rejects.toThrow("HTTP 404");
+  });
+});
+
+describe("getTacticsStats (US 8.4)", () => {
+  test("appelle GET /api/v1/tactics/stats et renvoie le JSON", async () => {
+    global.fetch = jest.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ by_theme: [{ category: "mate_in_1", attempts: 2, successes: 1, success_rate: 0.5 }], streak: 0 }),
+    });
+    const out = await ApiClient.getTacticsStats();
+    expect(global.fetch.mock.calls[0][0]).toBe("/api/v1/tactics/stats");
+    expect(out.streak).toBe(0);
+  });
+
+  test("rejette sur HTTP non-ok", async () => {
+    global.fetch = jest.fn().mockResolvedValue({ ok: false, status: 401 });
+    await expect(ApiClient.getTacticsStats()).rejects.toThrow("HTTP 401");
   });
 });
 
@@ -197,5 +226,54 @@ describe("getStatsHistory", () => {
   test("rejette sur HTTP non-ok", async () => {
     global.fetch = jest.fn().mockResolvedValue({ ok: false, status: 503 });
     await expect(ApiClient.getStatsHistory()).rejects.toThrow("HTTP 503");
+  });
+});
+
+describe("Entraîneur d'Ouvertures (EPIC 9)", () => {
+  test("createOpeningLine POST /api/v1/openings/repertoire", async () => {
+    global.fetch = jest.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ id: "l1", name: "Ruy Lopez", color: "white", moves: ["e4"], ease_factor: 2.5, interval_days: 1, repetitions: 0, due_date: "2026-07-01" }),
+    });
+    const out = await ApiClient.createOpeningLine({ name: "Ruy Lopez", color: "white", moves: ["e4"] });
+    expect(global.fetch.mock.calls[0][0]).toBe("/api/v1/openings/repertoire");
+    expect(global.fetch.mock.calls[0][1].method).toBe("POST");
+    expect(JSON.parse(global.fetch.mock.calls[0][1].body)).toEqual({ name: "Ruy Lopez", color: "white", moves: ["e4"] });
+    expect(out.id).toBe("l1");
+  });
+
+  test("createOpeningLine rejette sur HTTP non-ok (422)", async () => {
+    global.fetch = jest.fn().mockResolvedValue({ ok: false, status: 422 });
+    await expect(ApiClient.createOpeningLine({ name: "X", color: "white", moves: ["e4"] })).rejects.toThrow("HTTP 422");
+  });
+
+  test("getOpeningLines GET /api/v1/openings/repertoire", async () => {
+    global.fetch = jest.fn().mockResolvedValue({ ok: true, json: async () => ([]) });
+    await ApiClient.getOpeningLines();
+    expect(global.fetch.mock.calls[0][0]).toBe("/api/v1/openings/repertoire");
+  });
+
+  test("getDueOpeningLines GET /api/v1/openings/repertoire/due", async () => {
+    global.fetch = jest.fn().mockResolvedValue({ ok: true, json: async () => ([]) });
+    await ApiClient.getDueOpeningLines();
+    expect(global.fetch.mock.calls[0][0]).toBe("/api/v1/openings/repertoire/due");
+  });
+
+  test("reviewOpeningLine POST .../review avec mistake_count", async () => {
+    global.fetch = jest.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ id: "l1", ease_factor: 2.6, interval_days: 1, repetitions: 1, due_date: "2026-07-02" }),
+    });
+    await ApiClient.reviewOpeningLine("l1", 0);
+    expect(global.fetch.mock.calls[0][0]).toBe("/api/v1/openings/repertoire/l1/review");
+    expect(JSON.parse(global.fetch.mock.calls[0][1].body)).toEqual({ mistake_count: 0 });
+  });
+
+  test("deleteOpeningLine DELETE /api/v1/openings/repertoire/{id}", async () => {
+    global.fetch = jest.fn().mockResolvedValue({ ok: true, json: async () => ({ deleted: true }) });
+    const out = await ApiClient.deleteOpeningLine("l1");
+    expect(global.fetch.mock.calls[0][0]).toBe("/api/v1/openings/repertoire/l1");
+    expect(global.fetch.mock.calls[0][1].method).toBe("DELETE");
+    expect(out).toEqual({ deleted: true });
   });
 });

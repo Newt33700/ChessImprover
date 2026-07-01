@@ -317,6 +317,19 @@
           </div>
         </div>
 
+        <div class="db-card" id="card-openings-trainer">
+          <div class="db-card-head">
+            <div class="db-card-heading">
+              <h2 class="db-card-title">OUVERTURES</h2>
+              <p class="db-card-sub">Répertoire personnel + révision espacée</p>
+            </div>
+          </div>
+          <div class="db-card-body" id="db-body-openings-trainer">
+            <p class="empty-state">Mémorisez vos lignes d'ouverture avec un calendrier de révision adaptatif.</p>
+            <button class="btn btn--accent btn--full btn--sm" onclick="window.app?._showOpeningsTrainer()">Entraîneur d'Ouvertures →</button>
+          </div>
+        </div>
+
       </div><!-- /.dash-col (right) -->
 
       <!-- Recent games (hidden, kept for compat) -->
@@ -598,11 +611,12 @@
     </div>
   </div>
 
-  <!-- ── COACH TACTIQUE (EPIC 8 — US 8.1/8.2, plein écran, body.tactics-active) ── -->
+  <!-- ── COACH TACTIQUE (EPIC 8 — US 8.1-8.4, plein écran, body.tactics-active) ── -->
   <div class="tactics-col" id="tactics-col">
     <div class="tactics-topbar">
       <button class="btn-icon" aria-label="Retour" onclick="window.app?._hideTactics()">←</button>
       <h2 class="tactics-title">Coach Tactique</h2>
+      <div class="tactics-streak-badge" id="tactics-streak-badge">🔥 0</div>
       <div class="tactics-elo-badge" id="tactics-elo-badge">Elo — </div>
     </div>
 
@@ -616,6 +630,43 @@
     <div class="db-card tactics-problem-card">
       <div class="db-card-body" id="tactics-problem-body">
         <p class="empty-state">Connectez-vous pour accéder au Coach Tactique.</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── ENTRAÎNEUR D'OUVERTURES (EPIC 9, plein écran, body.openings-trainer-active) ── -->
+  <div class="openings-trainer-col" id="openings-trainer-col">
+    <div class="tactics-topbar">
+      <button class="btn-icon" aria-label="Retour" onclick="window.app?._hideOpeningsTrainer()">←</button>
+      <h2 class="tactics-title">Entraîneur d'Ouvertures</h2>
+    </div>
+
+    <div class="db-card ot-add-card">
+      <div class="db-card-body">
+        <h3 class="ot-section-title">Ajouter une ligne</h3>
+        <form id="ot-add-form" class="ot-add-form">
+          <input type="text" id="ot-name" placeholder="Nom (ex. Ruy Lopez)" required maxlength="80" />
+          <div class="ot-color-choice">
+            <label><input type="radio" name="ot-color" value="white" checked /> Blancs</label>
+            <label><input type="radio" name="ot-color" value="black" /> Noirs</label>
+          </div>
+          <input type="text" id="ot-moves" placeholder="Coups SAN séparés par des espaces (ex. e4 e5 Nf3 Nc6 Bb5)" required />
+          <button type="submit" class="btn btn--accent btn--sm">Ajouter au répertoire</button>
+        </form>
+        <p class="ot-feedback" id="ot-add-feedback"></p>
+      </div>
+    </div>
+
+    <div class="db-card ot-review-card">
+      <div class="db-card-body" id="ot-review-body">
+        <p class="empty-state">Connectez-vous pour accéder à l'entraîneur d'ouvertures.</p>
+      </div>
+    </div>
+
+    <div class="db-card ot-list-card">
+      <div class="db-card-body">
+        <h3 class="ot-section-title">Mon répertoire</h3>
+        <div id="ot-lines-list"><p class="empty-state">Aucune ligne pour l'instant.</p></div>
       </div>
     </div>
   </div>

@@ -117,3 +117,36 @@ class TestGetNextTacticalProblem:
 
     def test_unknown_category_returns_none(self):
         assert db_client.get_next_tactical_problem(1000, category="does-not-exist") is None
+
+
+class TestTacticalAttempts:
+    """US 8.4 — historique des tentatives (append-only, isolé par user)."""
+
+    def test_record_returns_the_persisted_attempt(self):
+        user = db_client.create_user("a@ex.com", "a", "hash")
+        attempt = db_client.record_tactical_attempt(user["id"], "p1", "mate_in_1", True, 4.2)
+        assert attempt["user_id"] == user["id"]
+        assert attempt["problem_id"] == "p1"
+        assert attempt["category"] == "mate_in_1"
+        assert attempt["success"] is True
+        assert attempt["time_taken"] == 4.2
+        assert "created_at" in attempt
+
+    def test_get_tactical_attempts_returns_only_own_history(self):
+        u1 = db_client.create_user("a@ex.com", "a", "hash")
+        u2 = db_client.create_user("b@ex.com", "b", "hash")
+        db_client.record_tactical_attempt(u1["id"], "p1", "mate_in_1", True, 1.0)
+        db_client.record_tactical_attempt(u2["id"], "p2", "mate_in_2", False, 2.0)
+
+        assert len(db_client.get_tactical_attempts(u1["id"])) == 1
+        assert db_client.get_tactical_attempts(u1["id"])[0]["problem_id"] == "p1"
+        assert len(db_client.get_tactical_attempts(u2["id"])) == 1
+
+    def test_unknown_user_has_empty_history(self):
+        assert db_client.get_tactical_attempts("does-not-exist") == []
+
+    def test_reset_store_clears_attempts(self):
+        user = db_client.create_user("a@ex.com", "a", "hash")
+        db_client.record_tactical_attempt(user["id"], "p1", "mate_in_1", True, 1.0)
+        db_client._reset_store()
+        assert db_client.get_tactical_attempts(user["id"]) == []

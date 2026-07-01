@@ -270,6 +270,9 @@ class TacticalAttemptRequest(BaseModel):
     """Coup joué par l'utilisateur pour résoudre un problème."""
     problem_id: str
     move: str = Field(..., min_length=2, description="Coup joué en notation SAN")
+    time_taken: Optional[float] = Field(
+        None, ge=0, description="Secondes écoulées pour résoudre (US 8.4)"
+    )
 
 
 class TacticalAttemptResult(BaseModel):
@@ -277,6 +280,65 @@ class TacticalAttemptResult(BaseModel):
     success: bool
     new_elo: int
     solution: str
+    streak: int = Field(0, description="Problèmes résolus d'affilée aujourd'hui (US 8.4)")
+
+
+class TacticalThemeStats(BaseModel):
+    """Taux de réussite pour une catégorie tactique (US 8.4)."""
+    category: str
+    attempts: int
+    successes: int
+    success_rate: float
+
+
+class TacticalStatsResponse(BaseModel):
+    """Historique agrégé des tentatives tactiques de l'utilisateur (US 8.4)."""
+    by_theme: List[TacticalThemeStats]
+    streak: int
+
+
+# ---------------------------------------------------------------------------
+# Entraîneur d'Ouvertures — Répertoire + SRS (EPIC 9, fonctionnalité bonus)
+# ---------------------------------------------------------------------------
+
+class OpeningLineCreate(BaseModel):
+    """Nouvelle ligne de répertoire soumise par l'utilisateur."""
+    name: str = Field(..., min_length=1, max_length=80)
+    color: str = Field(..., description="'white' ou 'black'")
+    moves: List[str] = Field(..., min_items=1, description="Coups en notation SAN, dans l'ordre")
+
+    @validator("color")
+    def _validate_color(cls, value: str) -> str:  # noqa: N805 - validator Pydantic
+        if value not in ("white", "black"):
+            raise ValueError("color doit être 'white' ou 'black'")
+        return value
+
+
+class OpeningLinePublic(BaseModel):
+    """Ligne de répertoire telle qu'exposée au client."""
+    id: str
+    name: str
+    color: str
+    moves: List[str]
+    ease_factor: float
+    interval_days: int
+    repetitions: int
+    due_date: str
+
+
+class OpeningLineReviewRequest(BaseModel):
+    """Résultat d'une session de révision (US 9.2) — qualité déjà déduite
+    automatiquement côté frontend du nombre d'erreurs commises."""
+    mistake_count: int = Field(..., ge=0)
+
+
+class OpeningLineReviewResult(BaseModel):
+    """Nouveau calendrier SM-2 après une révision."""
+    id: str
+    ease_factor: float
+    interval_days: int
+    repetitions: int
+    due_date: str
 
 
 class GameMoveRecord(BaseModel):

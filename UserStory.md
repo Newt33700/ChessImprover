@@ -576,4 +576,41 @@ En tant qu'équipe, nous voulons que chaque modification de `supabase/migrations
 - Table `tactical_attempts` : `attempt_id`, `user_id`, `problem_id`, `success` (bool), `time_taken` (secondes), `timestamp`.
 - L'historique permet de calculer le taux de réussite par thème pour la vue stats.
 
-**Statut :** 🔜 Backlog.
+**Statut :** ✅ Implémenté :
+- Migration `20260701201530_tactical_attempts.sql` : table `tactical_attempts` (`attempt_id`, `user_id` → `profiles`, `problem_id` → `tactical_problems`, `success`, `time_taken`, `created_at`), index sur `user_id`/`problem_id`, RLS (`FOR ALL USING (user_id = auth.uid()::UUID)`, même motif que `user_progress_history`).
+- `db_client.record_tactical_attempt(user_id, problem_id, category, success, time_taken)` / `get_tactical_attempts(user_id)` : store in-memory append-only pour dev/test, délégation `PgRepository.record_tactical_attempt`/`get_tactical_attempts` si `DATABASE_URL` défini (contrairement à `tactical_problems`/`tactical_elo` de US 8.1 — dont la délégation Postgres appelait déjà des méthodes non implémentées, gap pré-existant documenté §10.6 — cette nouvelle table a ses deux méthodes réellement écrites, testées par contrat de signature comme `progress_history`).
+- `domain/tactics.compute_stats_by_theme(attempts)` : regroupe par catégorie, calcule `attempts`/`successes`/`success_rate`.
+- `domain/tactics.compute_daily_streak(attempts, today)` : **Série en cours** (recommandation PO) — nombre de problèmes résolus d'affilée *aujourd'hui*, en parcourant l'historique du plus récent au plus ancien et en s'arrêtant au premier échec ou à la première tentative d'un autre jour. Calculé à la volée depuis l'historique (pas de compteur dupliqué à maintenir en synchronisation).
+- `POST /api/v1/tactics/attempt` enregistre désormais chaque tentative et renvoie un champ `streak` en plus de `success`/`new_elo`/`solution` ; nouveau `GET /api/v1/tactics/stats` renvoie `{by_theme: [...], streak}`.
+- `TacticalAttemptRequest.time_taken` (optionnel) : secondes écoulées, mesurées côté frontend entre l'affichage de l'échiquier et le coup joué.
+- Frontend : badge **🔥 Série** dans la barre du Coach Tactique (à côté du badge Elo), initialisé via `ApiClient.getTacticsStats()` à l'ouverture de la vue, mis à jour après chaque tentative. Une réussite alimente aussi le système XP/Streak général existant (`XPSystem.add`, `StreakSystem.record`, comme le mode Exercice/Ghost) — deux notions de « streak » distinctes et volontairement non fusionnées : le streak général (jours d'activité consécutifs, `StreakSystem`) et le streak tactique du jour (`compute_daily_streak`).
+- Tests : `backend/tests/test_tactics.py` (`compute_daily_streak`, `compute_stats_by_theme`), `backend/tests/test_db_tactics.py` (`TestTacticalAttempts`), `backend/tests/test_tactics_api.py` (`streak` sur `/attempt`, nouvelle classe `TestTacticsStats`), `backend/tests/test_pg_repository.py` (contrat de signature), `frontend/tests/api_client.test.js` (`submitTacticalAttempt` + `time_taken`, `getTacticsStats`).
+- Vérifié en navigateur (Playwright) : badge Série passe de 🔥 0 à 🔥 1 après un coup correct.
+
+## EPIC 9 : Entraîneur d'Ouvertures (Répertoire personnel + SRS) — Fonctionnalité auto-initiée
+
+**Contexte :** l'intégralité du backlog EPIC 6/7/8 enregistré étant traitée, l'utilisateur a explicitement autorisé le développement d'**une** fonctionnalité non spécifiée par une US existante, à ma discrétion, alignée sur la mission du produit (« un coach personnel qui aide à gommer nos faiblesses »), avec les ouvertures et les finales citées comme pistes, le tout gamifié pour rester ludique.
+
+**Choix retenu :** un **entraîneur de répertoire d'ouvertures par répétition espacée (SM-2)**, plutôt qu'un entraîneur de finales, pour deux raisons : (1) le site dispose déjà d'un algorithme SM-2 testé et éprouvé côté frontend (`SRS`, mode Exercice) mais uniquement pour rejouer les propres gaffes tactiques du joueur — aucune fonctionnalité n'existe pour mémoriser délibérément des lignes d'ouverture ; (2) les statistiques par ouverture (EPIC 3/4, `top_openings`/`successRatio`) diagnostiquent déjà les ouvertures faibles du joueur mais rien ne permet de les travailler explicitement — cette US ferme la boucle diagnostic → entraînement ciblé.
+
+**Objectif :** permettre à l'utilisateur de constituer un répertoire de lignes d'ouverture (Blancs/Noirs) et de les réviser selon un calendrier de répétition espacée, avec correction automatique de la qualité de rappel (pas de notation manuelle fastidieuse) pour rester ludique.
+
+### US 9.1 : Constitution du répertoire
+
+**Description :** ajouter une ligne d'ouverture (nom, couleur, séquence de coups) à son répertoire personnel.
+
+**Critères d'Acceptation (DoD) :**
+- Formulaire : nom, couleur (Blancs/Noirs), séquence de coups en notation SAN.
+- La séquence est validée (légalité des coups) avant enregistrement.
+- Persistée côté serveur (visible depuis n'importe quel appareil, contrairement au SRS tactique 100 % `localStorage`/`IndexedDB` existant).
+
+### US 9.2 : Révision par répétition espacée (SM-2)
+
+**Description :** réviser aujourd'hui les lignes dont l'échéance est arrivée, avec correction automatique.
+
+**Critères d'Acceptation (DoD) :**
+- Un échiquier interactif rejoue la ligne : les coups de l'adversaire s'enchaînent automatiquement, l'utilisateur doit jouer ses propres coups (couleur de la ligne).
+- La qualité de rappel (0-5, échelle SM-2) est **déduite automatiquement** du nombre d'erreurs commises pendant la révision (aucune notation manuelle) — pour rester ludique et rapide.
+- Le calendrier (facteur de facilité, intervalle, prochaine échéance) est recalculé côté serveur selon l'algorithme SM-2 déjà utilisé et testé côté frontend pour le mode Exercice (portage à l'identique, pour cohérence de comportement).
+
+**Statut (US 9.1 + 9.2) :** ✅ Implémenté — voir §4.9 du README pour le détail technique complet (routes, règles métier, câblage frontend, tests).

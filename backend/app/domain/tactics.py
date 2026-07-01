@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import random
+from datetime import date, datetime
 from typing import Any, Dict, List, Optional
 
 import chess
@@ -41,3 +42,41 @@ def select_nearest_problem(
     best_distance = min(abs(p["difficulty_elo"] - target_elo) for p in problems)
     closest = [p for p in problems if abs(p["difficulty_elo"] - target_elo) == best_distance]
     return random.choice(closest)
+
+
+def compute_daily_streak(attempts: List[Dict[str, Any]], today: date) -> int:
+    """US 8.4 — Nombre de problèmes résolus d'affilée aujourd'hui.
+
+    Parcourt les tentatives de la plus récente à la plus ancienne : la série
+    s'arrête au premier échec rencontré, ou dès qu'une tentative ne date pas
+    d'aujourd'hui (une tentative réussie hier ne prolonge pas la série de
+    l'utilisateur qui recommence à zéro ce matin).
+    """
+    ordered = sorted(attempts, key=lambda a: a["created_at"], reverse=True)
+    streak = 0
+    for attempt in ordered:
+        created_at = attempt["created_at"]
+        attempt_date = created_at.date() if isinstance(created_at, datetime) else created_at
+        if attempt_date != today or not attempt["success"]:
+            break
+        streak += 1
+    return streak
+
+
+def compute_stats_by_theme(attempts: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """US 8.4 — Taux de réussite par catégorie, calculé depuis l'historique."""
+    totals: Dict[str, Dict[str, int]] = {}
+    for attempt in attempts:
+        bucket = totals.setdefault(attempt["category"], {"attempts": 0, "successes": 0})
+        bucket["attempts"] += 1
+        if attempt["success"]:
+            bucket["successes"] += 1
+    return [
+        {
+            "category": category,
+            "attempts": bucket["attempts"],
+            "successes": bucket["successes"],
+            "success_rate": bucket["successes"] / bucket["attempts"],
+        }
+        for category, bucket in sorted(totals.items())
+    ]
