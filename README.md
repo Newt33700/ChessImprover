@@ -119,7 +119,7 @@ ChessImprover/
 │       ├── stats_dashboard.test.js     # Tests StatsDashboard (Elo logistique + render)
 │       ├── personal_coach.test.js      # Tests PersonalCoach (toutes les branches)
 │       ├── advanced_stats.test.js      # Tests AdvancedStats (couleurs, deltas, gauge, détails)
-│       └── api_client.test.js          # Tests ApiClient (base URL, analyze, stats/summary)
+│       └── api_client.test.js          # Tests ApiClient (base URL, analyze, stats/summary, en-tête Authorization US 6.4)
 │
 ├── backend/
 │   ├── Dockerfile                      # Image Docker + Stockfish natif (Render) — EPIC 2
@@ -148,9 +148,10 @@ ChessImprover/
 │       │   ├── pg_repository.py        # Dépôt Postgres/Supabase games+game_moves+progress_history
 │       │   └── db_client.py            # Store in-memory + délégation Postgres (EPIC 1 / US 5.1)
 │       ├── routers/
-│       │   ├── auth.py                 # POST /auth/signup /auth/login GET /auth/me (US 7)
+│       │   ├── deps.py                 # get_current_user/get_current_user_id (JWT partagé, US 6.4)
+│       │   ├── auth.py                 # POST /auth/signup /auth/login GET+PATCH /auth/me (US 7/6.3)
 │       │   ├── sync.py                 # POST /sync — stratégie Client Wins (US 7)
-│       │   └── games.py                # POST /games/analyze, GET stats/summary, GET stats/history
+│       │   └── games.py                # POST /games/analyze, GET stats/summary, GET stats/history (JWT requis, US 6.4)
 │       ├── tests/
 │       │   ├── test_auth.py            # 37 TUs auth : hash, JWT, signup, login, me, PATCH me, sync
 │       │   ├── test_analyzer.py
@@ -165,7 +166,7 @@ ChessImprover/
 │       │   ├── test_analysis_pipeline.py # US 1.2 : worker d'analyse + extraction ECO (US 4.2)
 │       │   ├── test_stats_aggregator.py  # US 4.1 : agrégation + top_openings/successRatio (US 4.2)
 │       │   ├── test_progress_history.py  # US 5.1 : snapshot + fenêtre glissante
-│       │   ├── test_games_api.py       # US 1.1 + US 5.1 : routes + worker async
+│       │   ├── test_games_api.py       # US 1.1 + US 5.1 + US 6.4 : routes JWT + isolation + worker async
 │       │   ├── test_pg_repository.py   # Adaptateur Postgres + délégation db_client
 │       │   └── test_srs.py
 │       └── mutants/                    # Mutation testing mutmut
@@ -824,7 +825,7 @@ Carte **PROGRESSION**, première carte de la colonne principale de la vue Stats 
 - **`chess_username` (US 6.2)** : champ distinct du `username` de connexion, initialisé à `None` à la création du profil (`db_client.create_user`), exposé par `UserProfile` dans les réponses `/auth/*`.
 - **`PATCH /auth/me` (US 6.3)** : `ChessUsernameUpdate` valide le format (`^[A-Za-z0-9_-]{3,25}$`, chaîne vide autorisée pour délier) → 422 sinon. L'utilisateur ciblé est **toujours** celui du token (`Depends(_current_user)`) — la route n'accepte aucun `user_id` en paramètre, donc structurellement impossible de modifier le profil d'un autre utilisateur.
 
-**Dépendance `_current_user` :** FastAPI `HTTPBearer` → `decode_token()` → `find_user_by_id()`. Retourne 401 si token absent, invalide ou expiré.
+**Dépendance d'authentification (`app/routers/deps.py`, US 6.4) :** `get_current_user` (FastAPI `HTTPBearer` → `decode_token()` → `find_user_by_id()`, 401 si token absent/invalide/expiré/utilisateur introuvable) et `get_current_user_id` (raccourci `user["id"]`). Factorisée hors de `auth.py` (qui l'importe sous l'alias `_current_user`) pour être réutilisée par `routers/games.py` (§4.6) sans dupliquer la vérification JWT.
 
 ### 4.2 Route Sync (US 7)
 
@@ -886,14 +887,16 @@ Modules **purs** (couche domaine), entièrement testés, indépendants de l'infr
 
 **Fichiers :** `routers/games.py`, `domain/analysis_pipeline.py`, `domain/stats_aggregator.py`, `domain/cadence.py`, `infrastructure/db_client.py`, `supabase/migrations/20260701000000_advanced_stats.sql`
 
-**Routes :**
+**Routes** (toutes exigent un JWT valide depuis US 6.4, `Authorization: Bearer <token>`) :
 
 | Route | Méthode | Comportement |
 |---|---|---|
-| `/api/v1/games/analyze` | POST | US 1.1 — crée la partie (`status=processing`), répond **202** + UUID, délègue à une `BackgroundTask`. Corps : `pgn` **ou** `game_ids`, + `user_id`, `user_color`, `time_control`, `evals` (multipv client optionnel). |
-| `/api/v1/games/{game_id}` | GET | Statut de la partie + métriques par coup. `404` si inconnue. |
-| `/api/v1/stats/summary` | GET | US 4.1 — résumé agrégé (`?period=`, `?user_id=`). |
-| `/api/v1/stats/history` | GET | US 5.1 — historique des snapshots Elo (`?cadence=`, `?days=` 1-365, `?user_id=`). |
+| `/api/v1/games/analyze` | POST | US 1.1 — crée la partie (`status=processing`), répond **202** + UUID, délègue à une `BackgroundTask`. Corps : `pgn` **ou** `game_ids`, + `user_color`, `time_control`, `evals` (multipv client optionnel). |
+| `/api/v1/games/{game_id}` | GET | Statut de la partie + métriques par coup. `404` si inconnue **ou si elle appartient à un autre utilisateur** (US 6.4). |
+| `/api/v1/stats/summary` | GET | US 4.1 — résumé agrégé de l'utilisateur authentifié (`?period=`). |
+| `/api/v1/stats/history` | GET | US 5.1 — historique des snapshots Elo de l'utilisateur authentifié (`?cadence=`, `?days=` 1-365). |
+
+**Isolation par `user_id` (US 6.4) :** `user_id` n'est **jamais** fourni par le client (ni en body, ni en query) — il est dérivé du JWT via `Depends(get_current_user_id)` (`app/routers/deps.py`, dépendance partagée avec `routers/auth.py`). Faille corrigée : ces routes acceptaient auparavant un `user_id` arbitraire non authentifié, exposant les parties/statistiques de n'importe quel utilisateur à quiconque connaissait ou devinait son UUID. La réanalyse par `game_ids` et `GET /games/{id}` ignorent silencieusement (`continue`/404, indiscernable d'une partie inexistante) toute partie n'appartenant pas à l'utilisateur du token.
 
 **Worker (`run_analysis`)** : choisit la source d'évals (client > Stockfish natif `STOCKFISH_PATH` > aucune), appelle `analysis_pipeline.analyze_pgn`, **bulk-insert** des coups (US 1.2), puis `status=completed` (`failed` sur exception). Depuis US 5.1, enregistre ensuite un **snapshot de progression** (garde-fou séparé : un échec du snapshot n'invalide jamais l'analyse déjà persistée).
 
@@ -1125,7 +1128,7 @@ npm run test:mutation # Stryker
 | `stats_dashboard.test.js` | StatsDashboard | wpFromCp, estimateEloLogistic, movingAverage, filterByDays, buildChartData, render (Chart mock) |
 | `personal_coach.test.js` | PersonalCoach | computeMetrics, diagnose (toutes les 6 branches), renderHTML, _detectResult, _detectUserColor, _extractOpening |
 | `advanced_stats.test.js` | AdvancedStats | cellClass, deltas, deepDiveFor, gaugeAngle, matrixRows, `categoryDetailHtml` (tactics/endgames/openings/strategy), `tacticSuccessGaugeHtml` (bornes, clamp, NaN-safe), fetchSummary (fallbacks), `formatShortDate`, `buildProgressDatasets`, `toggleProgressSeries`, `fetchHistory` (fallbacks) |
-| `api_client.test.js` | ApiClient | baseUrl/isConfigured (window/localStorage), url (query), analyzeGame (POST + erreur), getStatsSummary, getGame, getStatsHistory |
+| `api_client.test.js` | ApiClient | baseUrl/isConfigured (window/localStorage), url (query), analyzeGame (POST + erreur), getStatsSummary, getGame, getStatsHistory, **en-tête `Authorization: Bearer` présent/absent selon `Auth.getToken()` (US 6.4)** |
 | `auth.test.js` (US 6.1/6.3) | Auth | signup/login (succès, `detail` chaîne, `detail` liste Pydantic 422 — un ou plusieurs champs, absence de `detail`), `updateChessUsername` (sans token, succès + PATCH + persistance session, format invalide), isLoggedIn/logout |
 
 > `advanced_stats.js` n'est pas dans `collectCoverageFrom` (comme `app.js`, `auth.js`, `board_manager.js`) : seules ses fonctions pures sont testées, les `render*` sont de la glue DOM.
@@ -1162,11 +1165,11 @@ JWT_SECRET=ci-test-secret pytest tests/ -v
 | `test_analysis_pipeline.py` | sans moteur (phases/SAN), avec moteur (CPL, plafond, tactique/stratégie), mat | US 1.2 |
 | `test_stats_aggregator.py` | user_outcome, build_summary (catégories, ratings, couleur), gaffeRate, finales, acplTrend | US 4.1 |
 | `test_progress_history.py` | build_snapshot (cadence inconnue, filtre couleur, IDs), filter_history_by_days (bornes, dates invalides/naïves) | US 5.1 |
-| `test_games_api.py` | POST analyze (202, 400), worker→completed, réanalyse, GET game (404), stats/summary, snapshot auto, GET stats/history | US 1.1 + US 5.1 |
+| `test_games_api.py` | POST analyze (202, 400), worker→completed, réanalyse, GET game (404), stats/summary, snapshot auto, GET stats/history, **401 sans JWT sur les 4 routes, isolation entre 2 utilisateurs (get_game/réanalyse/stats)** | US 1.1 + US 5.1 + US 6.4 |
 | `test_pg_repository.py` | PgRepository (dsn, colonnes, contrat progress_history, `_iso` générique), délégation db_client (in-memory sans `DATABASE_URL`) | EPIC 1 + US 5.1 |
 | `test_srs.py` | — | SM-2 backend |
 
-**Couverture backend :** 400 TUs au total, couverture globale **89 %** ; cœur Stats Avancées + EPIC 1/5.1/US 4.2 à 92–100 % (`stats_aggregator`, `cadence`, `progress_history`, `models`, `engine` à 100 %, `analysis_pipeline` 92 %, `routers/games` 92 %, `db_client` 98 %). Les requêtes SQL réelles de `pg_repository` (nécessitant une base) sont marquées `pragma: no cover`.
+**Couverture backend :** 409 TUs au total, couverture globale **89 %** ; cœur Stats Avancées + EPIC 1/5.1/US 4.2 à 92–100 % (`stats_aggregator`, `cadence`, `progress_history`, `models`, `engine` à 100 %, `analysis_pipeline` 92 %, `routers/games` 92 %, `db_client` 98 %). Les requêtes SQL réelles de `pg_repository` (nécessitant une base) sont marquées `pragma: no cover`.
 
 **Architecture de test `test_auth.py` :**
 - App de test minimale (`FastAPI()` + routers auth/sync uniquement) pour éviter la dépendance `python-chess`
@@ -1304,6 +1307,7 @@ UNIQUE (user_id)
 | **Validation email + erreurs UI inscription** (US 6.1) | `models.py:UserCreate` + `auth.js:_extractErrorMessage` | Format email validé (regex) en plus de la longueur ; erreurs 422 Pydantic (liste) affichées lisiblement au lieu de `[object Object]` |
 | **Colonne `chess_username` sur le profil** (US 6.2) | Migration `20260701172219_profiles_chess_username.sql` + `db_client.create_user` + `UserProfile` | Initialisée à `None` à l'inscription, exposée par `/auth/signup`/`/auth/login`/`/auth/me` |
 | **Modal Profil — liaison Chess.com** (US 6.3) | `PATCH /auth/me` + `auth.js:updateChessUsername` + `index.html:#profile-modal` + `app.js` | Édition du pseudo Chess.com depuis un bouton « Profil » ; validation format (regex) ; persisté serveur dès l'inscription si renseigné |
+| **Isolation par user_id — routes games/stats** (US 6.4) | `routers/deps.py` + `routers/games.py` + `api_client.js` | `POST /games/analyze`, `GET /games/{id}`, `GET /stats/summary`, `GET /stats/history` exigent un JWT et dérivent `user_id` du token (plus de `user_id` client) ; `api_client.js` attache `Authorization: Bearer` ; `app.js:_syncToBackend` no-op si non connecté |
 
 ### ❌ Non câblé ou incomplet
 
