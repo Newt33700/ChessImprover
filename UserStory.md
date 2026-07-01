@@ -477,7 +477,13 @@ En tant qu'équipe, nous voulons que chaque modification de `supabase/migrations
 - Colonne `pgn_hash` sur `games` (index unique).
 - Avant analyse : `SELECT * FROM games WHERE pgn_hash = %s AND user_id = %s` ; si trouvé → renvoyer la partie existante sans relancer Stockfish, sinon analyser normalement (US 2.1/1.1).
 
-**Statut :** 🔜 Backlog.
+**Statut :** ✅ Implémenté :
+- `backend/app/domain/analysis_pipeline.py:compute_pgn_hash` (SHA-256 hexdigest via `hashlib`).
+- Migration `20260701185622_games_pgn_hash.sql` : colonne `pgn_hash` (TEXT) + index **unique composite** `(user_id, pgn_hash)` — l'unicité est scopée par utilisateur (et non globale), pour que deux utilisateurs différents puissent légitimement soumettre le même PGN (ex. une partie célèbre partagée) sans collision.
+- `db_client.find_game_by_pgn_hash(user_id, pgn_hash)` + `create_game(..., pgn_hash=...)` (in-memory et `pg_repository.py`).
+- `routers/games.py:analyze_games` : avant de créer une partie depuis un `pgn`, calcule son hash et cherche une partie existante de l'utilisateur authentifié avec ce hash. Si trouvée, renvoie son `game_id` **et son statut réel** (`processing`/`completed`/`failed`) sans recréer de ligne ni relancer `run_analysis` ; sinon, analyse normalement en persistant le hash.
+- Vérifié en intégration réelle (serveur local + `curl`) : une 2ᵉ soumission du même PGN par le même utilisateur renvoie le même `game_id` avec le statut `completed`, sans doublon dans `GET /api/v1/games`.
+- Tests : `backend/tests/test_analysis_pipeline.py` (`TestComputePgnHash` : déterminisme, hex SHA-256, PGN différent → hash différent), `backend/tests/test_db_games.py` (stockage/recherche par hash, isolation par utilisateur), `backend/tests/test_pg_repository.py` (contrat de signature), `backend/tests/test_games_api.py` (classe `TestPgnHashDedup`, 5 tests : même game_id, pas de doublon, statut réel renvoyé, deux utilisateurs isolés, PGN différent → parties distinctes).
 
 ### US 7.3 : Table de correspondance « Partie-Étude »
 
