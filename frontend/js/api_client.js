@@ -106,13 +106,18 @@ const ApiClient = (() => {
    * (coup correct ou non) est faite côté serveur exclusivement — le
    * frontend ne fait que relayer le SAN joué, jamais la solution attendue.
    */
-  async function submitTacticalAttempt(problemId, move) {
+  async function submitTacticalAttempt(problemId, move, timeTaken) {
     const res = await fetch(url("/api/v1/tactics/attempt"), {
       method: "POST",
       headers: { "Content-Type": "application/json", ..._authHeaders() },
-      body: JSON.stringify({ problem_id: problemId, move }),
+      body: JSON.stringify({ problem_id: problemId, move, time_taken: timeTaken ?? null }),
     });
     return _json(res);
+  }
+
+  /** Récupère le taux de réussite par catégorie + la série en cours (US 8.4). */
+  async function getTacticsStats() {
+    return _json(await fetch(url("/api/v1/tactics/stats"), { headers: _authHeaders() }));
   }
 
   /** Récupère le résumé agrégé des statistiques (US 4.1). */
@@ -134,7 +139,7 @@ const ApiClient = (() => {
 
   return {
     baseUrl, url, analyzeGame, getGame, getGames, updateGameStatus,
-    getNextTacticalProblem, submitTacticalAttempt,
+    getNextTacticalProblem, submitTacticalAttempt, getTacticsStats,
     getStatsSummary, getStatsHistory, isConfigured,
   };
 })();

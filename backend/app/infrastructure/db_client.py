@@ -10,6 +10,7 @@ need no real database and the domain layer stays decoupled.
 from __future__ import annotations
 
 import uuid
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 from app.domain.tactical_elo import DEFAULT_TACTICAL_ELO
@@ -350,6 +351,43 @@ def get_next_tactical_problem(
     return select_nearest_problem(pool, tactical_elo)
 
 
+# US 8.4 — historique des tentatives, append-only
+_tactical_attempts: List[Dict[str, Any]] = []
+
+
+def record_tactical_attempt(
+    user_id: str,
+    problem_id: str,
+    category: str,
+    success: bool,
+    time_taken: float,
+) -> Dict[str, Any]:
+    """Enregistre une tentative résolue (US 8.4), pour le calcul du taux de
+    réussite par catégorie et de la série en cours (streak)."""
+    repo = _pg()
+    if repo is not None:  # pragma: no cover - nécessite DATABASE_URL
+        return repo.record_tactical_attempt(user_id, problem_id, category, success, time_taken)
+    attempt = {
+        "attempt_id": str(uuid.uuid4()),
+        "user_id": user_id,
+        "problem_id": problem_id,
+        "category": category,
+        "success": success,
+        "time_taken": time_taken,
+        "created_at": datetime.now(timezone.utc),
+    }
+    _tactical_attempts.append(attempt)
+    return attempt
+
+
+def get_tactical_attempts(user_id: str) -> List[Dict[str, Any]]:
+    """Historique des tentatives d'un utilisateur (US 8.4), du plus ancien au plus récent."""
+    repo = _pg()
+    if repo is not None:  # pragma: no cover - nécessite DATABASE_URL
+        return repo.get_tactical_attempts(user_id)
+    return [a for a in _tactical_attempts if a["user_id"] == user_id]
+
+
 def _reset_store() -> None:
     """Reset in-memory store between tests."""
     _users.clear()
@@ -357,3 +395,4 @@ def _reset_store() -> None:
     _games.clear()
     _game_moves.clear()
     _progress_history.clear()
+    _tactical_attempts.clear()

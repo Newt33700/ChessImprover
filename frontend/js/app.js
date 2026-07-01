@@ -1637,6 +1637,19 @@ class ChessImproverApp {
   _showTactics() {
     document.body.classList.add("tactics-active");
     this._loadTacticalProblem(null);
+    this._loadTacticsStreak();
+  }
+
+  /** Initialise le badge Série (🔥) à l'ouverture du Coach Tactique (US 8.4). */
+  async _loadTacticsStreak() {
+    const streakBadge = document.getElementById("tactics-streak-badge");
+    if (!streakBadge || !window.ApiClient || !ApiClient.isConfigured() || !window.Auth?.isLoggedIn()) return;
+    try {
+      const stats = await ApiClient.getTacticsStats();
+      streakBadge.textContent = `🔥 ${stats.streak}`;
+    } catch {
+      /* badge laissé à sa valeur par défaut si l'appel échoue */
+    }
   }
 
   _hideTactics() {
@@ -1692,6 +1705,7 @@ class ChessImproverApp {
       onDrop: (src, tgt) => this._onTacticsDrop(src, tgt),
       onSnapEnd: () => this._tacticsBoard.position(this._tacticsChess.fen()),
     });
+    this._tacticsStartTime = Date.now();
   }
 
   _onTacticsDragStart(src, piece) {
@@ -1719,16 +1733,24 @@ class ChessImproverApp {
     const boardEl = document.getElementById("tactics-board");
     const feedback = document.getElementById("tactics-feedback");
     const problem = this._currentTacticalProblem;
+    const timeTaken = this._tacticsStartTime ? (Date.now() - this._tacticsStartTime) / 1000 : null;
     try {
-      const result = await ApiClient.submitTacticalAttempt(problem.id, san);
+      const result = await ApiClient.submitTacticalAttempt(problem.id, san, timeTaken);
       const badge = document.getElementById("tactics-elo-badge");
       if (badge) badge.textContent = `Elo ${result.new_elo}`;
+      const streakBadge = document.getElementById("tactics-streak-badge");
+      if (streakBadge) streakBadge.textContent = `🔥 ${result.streak}`;
       boardEl?.classList.add(result.success ? "tactics-board--success" : "tactics-board--error");
       if (feedback) {
         feedback.classList.add(result.success ? "tactics-feedback--success" : "tactics-feedback--error");
         feedback.textContent = result.success
           ? "Bravo, coup correct !"
           : `Coup incorrect. Solution : ${result.solution}`;
+      }
+      if (result.success) {
+        const { xp, level } = XPSystem.add(XP_PER_EXERCISE);
+        this._renderXP(xp, level);
+        StreakSystem.record();
       }
       setTimeout(() => this._loadTacticalProblem(this._currentTacticsTheme), 1600);
     } catch {

@@ -149,21 +149,50 @@ describe("getNextTacticalProblem (US 8.1/8.2)", () => {
   });
 });
 
-describe("submitTacticalAttempt (US 8.3)", () => {
+describe("submitTacticalAttempt (US 8.3/8.4)", () => {
   test("POST /api/v1/tactics/attempt avec problem_id + move et renvoie le JSON", async () => {
     global.fetch = jest.fn().mockResolvedValue({
-      ok: true, json: async () => ({ success: true, new_elo: 1015, solution: "Qh5#" }),
+      ok: true, json: async () => ({ success: true, new_elo: 1015, solution: "Qh5#", streak: 1 }),
     });
     const out = await ApiClient.submitTacticalAttempt("p1", "Qh5#");
     expect(global.fetch.mock.calls[0][0]).toBe("/api/v1/tactics/attempt");
     expect(global.fetch.mock.calls[0][1].method).toBe("POST");
-    expect(JSON.parse(global.fetch.mock.calls[0][1].body)).toEqual({ problem_id: "p1", move: "Qh5#" });
-    expect(out).toEqual({ success: true, new_elo: 1015, solution: "Qh5#" });
+    expect(JSON.parse(global.fetch.mock.calls[0][1].body)).toEqual({
+      problem_id: "p1", move: "Qh5#", time_taken: null,
+    });
+    expect(out).toEqual({ success: true, new_elo: 1015, solution: "Qh5#", streak: 1 });
+  });
+
+  test("transmet time_taken (secondes écoulées, US 8.4) quand fourni", async () => {
+    global.fetch = jest.fn().mockResolvedValue({
+      ok: true, json: async () => ({ success: true, new_elo: 1015, solution: "Qh5#", streak: 2 }),
+    });
+    await ApiClient.submitTacticalAttempt("p1", "Qh5#", 4.2);
+    expect(JSON.parse(global.fetch.mock.calls[0][1].body)).toEqual({
+      problem_id: "p1", move: "Qh5#", time_taken: 4.2,
+    });
   });
 
   test("rejette sur HTTP non-ok", async () => {
     global.fetch = jest.fn().mockResolvedValue({ ok: false, status: 404 });
     await expect(ApiClient.submitTacticalAttempt("missing", "e4")).rejects.toThrow("HTTP 404");
+  });
+});
+
+describe("getTacticsStats (US 8.4)", () => {
+  test("appelle GET /api/v1/tactics/stats et renvoie le JSON", async () => {
+    global.fetch = jest.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ by_theme: [{ category: "mate_in_1", attempts: 2, successes: 1, success_rate: 0.5 }], streak: 0 }),
+    });
+    const out = await ApiClient.getTacticsStats();
+    expect(global.fetch.mock.calls[0][0]).toBe("/api/v1/tactics/stats");
+    expect(out.streak).toBe(0);
+  });
+
+  test("rejette sur HTTP non-ok", async () => {
+    global.fetch = jest.fn().mockResolvedValue({ ok: false, status: 401 });
+    await expect(ApiClient.getTacticsStats()).rejects.toThrow("HTTP 401");
   });
 });
 

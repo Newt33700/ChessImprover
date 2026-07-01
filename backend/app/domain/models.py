@@ -270,6 +270,9 @@ class TacticalAttemptRequest(BaseModel):
     """Coup joué par l'utilisateur pour résoudre un problème."""
     problem_id: str
     move: str = Field(..., min_length=2, description="Coup joué en notation SAN")
+    time_taken: Optional[float] = Field(
+        None, ge=0, description="Secondes écoulées pour résoudre (US 8.4)"
+    )
 
 
 class TacticalAttemptResult(BaseModel):
@@ -277,6 +280,21 @@ class TacticalAttemptResult(BaseModel):
     success: bool
     new_elo: int
     solution: str
+    streak: int = Field(0, description="Problèmes résolus d'affilée aujourd'hui (US 8.4)")
+
+
+class TacticalThemeStats(BaseModel):
+    """Taux de réussite pour une catégorie tactique (US 8.4)."""
+    category: str
+    attempts: int
+    successes: int
+    success_rate: float
+
+
+class TacticalStatsResponse(BaseModel):
+    """Historique agrégé des tentatives tactiques de l'utilisateur (US 8.4)."""
+    by_theme: List[TacticalThemeStats]
+    streak: int
 
 
 class GameMoveRecord(BaseModel):

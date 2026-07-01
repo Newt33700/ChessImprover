@@ -51,6 +51,19 @@ class TestPgRepository:
         sig = inspect.signature(PgRepository.find_game_by_pgn_hash)
         assert list(sig.parameters) == ["self", "user_id", "pgn_hash"]
 
+    def test_tactical_attempts_methods_exist(self):
+        # Verrouille le contrat US 8.4 : les deux méthodes doivent exister
+        # avec cette signature, indépendamment de toute connexion réelle.
+        import inspect
+
+        record_sig = inspect.signature(PgRepository.record_tactical_attempt)
+        assert list(record_sig.parameters) == [
+            "self", "user_id", "problem_id", "category", "success", "time_taken",
+        ]
+
+        get_sig = inspect.signature(PgRepository.get_tactical_attempts)
+        assert list(get_sig.parameters) == ["self", "user_id"]
+
     def test_iso_converts_any_datetime_field(self):
         import datetime as _dt
 

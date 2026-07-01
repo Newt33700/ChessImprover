@@ -8,6 +8,7 @@
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -16,9 +17,15 @@ from app.domain.models import (
     TacticalAttemptRequest,
     TacticalAttemptResult,
     TacticalProblemPublic,
+    TacticalStatsResponse,
 )
 from app.domain.tactical_elo import update_elo
-from app.domain.tactics import TACTICAL_THEMES, is_correct_move
+from app.domain.tactics import (
+    TACTICAL_THEMES,
+    compute_daily_streak,
+    compute_stats_by_theme,
+    is_correct_move,
+)
 from app.infrastructure import db_client
 from app.routers.deps import get_current_user_id
 
@@ -67,5 +74,24 @@ async def submit_attempt(
     current_elo = db_client.get_tactical_elo(user_id)
     new_elo = update_elo(current_elo, success)
     db_client.update_tactical_elo(user_id, new_elo)
+    db_client.record_tactical_attempt(
+        user_id, problem["id"], problem["category"], success, body.time_taken or 0.0
+    )
 
-    return TacticalAttemptResult(success=success, new_elo=new_elo, solution=problem["solution"])
+    attempts = db_client.get_tactical_attempts(user_id)
+    streak = compute_daily_streak(attempts, datetime.now(timezone.utc).date())
+
+    return TacticalAttemptResult(
+        success=success, new_elo=new_elo, solution=problem["solution"], streak=streak
+    )
+
+
+@router.get("/stats", response_model=TacticalStatsResponse)
+async def tactics_stats(user_id: str = Depends(get_current_user_id)) -> TacticalStatsResponse:
+    """US 8.4 — Taux de réussite par catégorie + série en cours aujourd'hui,
+    calculés depuis l'historique des tentatives de l'utilisateur authentifié.
+    """
+    attempts = db_client.get_tactical_attempts(user_id)
+    by_theme = compute_stats_by_theme(attempts)
+    streak = compute_daily_streak(attempts, datetime.now(timezone.utc).date())
+    return TacticalStatsResponse(by_theme=by_theme, streak=streak)
