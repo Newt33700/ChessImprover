@@ -1769,6 +1769,35 @@ body.advstats-active .advstats-col { display: block; }
 .adv-chart-wrap { position: relative; height: 200px; }
 .adv-donut-wrap { position: relative; height: 220px; }
 
+/* Courbe de progression (US 5.1) — scrollable horizontalement sur mobile */
+.adv-progress-wrap { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+.adv-progress-scroll { position: relative; height: 220px; min-width: 100%; }
+
+.adv-progress-toggles {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-sm);
+  margin-top: var(--space-sm);
+}
+.prog-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.78rem;
+  color: var(--text-secondary);
+  cursor: pointer;
+  padding: 4px 10px;
+  border-radius: 20px;
+  background: var(--bg-800);
+  border: 1px solid var(--border);
+  user-select: none;
+}
+.prog-toggle input { accent-color: var(--green); cursor: pointer; }
+.prog-toggle--openings { border-color: rgba(176, 203, 91, 0.4); }
+.prog-toggle--tactics  { border-color: rgba(202, 52, 49, 0.4); }
+.prog-toggle--strategy { border-color: rgba(129, 182, 76, 0.4); }
+.prog-toggle--endgames { border-color: rgba(246, 175, 41, 0.4); }
+
 /* Matrix table */
 .advm-scroll { overflow-x: auto; }
 .advm-table { width: 100%; border-collapse: separate; border-spacing: 3px; font-size: 0.86rem; }

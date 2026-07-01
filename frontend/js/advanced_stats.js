@@ -36,6 +36,15 @@ const AdvancedStats = (() => {
   // Seuils d'intensité de couleur des cellules (écart d'Elo vs classement).
   const STRONG_DELTA = 150;
 
+  // Couleurs des 4 séries du graphe de progression (US 5.1), alignées sur les
+  // couleurs déjà utilisées pour les icônes du deep-dive (.dd-icon--*).
+  const PROGRESS_COLORS = {
+    openings: "#b0cb5b",
+    tactics: "#ca3431",
+    strategy: "#81b64c",
+    endgames: "#f6af29",
+  };
+
   // ── Jeu de données de démonstration (calé sur les maquettes) ─────
   const MOCK_SUMMARY = {
     period: "30d",
@@ -53,6 +62,15 @@ const AdvancedStats = (() => {
     finales: { conversion: 60.7, resilience: 0.5 },
     tactics: { rating: 209, toReview: 43, solved: 23, streak: 1 },
   };
+
+  // Historique de démonstration (US 5.1) — 5 points hebdomadaires croissants.
+  const MOCK_HISTORY = [
+    { date: "2026-06-01T00:00:00Z", openings: 2400, tactics: 2100, strategy: 2200, endgames: 1900 },
+    { date: "2026-06-08T00:00:00Z", openings: 2550, tactics: 2300, strategy: 2350, endgames: 2050 },
+    { date: "2026-06-15T00:00:00Z", openings: 2700, tactics: 2500, strategy: 2450, endgames: 2150 },
+    { date: "2026-06-22T00:00:00Z", openings: 2750, tactics: 2700, strategy: 2500, endgames: 2200 },
+    { date: "2026-06-29T00:00:00Z", openings: 2900, tactics: 3000, strategy: 2600, endgames: 2300 },
+  ];
 
   // ── API ──────────────────────────────────────────────────────────
 
@@ -83,6 +101,38 @@ const AdvancedStats = (() => {
       return await res.json();
     } catch {
       return MOCK_SUMMARY;
+    }
+  }
+
+  /**
+   * Récupère l'historique des snapshots Elo virtuel (US 5.1) pour tracer la
+   * courbe de progression. Retombe sur `MOCK_HISTORY` en cas d'échec réseau
+   * ou tant qu'aucune base API n'est configurée.
+   * @param {string} cadence  "bullet" | "blitz" | "rapid"
+   * @param {number} days     fenêtre glissante en jours (défaut 30)
+   * @param {string} [base]   base URL de l'API (par défaut window.STATS_API_BASE)
+   * @returns {Promise<Array>} liste de points `{date, openings, tactics, strategy, endgames}`
+   */
+  async function fetchHistory(cadence = "blitz", days = 30, base) {
+    if (base == null && typeof ApiClient !== "undefined" && ApiClient.isConfigured()) {
+      try {
+        const res = await ApiClient.getStatsHistory(cadence, days);
+        return (res && res.history) || MOCK_HISTORY;
+      } catch {
+        return MOCK_HISTORY;
+      }
+    }
+    const apiBase =
+      base != null
+        ? base
+        : (typeof window !== "undefined" && window.STATS_API_BASE) || "";
+    try {
+      const res = await fetch(`${apiBase}/api/v1/stats/history?cadence=${cadence}&days=${days}`);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json();
+      return data.history || MOCK_HISTORY;
+    } catch {
+      return MOCK_HISTORY;
     }
   }
 
@@ -140,6 +190,37 @@ const AdvancedStats = (() => {
     const clamped = Math.max(min, Math.min(max, value));
     const ratio = (clamped - min) / (max - min);
     return -90 + ratio * 180;
+  }
+
+  /**
+   * Formate une date ISO en libellé court "JJ/MM" pour l'axe du graphe.
+   * Renvoie une chaîne tronquée si la date est invalide/absente (US 5.1).
+   */
+  function formatShortDate(iso) {
+    if (!iso) return "";
+    const d = new Date(iso);
+    if (isNaN(d.getTime())) return String(iso).slice(0, 10);
+    const day = String(d.getDate()).padStart(2, "0");
+    const month = String(d.getMonth() + 1).padStart(2, "0");
+    return `${day}/${month}`;
+  }
+
+  /**
+   * Transforme l'historique brut en labels + séries par catégorie, prêt pour
+   * Chart.js (US 5.1). Fonction pure, testable sans Chart.js ni DOM.
+   * @param {Array<{date:string, openings:number, tactics:number, strategy:number, endgames:number}>} history
+   * @returns {{labels:string[], series:{openings:number[], tactics:number[], strategy:number[], endgames:number[]}}}
+   */
+  function buildProgressDatasets(history) {
+    const labels = history.map((h) => formatShortDate(h.date));
+    const series = { openings: [], tactics: [], strategy: [], endgames: [] };
+    history.forEach((h) => {
+      series.openings.push(h.openings);
+      series.tactics.push(h.tactics);
+      series.strategy.push(h.strategy);
+      series.endgames.push(h.endgames);
+    });
+    return { labels, series };
   }
 
   /** Lignes prêtes au rendu de la matrice. */
@@ -389,16 +470,58 @@ const AdvancedStats = (() => {
   }
 
   /**
-   * Monte la vue complète à partir d'un résumé déjà chargé.
-   * @param {object} refs  conteneurs DOM (matrix, deepDive, finales, tactics, acplCanvas, donutCanvas)
+   * Trace la courbe de progression (US 5.1) : 4 séries d'Elo virtuel dans le
+   * temps, une par catégorie. Légende masquée — les toggles DOM pilotent la
+   * visibilité via `toggleProgressSeries`.
    */
-  function mount(refs, summary, cadence = "blitz") {
+  function renderProgressChart(canvas, history) {
+    if (!canvas || typeof Chart === "undefined") return null;
+    const { labels, series } = buildProgressDatasets(history);
+    return new Chart(canvas, {
+      type: "line",
+      data: {
+        labels,
+        datasets: CATEGORIES.map((c) => ({
+          label: c.label,
+          data: series[c.key],
+          borderColor: PROGRESS_COLORS[c.key],
+          backgroundColor: "transparent",
+          tension: 0.3,
+          pointRadius: 2,
+        })),
+      },
+      options: {
+        responsive: true, maintainAspectRatio: false,
+        plugins: { legend: { display: false } },
+        scales: { y: { beginAtZero: false }, x: { grid: { display: false } } },
+      },
+    });
+  }
+
+  /**
+   * Affiche/masque une série du graphe de progression sans le reconstruire.
+   * No-op si le graphe ou la catégorie sont introuvables (robustesse UI).
+   */
+  function toggleProgressSeries(chart, key, visible) {
+    if (!chart) return;
+    const idx = CATEGORIES.findIndex((c) => c.key === key);
+    if (idx === -1) return;
+    chart.setDatasetVisibility(idx, visible);
+    chart.update();
+  }
+
+  /**
+   * Monte la vue complète à partir d'un résumé déjà chargé.
+   * @param {object} refs  conteneurs DOM (matrix, deepDive, finales, tactics, acplCanvas, donutCanvas, progressCanvas)
+   */
+  function mount(refs, summary, cadence = "blitz", history = []) {
     renderMatrix(refs.matrix, summary);
     renderDeepDive(refs.deepDive, summary, cadence);
     renderFinalesTiles(refs.finales, summary);
     renderTacticsCard(refs.tactics, summary);
     renderAcplChart(refs.acplCanvas, summary);
     renderGaffeDonut(refs.donutCanvas, summary);
+    if (refs.progressCanvas) renderProgressChart(refs.progressCanvas, history);
   }
 
   return {
@@ -409,10 +532,13 @@ const AdvancedStats = (() => {
     GAUGE_MAX,
     STRONG_DELTA,
     MOCK_SUMMARY,
+    MOCK_HISTORY,
+    PROGRESS_COLORS,
     TACTIC_THEMES,
     ENDGAME_LESSONS,
     CATEGORY_TITLES,
     fetchSummary,
+    fetchHistory,
     isEmpty,
     categoryDetailHtml,
     renderCategoryDetail,
@@ -421,6 +547,8 @@ const AdvancedStats = (() => {
     formatDelta,
     deepDiveFor,
     gaugeAngle,
+    formatShortDate,
+    buildProgressDatasets,
     matrixRows,
     renderMatrix,
     renderDeepDive,
@@ -428,6 +556,8 @@ const AdvancedStats = (() => {
     renderTacticsCard,
     renderAcplChart,
     renderGaffeDonut,
+    renderProgressChart,
+    toggleProgressSeries,
     mount,
   };
 })();

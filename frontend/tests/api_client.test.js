@@ -70,3 +70,22 @@ describe("getStatsSummary / getGame", () => {
     expect(global.fetch.mock.calls[0][0]).toBe("/api/v1/games/abc");
   });
 });
+
+describe("getStatsHistory", () => {
+  test("construit la query cadence+days+user_id", async () => {
+    global.fetch = jest.fn().mockResolvedValue({ ok: true, json: async () => ({ history: [] }) });
+    await ApiClient.getStatsHistory("bullet", 7, "u9");
+    expect(global.fetch.mock.calls[0][0]).toBe("/api/v1/stats/history?cadence=bullet&days=7&user_id=u9");
+  });
+
+  test("valeurs par défaut (blitz, 30 jours, sans user_id)", async () => {
+    global.fetch = jest.fn().mockResolvedValue({ ok: true, json: async () => ({ history: [] }) });
+    await ApiClient.getStatsHistory();
+    expect(global.fetch.mock.calls[0][0]).toBe("/api/v1/stats/history?cadence=blitz&days=30");
+  });
+
+  test("rejette sur HTTP non-ok", async () => {
+    global.fetch = jest.fn().mockResolvedValue({ ok: false, status: 503 });
+    await expect(ApiClient.getStatsHistory()).rejects.toThrow("HTTP 503");
+  });
+});
