@@ -223,10 +223,13 @@ class GameStatus(str, Enum):
 
 
 class AnalyzeGamesRequest(BaseModel):
-    """Demande d'analyse asynchrone (US 1.1) — PGN ou liste d'IDs de parties."""
+    """Demande d'analyse asynchrone (US 1.1) — PGN ou liste d'IDs de parties.
+
+    Pas de champ ``user_id`` : le propriétaire est dérivé du JWT (US 6.4),
+    jamais d'une valeur fournie par le client.
+    """
     pgn: Optional[str] = Field(None, description="PGN d'une partie à analyser")
     game_ids: Optional[List[str]] = Field(None, description="IDs de parties déjà persistées à (ré)analyser")
-    user_id: Optional[str] = Field(None, description="Propriétaire de la partie")
     user_color: str = Field("white", description="Couleur du joueur analysé (white|black)")
     time_control: Optional[str] = Field(None, description="Cadence Chess.com (ex. '600', '180+2')")
     evals: Optional[Dict[str, List[List[Any]]]] = Field(
