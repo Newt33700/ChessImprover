@@ -337,6 +337,14 @@ class ChessImproverApp {
         this._loadAdvStats();
       });
     });
+    // Deep-dive : clic sur une catégorie → vue détaillée (délégation, US 4.2)
+    document.getElementById("adv-deepdive")?.addEventListener("click", (e) => {
+      const item = e.target.closest(".dd-item");
+      if (item) this._showCategoryDetail(item.dataset.cat);
+    });
+    document.getElementById("adv-detail")?.addEventListener("click", (e) => {
+      if (e.target.closest("[data-detail-back]")) this._hideCategoryDetail();
+    });
 
     // Legacy back buttons
     document.getElementById("btn-back-dashboard")?.addEventListener("click", () => this._goHome());
@@ -426,6 +434,7 @@ class ChessImproverApp {
         if (window.ChessDB) {
           ChessDB.saveGame({ ...analysis, date: new Date().toISOString() }).catch(() => {});
         }
+        this._syncToBackend(analysis);
 
         StreakSystem.record();
         const { xp, level } = XPSystem.add(XP_PER_GAME);
@@ -1437,13 +1446,45 @@ class ChessImproverApp {
     document.body.classList.remove("board-active");
   }
 
+  /**
+   * Envoie best-effort la partie analysée au backend (EPIC 1) pour persistance
+   * et stats serveur. No-op si aucune base API n'est configurée.
+   */
+  _syncToBackend(analysis) {
+    if (!window.ApiClient || !ApiClient.isConfigured()) return;
+    const pgn = analysis?.pgn;
+    if (!pgn) return;
+    const userColor = (this._detectPlayerColor?.(pgn) === "b") ? "black" : "white";
+    const tcMatch = pgn.match(/\[TimeControl\s+"([^"]+)"\]/);
+    ApiClient.analyzeGame(pgn, {
+      userColor,
+      userId: window.Auth?.currentUser?.id || null,
+      timeControl: tcMatch ? tcMatch[1] : null,
+    }).catch(() => { /* best-effort */ });
+  }
+
   async _showAdvStats() {
     document.body.classList.add("advstats-active");
     await this._loadAdvStats();
   }
 
+  _showCategoryDetail(category) {
+    const panel = document.getElementById("adv-detail");
+    if (!panel || !window.AdvancedStats || !this._advSummary) return;
+    AdvancedStats.renderCategoryDetail(panel, category, this._advSummary);
+    panel.hidden = false;
+    document.body.classList.add("adv-detail-open");
+  }
+
+  _hideCategoryDetail() {
+    const panel = document.getElementById("adv-detail");
+    if (panel) panel.hidden = true;
+    document.body.classList.remove("adv-detail-open");
+  }
+
   _hideAdvStats() {
     document.body.classList.remove("advstats-active");
+    document.body.classList.remove("adv-detail-open");
     if (this._advCharts) {
       this._advCharts.forEach((c) => c && c.destroy && c.destroy());
       this._advCharts = null;

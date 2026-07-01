@@ -64,6 +64,15 @@ const AdvancedStats = (() => {
    * @returns {Promise<object>}
    */
   async function fetchSummary(period = "30d", base) {
+    // Délègue au client API partagé si disponible (et qu'aucune base explicite
+    // n'est imposée par l'appelant/les tests).
+    if (base == null && typeof ApiClient !== "undefined" && ApiClient.isConfigured()) {
+      try {
+        return await ApiClient.getStatsSummary(period);
+      } catch {
+        return MOCK_SUMMARY;
+      }
+    }
     const apiBase =
       base != null
         ? base
@@ -150,6 +159,86 @@ const AdvancedStats = (() => {
     });
   }
 
+  // ── Catalogues des vues détaillées (US 4.2, maquettes Finales/Tactiques) ──
+  const TACTIC_THEMES = [
+    { key: "mate2", label: "Mat en 2", icon: "♚" },
+    { key: "pins", label: "Clouages et enfilades", icon: "♝" },
+    { key: "discovered", label: "Attaques à la découverte", icon: "♗" },
+    { key: "forks", label: "Fourchettes", icon: "♘" },
+    { key: "skewers", label: "Enfilades", icon: "♜" },
+    { key: "deflection", label: "Déviation", icon: "♛" },
+  ];
+  const ENDGAME_LESSONS = [
+    { key: "pawn_king", label: "Pions et Rois", icon: "♙" },
+    { key: "rook", label: "Finales de Tours", icon: "♖" },
+    { key: "opposition", label: "Opposition Directe", icon: "♔" },
+    { key: "king", label: "Finales de Rois", icon: "♚" },
+  ];
+  const CATEGORY_TITLES = {
+    openings: "Ouvertures",
+    tactics: "Tactique",
+    strategy: "Stratégie",
+    endgames: "Finales",
+  };
+
+  function _themeGrid(items, action) {
+    return (
+      '<div class="theme-grid">' +
+      items
+        .map(
+          (t) =>
+            `<div class="theme-card"><div class="theme-icon">${t.icon}</div>` +
+            `<div class="theme-name">${t.label}</div>` +
+            `<button class="btn btn--accent btn--full btn--sm">${action}</button></div>`
+        )
+        .join("") +
+      "</div>"
+    );
+  }
+
+  /**
+   * HTML de la vue détaillée d'une catégorie (US 4.2). Fonction PURE (testable).
+   */
+  function categoryDetailHtml(category, summary) {
+    const title = CATEGORY_TITLES[category] || category;
+    let head =
+      `<div class="adv-detail-head"><button class="btn-icon" data-detail-back aria-label="Retour">←</button>` +
+      `<h3 class="adv-detail-title">${title}</h3></div>`;
+
+    if (category === "tactics") {
+      const t = summary.tactics || {};
+      const banner =
+        `<div class="tac-banner"><span class="tac-rating">${t.rating != null ? t.rating : "—"}</span>` +
+        `<span class="tac-rating-label">Rating de puzzles</span></div>`;
+      return head + banner + _themeGrid(TACTIC_THEMES, "Résoudre");
+    }
+    if (category === "endgames") {
+      const f = summary.finales || { conversion: 0, resilience: 0 };
+      const tiles =
+        `<div class="adv-tiles"><div class="stat-tile stat-tile--good"><div class="stat-tile-head">CONVERSION</div>` +
+        `<div class="stat-tile-value">${Number(f.conversion).toFixed(1).replace(".", ",")}%</div></div>` +
+        `<div class="stat-tile stat-tile--warn"><div class="stat-tile-head">RÉSILIENCE</div>` +
+        `<div class="stat-tile-value">${Number(f.resilience).toFixed(1).replace(".", ",")}%</div></div></div>`;
+      return head + tiles + _themeGrid(ENDGAME_LESSONS, "Étudier");
+    }
+    if (category === "openings") {
+      const tops = summary.topOpenings || [];
+      const body = tops.length
+        ? '<div class="open-list">' +
+          tops
+            .map(
+              (o) =>
+                `<div class="open-row"><span class="open-name">${o.name}</span>` +
+                `<span class="open-elo">${o.elo}</span></div>`
+            )
+            .join("") +
+          "</div>"
+        : '<p class="empty-state">Top 3 ouvertures (codes ECO) — à venir.</p>';
+      return head + body;
+    }
+    return head + '<p class="empty-state">Analyse stratégique détaillée — à venir.</p>';
+  }
+
   // ── Rendu DOM (glue) ─────────────────────────────────────────────
 
   function renderMatrix(container, summary) {
@@ -225,6 +314,11 @@ const AdvancedStats = (() => {
       </div>
       <div class="dd-section-title">DÉTAIL PAR PHASE</div>
       <div class="dd-list">${list}</div>`;
+  }
+
+  function renderCategoryDetail(container, category, summary) {
+    if (!container) return;
+    container.innerHTML = categoryDetailHtml(category, summary);
   }
 
   function renderFinalesTiles(container, summary) {
@@ -310,7 +404,12 @@ const AdvancedStats = (() => {
     GAUGE_MAX,
     STRONG_DELTA,
     MOCK_SUMMARY,
+    TACTIC_THEMES,
+    ENDGAME_LESSONS,
+    CATEGORY_TITLES,
     fetchSummary,
+    categoryDetailHtml,
+    renderCategoryDetail,
     cellClass,
     phaseDelta,
     formatDelta,

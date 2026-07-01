@@ -95,6 +95,42 @@ test("matrixRows: blitz/endgames (1200 < 1250) est négatif", () => {
   expect(endgames.cls).toBe("neg");
 });
 
+// ── catégories détaillées (US 4.2) ────────────────────────────────
+
+describe("categoryDetailHtml", () => {
+  test("catalogues complets", () => {
+    expect(AS.TACTIC_THEMES).toHaveLength(6);
+    expect(AS.ENDGAME_LESSONS).toHaveLength(4);
+  });
+
+  test("tactics : rating + thèmes + bouton Résoudre + retour", () => {
+    const html = AS.categoryDetailHtml("tactics", AS.MOCK_SUMMARY);
+    expect(html).toContain("data-detail-back");
+    expect(html).toContain("Mat en 2");
+    expect(html).toContain("Résoudre");
+    expect(html).toContain(String(AS.MOCK_SUMMARY.tactics.rating));
+  });
+
+  test("endgames : tuiles conversion/résilience + leçons + Étudier", () => {
+    const html = AS.categoryDetailHtml("endgames", AS.MOCK_SUMMARY);
+    expect(html).toContain("CONVERSION");
+    expect(html).toContain("Finales de Tours");
+    expect(html).toContain("Étudier");
+  });
+
+  test("openings : empty-state sans données, lignes avec topOpenings", () => {
+    expect(AS.categoryDetailHtml("openings", {})).toContain("empty-state");
+    const withTops = { topOpenings: [{ name: "Sicilienne", elo: 1500 }] };
+    const html = AS.categoryDetailHtml("openings", withTops);
+    expect(html).toContain("Sicilienne");
+    expect(html).toContain("1500");
+  });
+
+  test("strategy : placeholder", () => {
+    expect(AS.categoryDetailHtml("strategy", {})).toContain("empty-state");
+  });
+});
+
 // ── fetchSummary (fallback) ───────────────────────────────────────
 
 describe("fetchSummary", () => {
