@@ -152,7 +152,7 @@ ChessImprover/
 │       │   ├── sync.py                 # POST /sync — stratégie Client Wins (US 7)
 │       │   └── games.py                # POST /games/analyze, GET stats/summary, GET stats/history
 │       ├── tests/
-│       │   ├── test_auth.py            # 24 TUs auth : hash, JWT, signup, login, me, sync
+│       │   ├── test_auth.py            # 30 TUs auth : hash, JWT, signup, login, me, sync, chess_username
 │       │   ├── test_analyzer.py
 │       │   ├── test_elo.py
 │       │   ├── test_phases.py          # US 2.1
@@ -175,7 +175,8 @@ ChessImprover/
 │       ├── 20260630000000_init_auth.sql       # Tables profiles + user_data, RLS (US 7)
 │       ├── 20260701000000_advanced_stats.sql  # Tables games + game_moves, RLS (EPIC 1)
 │       ├── 20260701120000_progress_history.sql # Table user_progress_history, RLS (US 5.1)
-│       └── 20260701164500_games_eco.sql        # Colonnes eco/opening_name sur games (US 4.2)
+│       ├── 20260701164500_games_eco.sql        # Colonnes eco/opening_name sur games (US 4.2)
+│       └── 20260701172219_profiles_chess_username.sql # Colonne chess_username sur profiles (US 6.2)
 │
 └── .github/
     └── workflows/
@@ -801,7 +802,7 @@ Carte **PROGRESSION**, première carte de la colonne principale de la vue Stats 
 |---|---|---|---|---|
 | `/auth/signup` | POST | `{email, username, password}` | 201 `{token, user}` | Inscription |
 | `/auth/login` | POST | `{email, password}` | 200 `{token, user}` | Connexion |
-| `/auth/me` | GET | — (Bearer token) | 200 `{id, email, username}` | Profil courant |
+| `/auth/me` | GET | — (Bearer token) | 200 `{id, email, username, chess_username}` | Profil courant |
 
 **Règles métier :**
 - Email unique (case-insensitive) → 400 `"Email déjà utilisé"`
@@ -810,6 +811,7 @@ Carte **PROGRESSION**, première carte de la colonne principale de la vue Stats 
 - Mot de passe haché via bcrypt (salt aléatoire, facteur de coût par défaut ~12), longueur minimale 6 caractères (422 sinon)
 - Token JWT HS256 (stdlib Python : `hmac` + `hashlib.sha256`), expiration 30 jours
 - Payload JWT : `{sub: user_id, email, exp}`
+- **`chess_username` (US 6.2)** : champ distinct du `username` de connexion, initialisé à `None` à la création du profil (`db_client.create_user`), exposé par `UserProfile` dans les 3 réponses `/auth/*`. Pas encore modifiable via l'API (aucune route d'écriture) — prévu par US 6.3.
 
 **Dépendance `_current_user` :** FastAPI `HTTPBearer` → `decode_token()` → `find_user_by_id()`. Retourne 401 si token absent, invalide ou expiré.
 
@@ -1136,7 +1138,7 @@ JWT_SECRET=ci-test-secret pytest tests/ -v
 
 | Fichier | Classes | TUs |
 |---|---|---|
-| `test_auth.py` | TestPasswordHashing (5), TestJWT (4), TestSignup (4+3 US 6.1), TestLogin (4), TestMe (3), TestSync (4) | **27 TUs** |
+| `test_auth.py` | TestPasswordHashing (5), TestJWT (4), TestSignup (4+3 US 6.1+2 US 6.2), TestLogin (4), TestMe (3+1 US 6.2), TestSync (4) | **30 TUs** |
 | `test_analyzer.py` | — | Analyse géométrique |
 | `test_elo.py` | — | Formules Elo/précision backend |
 | `test_phases.py` | Constantes, Material, IsEndgame, OpeningEndPly, SegmentPhases, SegmentPgn | US 2.1 |
@@ -1153,7 +1155,7 @@ JWT_SECRET=ci-test-secret pytest tests/ -v
 | `test_pg_repository.py` | PgRepository (dsn, colonnes, contrat progress_history, `_iso` générique), délégation db_client (in-memory sans `DATABASE_URL`) | EPIC 1 + US 5.1 |
 | `test_srs.py` | — | SM-2 backend |
 
-**Couverture backend :** 390 TUs au total, couverture globale **89 %** ; cœur Stats Avancées + EPIC 1/5.1/US 4.2 à 92–100 % (`stats_aggregator`, `cadence`, `progress_history`, `models`, `engine` à 100 %, `analysis_pipeline` 92 %, `routers/games` 92 %, `db_client` 98 %). Les requêtes SQL réelles de `pg_repository` (nécessitant une base) sont marquées `pragma: no cover`.
+**Couverture backend :** 393 TUs au total, couverture globale **89 %** ; cœur Stats Avancées + EPIC 1/5.1/US 4.2 à 92–100 % (`stats_aggregator`, `cadence`, `progress_history`, `models`, `engine` à 100 %, `analysis_pipeline` 92 %, `routers/games` 92 %, `db_client` 98 %). Les requêtes SQL réelles de `pg_repository` (nécessitant une base) sont marquées `pragma: no cover`.
 
 **Architecture de test `test_auth.py` :**
 - App de test minimale (`FastAPI()` + routers auth/sync uniquement) pour éviter la dépendance `python-chess`
@@ -1229,6 +1231,7 @@ email TEXT UNIQUE NOT NULL
 username TEXT UNIQUE NOT NULL
 password_hash TEXT NOT NULL
 created_at TIMESTAMPTZ DEFAULT now()
+chess_username TEXT                          -- ajoutée par 20260701172219 (US 6.2), nullable
 
 -- Table user_data
 id UUID PRIMARY KEY DEFAULT gen_random_uuid()
@@ -1288,6 +1291,7 @@ UNIQUE (user_id)
 | **Mobile / bascule Review** | CSS `body.board-active` | `.dash-grid` masquée / `.board-col` plein écran via classe `body` |
 | **Vue Statistiques Avancées** (US 4.1/4.2) | `advanced_stats.js` + `index.html` + `app.js` | Plein écran `body.advstats-active` : matrice colorée + gauge Héros + deep-dive + tuiles Finales + carte Tactiques (gauge circulaire `successRatio`) + top 3 ouvertures ECO (données réelles via `/stats/summary`, `MOCK_SUMMARY` en secours) |
 | **Validation email + erreurs UI inscription** (US 6.1) | `models.py:UserCreate` + `auth.js:_extractErrorMessage` | Format email validé (regex) en plus de la longueur ; erreurs 422 Pydantic (liste) affichées lisiblement au lieu de `[object Object]` |
+| **Colonne `chess_username` sur le profil** (US 6.2) | Migration `20260701172219_profiles_chess_username.sql` + `db_client.create_user` + `UserProfile` | Initialisée à `None` à l'inscription, exposée par `/auth/signup`/`/auth/login`/`/auth/me` ; pas encore modifiable (US 6.3) |
 
 ### ❌ Non câblé ou incomplet
 
@@ -1448,6 +1452,7 @@ email TEXT UNIQUE NOT NULL
 username TEXT UNIQUE NOT NULL
 password_hash TEXT NOT NULL
 created_at TIMESTAMPTZ DEFAULT now()
+chess_username TEXT  -- US 6.2, nullable, distinct du username de connexion
 
 -- user_data
 id UUID PRIMARY KEY DEFAULT gen_random_uuid()
