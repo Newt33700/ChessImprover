@@ -9,9 +9,13 @@
 
 from __future__ import annotations
 
+import logging
+import os
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Query, Response
+
+logger = logging.getLogger(__name__)
 
 from app.config import settings
 from app.domain.analysis_pipeline import analyze_pgn, build_client_engine
@@ -32,12 +36,19 @@ router = APIRouter(prefix="/api/v1", tags=["games"])
 # Worker (tâche de fond)
 # ---------------------------------------------------------------------------
 
+#: Emplacement du binaire Stockfish dans l'image Docker (Debian).
+DEFAULT_STOCKFISH_PATH = "/usr/games/stockfish"
+
+
 def _select_engine(evals: Optional[Dict[str, Any]]) -> Optional[EngineProvider]:
     """Choisit la source d'évaluations : client > Stockfish natif > aucune."""
     if evals:
         return build_client_engine(evals)
-    if settings.stockfish_path:
-        return NativeStockfishEngine(settings.stockfish_path, depth=settings.engine_depth)
+    path = settings.stockfish_path
+    if not path and os.path.exists(DEFAULT_STOCKFISH_PATH):
+        path = DEFAULT_STOCKFISH_PATH  # fallback binaire Docker
+    if path:
+        return NativeStockfishEngine(path, depth=settings.engine_depth)
     return None
 
 
@@ -105,9 +116,18 @@ async def stats_summary(
     period: str = Query("30d"),
     user_id: Optional[str] = Query(None),
 ) -> Dict[str, Any]:
-    """Résumé agrégé des statistiques avancées (US 4.1) — zéro calcul client."""
-    games = db_client.get_completed_games(user_id)
-    entries = [
-        {"game": g, "moves": db_client.get_moves_for_game(g["id"])} for g in games
-    ]
-    return build_summary(entries, period=period)
+    """Résumé agrégé des statistiques avancées (US 4.1) — zéro calcul client.
+
+    En cas d'erreur d'accès aux données (ex. base indisponible), on journalise
+    la trace et on renvoie un résumé vide (200) plutôt qu'un 500 : le frontend
+    dégrade proprement au lieu de casser.
+    """
+    try:
+        games = db_client.get_completed_games(user_id)
+        entries = [
+            {"game": g, "moves": db_client.get_moves_for_game(g["id"])} for g in games
+        ]
+        return build_summary(entries, period=period)
+    except Exception:
+        logger.exception("stats/summary: échec d'accès aux données, résumé vide renvoyé")
+        return build_summary([], period=period)

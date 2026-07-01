@@ -95,6 +95,15 @@ test("matrixRows: blitz/endgames (1200 < 1250) est négatif", () => {
   expect(endgames.cls).toBe("neg");
 });
 
+// ── isEmpty (état vide) ───────────────────────────────────────────
+
+test("isEmpty: hasData===false → vrai, sinon faux", () => {
+  expect(AS.isEmpty({ hasData: false })).toBe(true);
+  expect(AS.isEmpty({ hasData: true })).toBe(false);
+  expect(AS.isEmpty(AS.MOCK_SUMMARY)).toBe(false); // mock = données présentes
+  expect(AS.isEmpty(null)).toBe(false);
+});
+
 // ── catégories détaillées (US 4.2) ────────────────────────────────
 
 describe("categoryDetailHtml", () => {

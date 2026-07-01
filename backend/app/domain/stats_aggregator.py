@@ -123,6 +123,8 @@ def build_summary(
 
     return {
         "period": period,
+        "hasData": bool(entries),
+        "totalGames": len(entries),
         "rows": rows,
         "acplTrend": _acpl_trend(entries),
         "gaffeRate": _gaffe_rate(entries),

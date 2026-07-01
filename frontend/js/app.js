@@ -1498,6 +1498,20 @@ class ChessImproverApp {
       this._advCharts.forEach((c) => c && c.destroy && c.destroy());
     }
     this._advSummary = await AdvancedStats.fetchSummary(this._advPeriod);
+
+    // État vide : aucune partie analysée → message explicite (pas de tableau cassé).
+    if (AdvancedStats.isEmpty(this._advSummary)) {
+      this._advCharts = null;
+      const empty = '<p class="empty-state">Aucune partie analysée. Importez un PGN pour commencer.</p>';
+      const m = document.getElementById("adv-matrix");
+      if (m) m.innerHTML = empty;
+      ["adv-deepdive", "adv-finales-tiles", "adv-tactics"].forEach((id) => {
+        const el = document.getElementById(id);
+        if (el) el.innerHTML = "";
+      });
+      return;
+    }
+
     const refs = {
       matrix:      document.getElementById("adv-matrix"),
       deepDive:    document.getElementById("adv-deepdive"),

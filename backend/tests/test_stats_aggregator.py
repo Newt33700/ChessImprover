@@ -46,10 +46,17 @@ class TestBuildSummary:
     def test_empty_defaults(self):
         s = build_summary([], period="7d")
         assert s["period"] == "7d"
+        assert s["hasData"] is False
+        assert s["totalGames"] == 0
         assert set(s["rows"]) == {"bullet", "blitz", "rapid"}
         assert s["rows"]["blitz"]["current"] == DEFAULT_ELO
         assert s["gaffeRate"] == {"opening": 0.0, "middlegame": 0.0, "endgame": 0.0}
         assert s["finales"] == {"conversion": 0.0, "resilience": 0.0}
+
+    def test_has_data_flag(self):
+        s = build_summary([_entry(moves=[_move("opening", 10)])])
+        assert s["hasData"] is True
+        assert s["totalGames"] == 1
 
     def test_category_elos(self):
         moves = [
