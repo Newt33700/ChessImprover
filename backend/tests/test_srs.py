@@ -14,6 +14,7 @@ from app.domain.srs_engine import (
     create_card,
     get_due_cards,
     review_card,
+    sm2_schedule,
 )
 
 
@@ -291,3 +292,33 @@ class TestGetDueCards:
         c3 = SRSCard(id="c", fen="f", solution="s", ef=2.5, interval=1, reps=0, due=d3)
         due = get_due_cards([c1, c2, c3])
         assert [c.id for c in due] == ["a", "c", "b"]
+
+
+# ===================================================================
+# sm2_schedule — fonction pure réutilisée par EPIC 9 (entraîneur d'ouvertures)
+# ===================================================================
+
+class TestSm2ScheduleMatchesReviewCard:
+    """`sm2_schedule` est la fonction extraite dont `review_card` n'est plus
+    qu'un fin wrapper autour de `SRSCard` — vérifie l'équivalence exacte."""
+
+    def test_matches_review_card_on_success(self):
+        card = create_card("x", "fen", "sol")
+        via_card = review_card(card, 4)
+        via_pure = sm2_schedule(card.ef, card.interval, card.reps, 4, date.today())
+        assert via_card.ef == via_pure["ease_factor"]
+        assert via_card.interval == via_pure["interval"]
+        assert via_card.reps == via_pure["repetitions"]
+        assert via_card.due == via_pure["due_date"].isoformat()
+
+    def test_matches_review_card_on_failure(self):
+        card = create_card("x", "fen", "sol")
+        via_card = review_card(card, 1)
+        via_pure = sm2_schedule(card.ef, card.interval, card.reps, 1, date.today())
+        assert via_card.ef == via_pure["ease_factor"]
+        assert via_card.interval == via_pure["interval"]
+        assert via_card.reps == via_pure["repetitions"]
+
+    def test_returns_typed_dict_with_expected_keys(self):
+        result = sm2_schedule(2.5, 1, 0, 5, date(2026, 7, 1))
+        assert set(result) == {"ease_factor", "interval", "repetitions", "due_date"}

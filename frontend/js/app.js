@@ -381,6 +381,12 @@ class ChessImproverApp {
       this._loadTacticalProblem(btn.dataset.theme || null);
     });
 
+    // Entraîneur d'Ouvertures (EPIC 9) — ajout d'une ligne au répertoire
+    document.getElementById("ot-add-form")?.addEventListener("submit", (e) => {
+      e.preventDefault();
+      this._submitOpeningLine();
+    });
+
     // Auth modal — switch Login/Signup tabs
     document.querySelectorAll(".auth-tab").forEach((tab) => {
       tab.addEventListener("click", () => {
@@ -1757,6 +1763,193 @@ class ChessImproverApp {
       if (feedback) feedback.textContent = "Erreur lors de la validation du coup.";
       this._tacticsSolved = false;
     }
+  }
+
+  // ─── Entraîneur d'Ouvertures — Répertoire + SRS (EPIC 9) ──────────────
+
+  _showOpeningsTrainer() {
+    document.body.classList.add("openings-trainer-active");
+    this._loadOpeningsTrainerView();
+  }
+
+  _hideOpeningsTrainer() {
+    document.body.classList.remove("openings-trainer-active");
+  }
+
+  /** Valide (chess.js) puis soumet une nouvelle ligne de répertoire (US 9.1). */
+  async _submitOpeningLine() {
+    const feedback = document.getElementById("ot-add-feedback");
+    const nameInput = document.getElementById("ot-name");
+    const movesInput = document.getElementById("ot-moves");
+    const color = document.querySelector('input[name="ot-color"]:checked')?.value || "white";
+    const moves = (movesInput?.value || "").trim().split(/\s+/).filter(Boolean);
+
+    if (!nameInput?.value || moves.length === 0) return;
+    if (feedback) feedback.textContent = "";
+    try {
+      await ApiClient.createOpeningLine({ name: nameInput.value, color, moves });
+      nameInput.value = "";
+      movesInput.value = "";
+      if (feedback) feedback.textContent = "Ligne ajoutée au répertoire !";
+      this._loadOpeningsTrainerView();
+    } catch {
+      if (feedback) feedback.textContent = "Séquence de coups invalide — vérifiez la notation SAN.";
+    }
+  }
+
+  /** Recharge la liste du répertoire + relance la file de révision du jour. */
+  async _loadOpeningsTrainerView() {
+    if (!window.ApiClient || !ApiClient.isConfigured() || !window.Auth?.isLoggedIn()) {
+      const reviewBody = document.getElementById("ot-review-body");
+      if (reviewBody) reviewBody.innerHTML = `<p class="empty-state">Connectez-vous pour accéder à l'entraîneur d'ouvertures.</p>`;
+      return;
+    }
+    try {
+      const [lines, due] = await Promise.all([
+        ApiClient.getOpeningLines(),
+        ApiClient.getDueOpeningLines(),
+      ]);
+      this._renderOpeningLinesList(lines);
+      this._otDueQueue = due;
+      this._advanceOpeningReviewQueue();
+    } catch {
+      /* best-effort */
+    }
+  }
+
+  _renderOpeningLinesList(lines) {
+    const list = document.getElementById("ot-lines-list");
+    if (!list) return;
+    if (!lines.length) {
+      list.innerHTML = `<p class="empty-state">Aucune ligne pour l'instant.</p>`;
+      return;
+    }
+    list.innerHTML = lines.map((line) => `
+      <div class="ot-line-row">
+        <span class="ot-line-name">${line.name}</span>
+        <span class="ot-line-color">${line.color === "white" ? "Blancs" : "Noirs"}</span>
+        <span class="ot-line-due">Prochaine révision : ${line.due_date}</span>
+        <button class="btn-icon" aria-label="Supprimer" onclick="window.app?._deleteOpeningLine('${line.id}')">🗑</button>
+      </div>
+    `).join("");
+  }
+
+  async _deleteOpeningLine(lineId) {
+    try {
+      await ApiClient.deleteOpeningLine(lineId);
+      this._loadOpeningsTrainerView();
+    } catch { /* best-effort */ }
+  }
+
+  /** Prend la prochaine ligne due dans la file, ou affiche un état vide gamifié. */
+  _advanceOpeningReviewQueue() {
+    const body = document.getElementById("ot-review-body");
+    if (!body) return;
+    if (!this._otDueQueue || this._otDueQueue.length === 0) {
+      body.innerHTML = `<p class="empty-state">🎉 Aucune ligne à réviser aujourd'hui — révisez-en une nouvelle demain !</p>`;
+      return;
+    }
+    this._startOpeningReview(this._otDueQueue.shift());
+  }
+
+  /**
+   * Rejoue une ligne de répertoire sur un échiquier indépendant (même
+   * approche que le Coach Tactique, US 8.3) : les coups de l'adversaire
+   * s'enchaînent automatiquement, l'utilisateur doit jouer les siens. Les
+   * erreurs sont comptées pour déduire automatiquement la qualité SM-2
+   * (US 9.2) — aucune notation manuelle, pour rester ludique.
+   */
+  _startOpeningReview(line) {
+    const body = document.getElementById("ot-review-body");
+    if (!body || typeof Chess === "undefined" || typeof Chessboard === "undefined") return;
+    this._otLine = line;
+    this._otChess = new Chess();
+    this._otMoveIndex = 0;
+    this._otMistakes = 0;
+    this._otFinished = false;
+    this._otPlayerColor = line.color === "white" ? "w" : "b";
+
+    body.innerHTML = `
+      <p class="ot-review-title">${line.name} — ${line.color === "white" ? "Blancs" : "Noirs"}</p>
+      <div class="tactics-board" id="ot-board"></div>
+      <p class="tactics-feedback" id="ot-feedback"></p>
+    `;
+    this._otBoard = Chessboard("ot-board", {
+      draggable: true,
+      position: "start",
+      orientation: line.color,
+      pieceTheme: "https://lichess1.org/assets/piece/cburnett/{piece}.svg",
+      onDragStart: (src, piece) => this._onOtDragStart(src, piece),
+      onDrop: (src, tgt) => this._onOtDrop(src, tgt),
+      onSnapEnd: () => this._otBoard.position(this._otChess.fen()),
+    });
+    this._advanceOpeningLine();
+  }
+
+  _onOtDragStart(src, piece) {
+    if (!this._otChess || this._otChess.game_over()) return false;
+    const turn = this._otChess.turn();
+    if (turn !== this._otPlayerColor) return false;
+    if ((turn === "w" && piece.startsWith("b")) || (turn === "b" && piece.startsWith("w"))) return false;
+    return true;
+  }
+
+  _onOtDrop(src, tgt) {
+    const expectedSan = this._otLine.moves[this._otMoveIndex];
+    const move = this._otChess.move({ from: src, to: tgt, promotion: "q" });
+    if (move === null) return "snapback";
+    const feedback = document.getElementById("ot-feedback");
+    if (move.san !== expectedSan) {
+      this._otChess.undo();
+      this._otMistakes++;
+      if (feedback) feedback.textContent = `Pas le bon coup — réessayez.`;
+      return "snapback";
+    }
+    if (feedback) feedback.textContent = "";
+    this._otMoveIndex++;
+    setTimeout(() => this._advanceOpeningLine(), 300);
+  }
+
+  /** Enchaîne automatiquement les coups adverses jusqu'au tour du joueur ou la fin de la ligne. */
+  _advanceOpeningLine() {
+    if (this._otMoveIndex >= this._otLine.moves.length) {
+      this._finishOpeningReview();
+      return;
+    }
+    if (this._otChess.turn() === this._otPlayerColor) return; // attend le coup du joueur
+    this._otChess.move(this._otLine.moves[this._otMoveIndex]);
+    this._otMoveIndex++;
+    this._otBoard.position(this._otChess.fen());
+    setTimeout(() => this._advanceOpeningLine(), 400);
+  }
+
+  async _finishOpeningReview() {
+    if (this._otFinished) return; // garde-fou : ne jamais soumettre deux fois la même révision
+    this._otFinished = true;
+    const body = document.getElementById("ot-review-body");
+    try {
+      const result = await ApiClient.reviewOpeningLine(this._otLine.id, this._otMistakes);
+      if (this._otMistakes === 0) {
+        const { xp, level } = XPSystem.add(XP_PER_EXERCISE);
+        this._renderXP(xp, level);
+        StreakSystem.record();
+      }
+      if (body) {
+        body.innerHTML = `<p class="empty-state">Ligne terminée ! Prochaine révision : ${result.due_date}.</p>`;
+      }
+    } catch {
+      if (body) body.innerHTML = `<p class="empty-state">Erreur lors de l'enregistrement de la révision.</p>`;
+    }
+    setTimeout(() => this._advanceOpeningReviewQueue(), 1200);
+    this._loadOpeningsTrainerViewListOnly();
+  }
+
+  /** Rafraîchit uniquement la liste (pas la file de révision en cours). */
+  async _loadOpeningsTrainerViewListOnly() {
+    try {
+      const lines = await ApiClient.getOpeningLines();
+      this._renderOpeningLinesList(lines);
+    } catch { /* best-effort */ }
   }
 
   /**

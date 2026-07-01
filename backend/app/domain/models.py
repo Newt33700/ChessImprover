@@ -297,6 +297,50 @@ class TacticalStatsResponse(BaseModel):
     streak: int
 
 
+# ---------------------------------------------------------------------------
+# Entraîneur d'Ouvertures — Répertoire + SRS (EPIC 9, fonctionnalité bonus)
+# ---------------------------------------------------------------------------
+
+class OpeningLineCreate(BaseModel):
+    """Nouvelle ligne de répertoire soumise par l'utilisateur."""
+    name: str = Field(..., min_length=1, max_length=80)
+    color: str = Field(..., description="'white' ou 'black'")
+    moves: List[str] = Field(..., min_items=1, description="Coups en notation SAN, dans l'ordre")
+
+    @validator("color")
+    def _validate_color(cls, value: str) -> str:  # noqa: N805 - validator Pydantic
+        if value not in ("white", "black"):
+            raise ValueError("color doit être 'white' ou 'black'")
+        return value
+
+
+class OpeningLinePublic(BaseModel):
+    """Ligne de répertoire telle qu'exposée au client."""
+    id: str
+    name: str
+    color: str
+    moves: List[str]
+    ease_factor: float
+    interval_days: int
+    repetitions: int
+    due_date: str
+
+
+class OpeningLineReviewRequest(BaseModel):
+    """Résultat d'une session de révision (US 9.2) — qualité déjà déduite
+    automatiquement côté frontend du nombre d'erreurs commises."""
+    mistake_count: int = Field(..., ge=0)
+
+
+class OpeningLineReviewResult(BaseModel):
+    """Nouveau calendrier SM-2 après une révision."""
+    id: str
+    ease_factor: float
+    interval_days: int
+    repetitions: int
+    due_date: str
+
+
 class GameMoveRecord(BaseModel):
     """Métriques persistées d'un coup (US 1.2)."""
     move_number: int

@@ -213,3 +213,71 @@ class PgRepository:
         with self._connect() as conn, conn.cursor() as cur:
             cur.execute(sql, (user_id,))
             return [self._iso(dict(r)) for r in cur.fetchall()]
+
+    # -- opening_repertoire (EPIC 9) -------------------------------------------
+
+    @staticmethod
+    def _line_row(row: Dict[str, Any]) -> Dict[str, Any]:
+        row = dict(row)
+        row["name"] = row.pop("line_name")
+        return row
+
+    def create_opening_line(
+        self, user_id: str, name: str, color: str, moves: List[str]
+    ) -> Dict[str, Any]:  # pragma: no cover - nécessite une base réelle
+        from psycopg.types.json import Json
+
+        sql = (
+            "INSERT INTO opening_repertoire (user_id, line_name, color, moves) "
+            "VALUES (%s::uuid, %s, %s, %s) RETURNING *"
+        )
+        with self._connect() as conn, conn.cursor() as cur:
+            cur.execute(sql, (user_id, name, color, Json(moves)))
+            row = dict(cur.fetchone())
+            conn.commit()
+        return self._iso(self._line_row(row))
+
+    def get_opening_lines(self, user_id: str) -> List[Dict[str, Any]]:  # pragma: no cover
+        sql = "SELECT * FROM opening_repertoire WHERE user_id = %s::uuid"
+        with self._connect() as conn, conn.cursor() as cur:
+            cur.execute(sql, (user_id,))
+            return [self._iso(self._line_row(r)) for r in cur.fetchall()]
+
+    def get_opening_line(self, line_id: str) -> Optional[Dict[str, Any]]:  # pragma: no cover
+        sql = "SELECT * FROM opening_repertoire WHERE id = %s::uuid"
+        with self._connect() as conn, conn.cursor() as cur:
+            cur.execute(sql, (line_id,))
+            row = cur.fetchone()
+            return self._iso(self._line_row(dict(row))) if row else None
+
+    def get_due_opening_lines(
+        self, user_id: str, today: str
+    ) -> List[Dict[str, Any]]:  # pragma: no cover - nécessite une base réelle
+        sql = (
+            "SELECT * FROM opening_repertoire "
+            "WHERE user_id = %s::uuid AND due_date <= %s::date"
+        )
+        with self._connect() as conn, conn.cursor() as cur:
+            cur.execute(sql, (user_id, today))
+            return [self._iso(self._line_row(r)) for r in cur.fetchall()]
+
+    def update_opening_line_schedule(
+        self, line_id: str, ease_factor: float, interval_days: int, repetitions: int, due_date: str
+    ) -> Optional[Dict[str, Any]]:  # pragma: no cover - nécessite une base réelle
+        sql = (
+            "UPDATE opening_repertoire SET ease_factor = %s, interval_days = %s, "
+            "repetitions = %s, due_date = %s::date WHERE id = %s::uuid RETURNING *"
+        )
+        with self._connect() as conn, conn.cursor() as cur:
+            cur.execute(sql, (ease_factor, interval_days, repetitions, due_date, line_id))
+            row = cur.fetchone()
+            conn.commit()
+            return self._iso(self._line_row(dict(row))) if row else None
+
+    def delete_opening_line(self, line_id: str, user_id: str) -> bool:  # pragma: no cover
+        sql = "DELETE FROM opening_repertoire WHERE id = %s::uuid AND user_id = %s::uuid"
+        with self._connect() as conn, conn.cursor() as cur:
+            cur.execute(sql, (line_id, user_id))
+            deleted = cur.rowcount > 0
+            conn.commit()
+            return deleted

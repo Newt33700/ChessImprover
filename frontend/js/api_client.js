@@ -120,6 +120,55 @@ const ApiClient = (() => {
     return _json(await fetch(url("/api/v1/tactics/stats"), { headers: _authHeaders() }));
   }
 
+  /**
+   * Ajoute une ligne au répertoire d'ouvertures (EPIC 9, US 9.1). Le backend
+   * rejoue la séquence coup par coup et rejette (422) toute ligne illégale.
+   * @param {{name: string, color: 'white'|'black', moves: string[]}} line
+   */
+  async function createOpeningLine(line) {
+    const res = await fetch(url("/api/v1/openings/repertoire"), {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ..._authHeaders() },
+      body: JSON.stringify(line),
+    });
+    return _json(res);
+  }
+
+  /** Liste tout le répertoire de l'utilisateur (EPIC 9). */
+  async function getOpeningLines() {
+    return _json(await fetch(url("/api/v1/openings/repertoire"), { headers: _authHeaders() }));
+  }
+
+  /** Lignes dont l'échéance de révision est arrivée aujourd'hui (EPIC 9, US 9.2). */
+  async function getDueOpeningLines() {
+    return _json(
+      await fetch(url("/api/v1/openings/repertoire/due"), { headers: _authHeaders() })
+    );
+  }
+
+  /**
+   * Soumet le résultat d'une session de révision (EPIC 9, US 9.2). La
+   * qualité SM-2 est déduite côté serveur du nombre d'erreurs commises —
+   * pas de notation manuelle, pour rester ludique.
+   */
+  async function reviewOpeningLine(lineId, mistakeCount) {
+    const res = await fetch(url(`/api/v1/openings/repertoire/${lineId}/review`), {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ..._authHeaders() },
+      body: JSON.stringify({ mistake_count: mistakeCount }),
+    });
+    return _json(res);
+  }
+
+  /** Retire une ligne du répertoire (EPIC 9). */
+  async function deleteOpeningLine(lineId) {
+    const res = await fetch(url(`/api/v1/openings/repertoire/${lineId}`), {
+      method: "DELETE",
+      headers: _authHeaders(),
+    });
+    return _json(res);
+  }
+
   /** Récupère le résumé agrégé des statistiques (US 4.1). */
   async function getStatsSummary(period = "30d") {
     return _json(await fetch(url("/api/v1/stats/summary", { period }), { headers: _authHeaders() }));
@@ -140,6 +189,7 @@ const ApiClient = (() => {
   return {
     baseUrl, url, analyzeGame, getGame, getGames, updateGameStatus,
     getNextTacticalProblem, submitTacticalAttempt, getTacticsStats,
+    createOpeningLine, getOpeningLines, getDueOpeningLines, reviewOpeningLine, deleteOpeningLine,
     getStatsSummary, getStatsHistory, isConfigured,
   };
 })();

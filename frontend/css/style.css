@@ -2010,6 +2010,60 @@ body.tactics-active .tactics-col { display: block; }
 .tactics-feedback--error { color: var(--col-blunder, #ca3431); }
 
 /* ==========================================================================
+   Entraîneur d'Ouvertures — Répertoire + SRS (EPIC 9, fonctionnalité bonus)
+   ========================================================================== */
+.openings-trainer-col {
+  display: none;
+  max-width: 720px;
+  margin: 0 auto;
+  padding: var(--space-lg) var(--space-md) var(--space-xl);
+}
+body.openings-trainer-active .dash-grid { display: none; }
+body.openings-trainer-active .board-col { display: none; }
+body.openings-trainer-active .openings-trainer-col { display: block; }
+
+.ot-section-title {
+  font-size: 1rem;
+  font-weight: 700;
+  margin-bottom: var(--space-sm);
+  color: var(--text-primary);
+}
+.ot-add-card, .ot-review-card, .ot-list-card { margin-bottom: var(--space-md); }
+
+.ot-add-form { display: flex; flex-direction: column; gap: var(--space-sm); }
+.ot-add-form input[type="text"] {
+  background: var(--bg-900);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 8px 10px;
+  color: var(--text-primary);
+  font-size: 0.85rem;
+}
+.ot-color-choice { display: flex; gap: var(--space-md); font-size: 0.85rem; color: var(--text-secondary); }
+
+.ot-feedback { font-size: 0.85rem; color: var(--text-secondary); margin-top: var(--space-sm); min-height: 1.2em; }
+
+.ot-review-title {
+  text-align: center;
+  font-weight: 700;
+  color: var(--text-primary);
+  margin-bottom: var(--space-sm);
+}
+
+.ot-line-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  padding: var(--space-sm) 0;
+  border-bottom: 1px solid var(--border);
+  font-size: 0.85rem;
+}
+.ot-line-row:last-child { border-bottom: none; }
+.ot-line-name { font-weight: 700; color: var(--text-primary); flex: 1; }
+.ot-line-color { color: var(--text-secondary); }
+.ot-line-due { color: var(--text-muted); font-size: 0.78rem; }
+
+/* ==========================================================================
    Vues détaillées par catégorie (US 4.2 — maquettes Finales / Tactiques)
    ========================================================================== */
 .adv-detail { display: none; }
