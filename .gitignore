@@ -43,5 +43,10 @@ coverage/
 *.tgz
 .npm/
 
+# Playwright E2E
+test-results/
+playwright-report/
+blob-report/
+
 # Claude internal
 .claude/projects/
