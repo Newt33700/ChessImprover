@@ -1916,6 +1916,11 @@ body.tactics-active .dash-grid { display: none; }
 body.tactics-active .board-col { display: none; }
 body.tactics-active .tactics-col { display: block; }
 
+/* Entraîneur de Finales (EPIC 10) réutilise le style `.tactics-col` générique */
+body.endgame-trainer-active .dash-grid { display: none; }
+body.endgame-trainer-active .board-col { display: none; }
+body.endgame-trainer-active #endgame-trainer-col { display: block; }
+
 .tactics-topbar {
   display: flex;
   align-items: center;

@@ -298,6 +298,31 @@ class TacticalStatsResponse(BaseModel):
 
 
 # ---------------------------------------------------------------------------
+# Entraîneur de Finales Essentielles (EPIC 10, fonctionnalité bonus)
+# ---------------------------------------------------------------------------
+
+class EndgameProblemPublic(BaseModel):
+    """Position de finale exposée au client — jamais `solution` avant tentative."""
+    id: str
+    fen: str
+    category: str
+    difficulty_elo: int
+
+
+class EndgameAttemptRequest(BaseModel):
+    """Coup joué par l'utilisateur pour résoudre une position de finale."""
+    problem_id: str
+    move: str = Field(..., min_length=2, description="Coup joué en notation SAN")
+
+
+class EndgameAttemptResult(BaseModel):
+    """Résultat d'une tentative : révèle la solution après coup."""
+    success: bool
+    new_elo: int
+    solution: str
+
+
+# ---------------------------------------------------------------------------
 # Entraîneur d'Ouvertures — Répertoire + SRS (EPIC 9, fonctionnalité bonus)
 # ---------------------------------------------------------------------------
 
