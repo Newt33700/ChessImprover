@@ -595,6 +595,62 @@ def get_next_tactical_problem_for_categories(
     return select_nearest_problem(pool, tactical_elo)
 
 
+# ---------------------------------------------------------------------------
+# EPIC 12 — Mode "Tactical Sprint" (US 11.1/11.2)
+# ---------------------------------------------------------------------------
+
+_tactical_sprints: Dict[str, Dict[str, Any]] = {}  # keyed by sprint_id
+
+
+def create_sprint(user_id: str) -> Dict[str, Any]:
+    """Démarre un sprint — `started_at` fixé côté serveur (chrono anti-triche)."""
+    repo = _pg()
+    if repo is not None:  # pragma: no cover - nécessite DATABASE_URL
+        return repo.create_sprint(user_id)
+    sprint_id = str(uuid.uuid4())
+    sprint = {
+        "id": sprint_id,
+        "user_id": user_id,
+        "score": 0,
+        "problems_solved_count": 0,
+        "duration_seconds": 0,
+        "moves": [],
+        "started_at": datetime.now(timezone.utc),
+        "finished_at": None,
+    }
+    _tactical_sprints[sprint_id] = sprint
+    return sprint
+
+
+def get_sprint(sprint_id: str) -> Optional[Dict[str, Any]]:
+    repo = _pg()
+    if repo is not None:  # pragma: no cover - nécessite DATABASE_URL
+        return repo.get_sprint(sprint_id)
+    return _tactical_sprints.get(sprint_id)
+
+
+def update_sprint(sprint_id: str, **fields: Any) -> Optional[Dict[str, Any]]:
+    repo = _pg()
+    if repo is not None:  # pragma: no cover - nécessite DATABASE_URL
+        return repo.update_sprint(sprint_id, **fields)
+    sprint = _tactical_sprints.get(sprint_id)
+    if sprint is None:
+        return None
+    sprint.update(fields)
+    return sprint
+
+
+def get_best_sprint() -> Optional[Dict[str, Any]]:
+    """Meilleur sprint **terminé**, toutes utilisateurs confondus (mode Ghost, US 11.2)."""
+    repo = _pg()
+    if repo is not None:  # pragma: no cover - nécessite DATABASE_URL
+        return repo.get_best_sprint()
+    finished = [s for s in _tactical_sprints.values() if s.get("finished_at") is not None]
+    if not finished:
+        return None
+    return max(finished, key=lambda s: s["score"])
+
+
 def _reset_store() -> None:
     """Reset in-memory store between tests."""
     _users.clear()
@@ -605,3 +661,4 @@ def _reset_store() -> None:
     _tactical_attempts.clear()
     _opening_lines.clear()
     _error_profiles.clear()
+    _tactical_sprints.clear()

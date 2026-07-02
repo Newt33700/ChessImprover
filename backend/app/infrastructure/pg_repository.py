@@ -318,3 +318,45 @@ class PgRepository:
             row = dict(cur.fetchone())
             conn.commit()
         return self._iso(row)
+
+    # -- EPIC 12 : mode Tactical Sprint (US 11.1/11.2) ------------------------
+
+    def create_sprint(self, user_id: str) -> Dict[str, Any]:  # pragma: no cover
+        sql = "INSERT INTO tactical_sprints (user_id) VALUES (%s::uuid) RETURNING *"
+        with self._connect() as conn, conn.cursor() as cur:
+            cur.execute(sql, (user_id,))
+            row = dict(cur.fetchone())
+            conn.commit()
+        return self._iso(row)
+
+    def get_sprint(self, sprint_id: str) -> Optional[Dict[str, Any]]:  # pragma: no cover
+        sql = "SELECT * FROM tactical_sprints WHERE id = %s::uuid"
+        with self._connect() as conn, conn.cursor() as cur:
+            cur.execute(sql, (sprint_id,))
+            row = cur.fetchone()
+            return self._iso(dict(row)) if row else None
+
+    def update_sprint(
+        self, sprint_id: str, **fields: Any
+    ) -> Optional[Dict[str, Any]]:  # pragma: no cover - nécessite une base réelle
+        from psycopg.types.json import Json
+
+        columns = list(fields.keys())
+        values = [Json(v) if k == "moves" else v for k, v in fields.items()]
+        set_clause = ", ".join(f"{c} = %s" for c in columns)
+        sql = f"UPDATE tactical_sprints SET {set_clause} WHERE id = %s::uuid RETURNING *"
+        with self._connect() as conn, conn.cursor() as cur:
+            cur.execute(sql, (*values, sprint_id))
+            row = cur.fetchone()
+            conn.commit()
+            return self._iso(dict(row)) if row else None
+
+    def get_best_sprint(self) -> Optional[Dict[str, Any]]:  # pragma: no cover
+        sql = (
+            "SELECT * FROM tactical_sprints WHERE finished_at IS NOT NULL "
+            "ORDER BY score DESC LIMIT 1"
+        )
+        with self._connect() as conn, conn.cursor() as cur:
+            cur.execute(sql)
+            row = cur.fetchone()
+            return self._iso(dict(row)) if row else None
