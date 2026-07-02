@@ -148,7 +148,8 @@ ChessImprover/
 │       │   ├── stats_aggregator.py     # Agrégation → résumé /stats/summary (US 4.1)
 │       │   ├── progress_history.py     # Snapshot Elo + fenêtre glissante (US 5.1)
 │       │   ├── srs_engine.py           # Algorithme SM-2 côté backend
-│       │   └── error_profile.py        # EPIC 11 : détection patterns + score EMA (US 9.1/9.2)
+│       │   ├── error_profile.py        # EPIC 11 : détection patterns + score EMA (US 9.1/9.2)
+│       │   └── tactical_sprint.py      # EPIC 12 : chrono serveur + score + séquence Ghost (US 11.1/11.2)
 │       ├── infrastructure/
 │       │   ├── chess_com_client.py     # Proxy httpx vers Chess.com API
 │       │   ├── engine.py               # EngineProvider (évals client / Stockfish natif) — EPIC 2
@@ -160,7 +161,8 @@ ChessImprover/
 │       │   ├── sync.py                 # POST /sync — stratégie Client Wins (US 7)
 │       │   ├── games.py                # POST /games/analyze, GET /games (US 7.1), GET stats/summary, GET stats/history (JWT requis, US 6.4)
 │       │   ├── tactics.py              # GET /tactics/next, /tactics/custom (EPIC 11), POST /tactics/attempt (US 8.1)
-│       │   └── error_profile.py        # EPIC 11 : GET /error-profile (US 9.1)
+│       │   ├── error_profile.py        # EPIC 11 : GET /error-profile (US 9.1)
+│       │   └── tactical_sprint.py      # EPIC 12 : POST /sprints/start /{id}/attempt /{id}/finish, GET /sprints/ghost
 │       ├── tests/
 │       │   ├── test_auth.py            # 37 TUs auth : hash, JWT, signup, login, me, PATCH me, sync
 │       │   ├── test_analyzer.py
@@ -189,7 +191,10 @@ ChessImprover/
 │       │   ├── test_endgames_api.py    # EPIC 10 : routes GET next (+ filtre theme_id) / POST attempt
 │       │   ├── test_error_profile.py   # EPIC 11 : détection patterns + score EMA
 │       │   ├── test_db_error_profile.py # EPIC 11 : store profils d'erreur (CRUD)
-│       │   └── test_error_profile_api.py # EPIC 11 : câblage worker + routes /error-profile, /tactics/custom
+│       │   ├── test_error_profile_api.py # EPIC 11 : câblage worker + routes /error-profile, /tactics/custom
+│       │   ├── test_tactical_sprint.py # EPIC 12 : chrono serveur + score
+│       │   ├── test_db_tactical_sprint.py # EPIC 12 : store sprints (CRUD + meilleur sprint public)
+│       │   └── test_tactical_sprint_api.py # EPIC 12 : cycle start/attempt/finish, expiration, /sprints/ghost
 │       └── mutants/                    # Mutation testing mutmut
 │
 ├── supabase/
@@ -205,7 +210,8 @@ ChessImprover/
 │       ├── 20260701201530_tactical_attempts.sql # Table tactical_attempts (historique, RLS) (US 8.4)
 │       ├── 20260701223519_opening_repertoire.sql # Table opening_repertoire (répertoire + SRS, RLS) (EPIC 9)
 │       ├── 20260702051516_endgames_epic10.sql  # Table endgame_problems + profiles.endgame_elo + seed 9 positions (EPIC 10)
-│       └── 20260702064353_user_error_profiles_epic11.sql # Table user_error_profiles (score EMA, RLS) (EPIC 11)
+│       ├── 20260702064353_user_error_profiles_epic11.sql # Table user_error_profiles (score EMA, RLS) (EPIC 11)
+│       └── 20260702070437_tactical_sprints_epic12.sql # Table tactical_sprints (chrono, moves Ghost, RLS lecture publique) (EPIC 12)
 │
 └── .github/
     └── workflows/
@@ -1097,6 +1103,34 @@ Modules **purs** (couche domaine), entièrement testés, indépendants de l'infr
 - Vérifié en navigateur (Playwright + Chromium) : 4 parties avec la même gaffe (pièce non protégée) → bandeau affiché avec le bon libellé ; clic sur le bouton → problème `hanging_piece` chargé ; sans erreur récurrente, bandeau masqué. Captures à l'appui.
 - Tests : `backend/tests/test_error_profile.py` (détection + score EMA, 15 tests), `backend/tests/test_db_error_profile.py` (CRUD store, 10 tests), `backend/tests/test_error_profile_api.py` (12 tests d'intégration : câblage worker, isolation entre utilisateurs, `/tactics/custom` 200/422/401), `backend/tests/test_pg_repository.py` (contrat de signature), `frontend/tests/api_client.test.js` (4 nouveaux tests), `frontend/tests/e2e/error_profile.spec.js` (3 tests bout-en-bout).
 
+### 4.13 EPIC 12 — Mode "Tactical Sprint" (Social & Compétitif)
+
+**Fichiers :** `domain/tactical_sprint.py`, `routers/tactical_sprint.py`, `infrastructure/db_client.py` + `pg_repository.py`, `supabase/migrations/20260702070437_tactical_sprints_epic12.sql`, `js/api_client.js`, `js/app.js`, `index.html` (`#sprint-col`)
+
+> **Contexte :** backlog fourni par l'utilisateur, traité en dernier des 3 EPIC (11/12/13) par ordre de priorité PO. Recommandation PO explicite suivie à la lettre : mode Ghost simple (coups enregistrés + rejoués), un fetch/GET plutôt qu'une synchronisation WebSocket.
+
+**Chrono anti-triche 100 % serveur** (`domain.tactical_sprint.is_sprint_active`/`elapsed_seconds`) : contrairement à un minuteur qui bloquerait un worker par sprint actif (`asyncio.sleep`, ne passerait pas à l'échelle), le backend reste stateless entre requêtes — `started_at` est fixé au démarrage, et chaque tentative recalcule le temps écoulé côté serveur (`now() - started_at`) pour décider si le sprint est encore actif. Une tentative reçue hors fenêtre clôture le sprint automatiquement et ne compte jamais, quel que soit ce que le client affiche à cet instant — le décompte visuel côté frontend n'est qu'un affichage, jamais la source de vérité.
+
+**Routes** (JWT requis) :
+
+| Route | Méthode | Comportement |
+|---|---|---|
+| `/api/v1/sprints/start` | POST | Démarre un sprint (`started_at=now()`), renvoie `sprint_id`, la durée autorisée (60s) et le premier problème (sélection adaptative par Elo tactique, réutilise `get_next_tactical_problem` — aucune duplication). |
+| `/api/v1/sprints/{id}/attempt` | POST | Valide le coup **côté serveur** (`is_correct_move`, réutilisé de l'US 8.1) ; un coup correct incrémente `problems_solved_count`/`score` et enregistre le coup pour le mode Ghost ; renvoie toujours le problème suivant si le temps restant le permet (correct ou non — un sprint avance quel que soit le résultat, contrairement au Coach Tactique classique). |
+| `/api/v1/sprints/{id}/finish` | POST | Clôture le sprint (abandon volontaire ou temps écoulé côté client), fige `duration_seconds`/`score` finaux. Idempotent. |
+| `/api/v1/sprints/ghost` | GET | Meilleur sprint **terminé**, toutes utilisateurs confondus — un simple GET, pas de WebSocket (cf. recommandation PO), appelé une seule fois au démarrage d'un sprint (pas de polling continu : le classement ne change qu'à la clôture d'un sprint). |
+
+**Règles métier :**
+- **Score** (`domain.tactical_sprint.compute_score`) : 10 points fixes par problème résolu (MVP, pas de bonus de vitesse pour l'instant — cf. §10).
+- **Sélection des problèmes** : réutilise `db_client.get_next_tactical_problem`/`select_nearest_problem` (US 8.1) sur l'Elo tactique de l'utilisateur, **jamais modifié par un sprint** (le score de sprint est distinct de l'Elo tactique classique, cohérent avec la séparation déjà en place Elo tactique/Elo finales d'EPIC 10).
+- **Séquence Ghost** (`domain.tactical_sprint.record_ghost_move`) : chaque coup **résolu** est ajouté à `moves` (JSONB, `[{problem_id, move, elapsed_ms}]`) — pas de PGN littéral nécessaire, chaque entrée référence sa propre position de départ via `problem_id` (déjà connu du store `tactical_problems`).
+- **Persistance** : table `tactical_sprints`, seule table du schéma à RLS **partiellement publique** (`SELECT` ouvert à tous — mode Ghost = fonctionnalité compétitive/sociale par nature, cf. titre EPIC 12 ; `INSERT`/`UPDATE` restent restreints au propriétaire). `db_client`/`PgRepository` implémentent la délégation complète (create/get/update/best), sans reproduire le gap `tactical_problems` de US 8.1 (§10.6).
+
+**Frontend :** carte **SPRINT** dans le dashboard → vue plein écran `#sprint-col` (`body.sprint-active`, même mécanisme que les autres entraîneurs). Timer en haut (`#sprint-timer-badge`, décompte client purement visuel, `setInterval` 1s), compteur de problèmes résolus en bas (`#sprint-solved-count`), échiquier indépendant identique en tout point aux autres entraîneurs (`_initSprintBoard`/`_onSprintDrop`). Case à cocher **Ghost** (`#sprint-ghost-toggle`) : affiche un bandeau (`#sprint-ghost-overlay`) comparant la progression du meilleur sprint enregistré à l'instant courant du sprint en cours (nombre de coups Ghost déjà résolus à ce temps écoulé) — lecture pure du fetch initial (`_startSprint`), aucun appel réseau supplémentaire pendant le sprint.
+
+- Vérifié en navigateur (Playwright + Chromium) : sprint démarré, coup résolu → compteur à jour, sprint clôturé (simulation d'expiration) → message de score final, Ghost affiché avec le score du meilleur sprint précédent. Captures à l'appui.
+- Tests : `backend/tests/test_tactical_sprint.py` (chrono + score, 12 tests), `backend/tests/test_db_tactical_sprint.py` (CRUD store + visibilité publique du meilleur sprint, 9 tests), `backend/tests/test_tactical_sprint_api.py` (14 tests d'intégration : cycle complet start/attempt/finish, expiration côté serveur, isolation propriétaire, `/sprints/ghost`), `backend/tests/test_pg_repository.py` (contrat de signature), `frontend/tests/api_client.test.js` (5 nouveaux tests), `frontend/tests/e2e/sprint.spec.js` (3 tests bout-en-bout).
+
 ---
 
 ## 5. Règles métier
@@ -1359,8 +1393,11 @@ JWT_SECRET=ci-test-secret pytest tests/ -v
 | `test_error_profile.py` | `detect_error_occurrences` (hanging_piece/time_pressure mutuellement exclusifs, missed_mate depuis `game_moves`, isolation par couleur), `update_frequency_score` (EMA, bornes 0-100, franchissement du seuil récurrent), `is_recurring` | EPIC 11 |
 | `test_db_error_profile.py` | Store profils d'erreur : création/mise à jour (upsert), isolation par utilisateur/type, `get_next_tactical_problem_for_categories` (pool multi-thèmes) | EPIC 11 |
 | `test_error_profile_api.py` | Câblage `run_analysis` → profil mis à jour après analyse (blunder, mat manqué via evals), franchissement du seuil récurrent sur 4 parties, isolation entre utilisateurs, `GET /tactics/custom` (200/422 focus inconnu/401, solution jamais renvoyée) | EPIC 11 |
+| `test_tactical_sprint.py` | `elapsed_seconds`/`is_sprint_active` (fenêtre exacte, bornes), `compute_score` (pur, déterministe), `record_ghost_move` (immutabilité) | EPIC 12 |
+| `test_db_tactical_sprint.py` | Store sprints : création (defaults), mise à jour, **`get_best_sprint` public** (visible entre utilisateurs, ignore les sprints non terminés) | EPIC 12 |
+| `test_tactical_sprint_api.py` | Cycle complet `POST /start` → `POST /{id}/attempt` (succès/échec, score, problème suivant) → `POST /{id}/finish` (idempotent), **expiration côté serveur** (horloge manipulée directement dans le store, sprint clôturé automatiquement), isolation propriétaire (404), `GET /sprints/ghost` (200/401, meilleur score toutes utilisateurs confondus) | EPIC 12 |
 
-**Couverture backend :** 604 TUs au total, couverture globale **89 %+** ; cœur Stats Avancées + EPIC 1/5.1/US 4.2 à 92–100 % (`stats_aggregator`, `cadence`, `progress_history`, `models`, `engine` à 100 %, `analysis_pipeline` 92 %, `routers/games` 92 %, `db_client` 98 %). Les requêtes SQL réelles de `pg_repository` (nécessitant une base) sont marquées `pragma: no cover`.
+**Couverture backend :** 640 TUs au total, couverture globale **89 %+** ; cœur Stats Avancées + EPIC 1/5.1/US 4.2 à 92–100 % (`stats_aggregator`, `cadence`, `progress_history`, `models`, `engine` à 100 %, `analysis_pipeline` 92 %, `routers/games` 92 %, `db_client` 98 %). Les requêtes SQL réelles de `pg_repository` (nécessitant une base) sont marquées `pragma: no cover`.
 
 **Architecture de test `test_auth.py` :**
 - App de test minimale (`FastAPI()` + routers auth/sync uniquement) pour éviter la dépendance `python-chess`
@@ -1390,8 +1427,9 @@ npm run test:e2e
 | `openings.spec.js` | Entraîneur d'Ouvertures (EPIC 9) : ajout + révision complète d'une ligne (calendrier SM-2 avancé à J+1), rejet d'une séquence illégale (422) |
 | `endgames.spec.js` | Entraîneur de Finales (EPIC 10) : mat trouvé (Elo +15), coup incorrect (Elo −15), filtre par catégorie |
 | `error_profile.spec.js` | Analyse Comportementale (EPIC 11) : 4 gaffes répétées déclenchent le bandeau Entraînement Personnalisé, clic → problème `hanging_piece` chargé, bandeau masqué sans erreur récurrente |
+| `sprint.spec.js` | Mode Tactical Sprint (EPIC 12) : coup résolu incrémente le compteur, clôture du sprint affiche le score final, bandeau Ghost affiche le meilleur score une fois activé |
 
-> **Origine :** ces 4 specs sont la version persistée des scripts de vérification Playwright ad hoc écrits (puis jetés) pendant le développement d'US 8.3/8.4, EPIC 9, EPIC 10 et EPIC 11. Les garder comme suite rejouable évite de réécrire ce câblage à chaque nouvelle fonctionnalité et donne une vraie couverture de régression bout-en-bout, en plus des TUs Jest/pytest.
+> **Origine :** ces 5 specs sont la version persistée des scripts de vérification Playwright ad hoc écrits (puis jetés) pendant le développement d'US 8.3/8.4, EPIC 9, EPIC 10, EPIC 11 et EPIC 12. Les garder comme suite rejouable évite de réécrire ce câblage à chaque nouvelle fonctionnalité et donne une vraie couverture de régression bout-en-bout, en plus des TUs Jest/pytest.
 
 ---
 
@@ -1548,6 +1586,7 @@ UNIQUE (user_id)
 | **Entraîneur de Finales Essentielles** (EPIC 10, bonus) | `routers/endgames.py` (réutilise `domain/tactics.py` + `domain/tactical_elo.py`) + `index.html:#endgame-trainer-col` + `app.js:_initEndgameBoard/_onEndgameDrop/_submitEndgameAttempt` | Carte TECHNIQUE DE MAT → vue plein écran, 3 catégories (Roi+Dame/Roi+Tour/Roi+2 Tours), Elo « finales » distinct, échiquier jouable avec feedback vert/rouge, opérationnel et testé |
 | **Indépendance des assets externes** (EPIC 13, US 12.1) | `frontend/assets/{js,css,fonts,images,data}/` + `index.html` + `app.js`/`board_manager.js` (`pieceTheme`) + `engine_worker_wasm.js` | jQuery/chess.js/chessboard.js/Chart.js/polices/pièces/ouvertures ECO servis depuis le dépôt, zéro appel `cdnjs`/`jsdelivr`/`lichess1.org`/`fonts.googleapis.com` au chargement, vérifié (zéro requête externe) |
 | **Analyse Comportementale — profil d'erreurs** (EPIC 11, US 9.1/9.2) | `domain/error_profile.py` + `routers/error_profile.py` + `routers/tactics.py:/custom` + `routers/games.py:run_analysis` + `index.html:#tactics-custom-training` + `app.js:_loadErrorProfileHint/_startCustomTraining` | Profil mis à jour après chaque partie analysée (score EMA par type d'erreur), bandeau « Entraînement Personnalisé » affiché si récurrent (score > 70), bouton chargeant un problème du thème associé, opérationnel et testé |
+| **Mode Tactical Sprint** (EPIC 12, US 11.1/11.2) | `domain/tactical_sprint.py` + `routers/tactical_sprint.py` + `index.html:#sprint-col` + `app.js:_startSprint/_onSprintDrop/_submitSprintAttempt/_endSprint/_renderGhostOverlay` | Carte SPRINT → vue plein écran, sprint 60s chronométré côté serveur (anti-triche), score/compteur en direct, mode Ghost (fetch unique, surimpression togglable), opérationnel et testé |
 
 ### ❌ Non câblé ou incomplet
 
@@ -1613,6 +1652,12 @@ L'API Chess.com retourne `g.accuracies.white/black`. Les afficher dans les barre
 **Fait :** intégralité de l'audit + rapatriement (§4.11) — zéro dépendance CDN au chargement de l'application.
 
 **Reste (idées non bloquantes) :** (1) build WASM+NNUE de Stockfish auto-hébergé — le fallback asm.js local suffit fonctionnellement (mêmes profondeur/temps minimum, `depth 15`/`movetime 500`) mais un futur build `.wasm` vendorisé restaurerait le gain de performance perdu par la suppression du CDN WASM ; (2) bucket Supabase Storage « assets » pour servir ces fichiers statiques (pièces/polices/librairies) via CDN Supabase plutôt que depuis le dépôt git/Vercel, envisageable si le volume d'assets grossit significativement — non nécessaire à ce stade (poids total < 1 Mo).
+
+### 10.8 🟢 EPIC 12 — Mode Tactical Sprint (reste)
+
+**Fait :** cycle complet start/attempt/finish avec chrono anti-triche serveur, score, mode Ghost (fetch unique, surimpression togglable).
+
+**Reste (idées non bloquantes) :** (1) bonus de score à la vitesse de résolution (`compute_score` est actuellement un simple `problems_solved_count × 10`, sans tenir compte du temps mis par coup — l'info existe déjà dans `moves[].elapsed_ms`, prête à être exploitée) ; (2) durée de sprint configurable (actuellement fixe, `SPRINT_DURATION_SECONDS = 60`) ; (3) un vrai classement/leaderboard (le mode Ghost n'expose que le meilleur score, pas un top N) — la RLS de lecture publique de `tactical_sprints` le permettrait sans migration supplémentaire.
 
 ---
 

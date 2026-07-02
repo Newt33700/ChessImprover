@@ -655,6 +655,29 @@ En tant qu'équipe, nous voulons que chaque modification de `supabase/migrations
 
 **Statut (US 11.1 + 11.2) :** ✅ Implémenté — voir §4.12 du README pour le détail technique complet (schéma, formule de fréquence, routes, câblage frontend, tests).
 
+## EPIC 12 : Mode "Tactical Sprint" (Social & Compétitif)
+
+**Contexte :** backlog fourni par l'utilisateur (paste PO), initialement numéroté « US 11.1/11.2 » — **renuméroté EPIC 12** (même rationale de collision que EPIC 11/13, cf. §4.11). Traité en dernier des 3 EPIC du backlog, conformément à l'ordre de priorité PO. Recommandation PO explicite suivie : « Fais simple sur le mode Ghost. Enregistre juste les coups et rejoue-les. Pas besoin de synchronisation WebSocket complexe... un simple polling ou un fetch suffira. »
+
+**En tant qu'** utilisateur, **je veux** résoudre un maximum de problèmes tactiques en un temps limité et me comparer au meilleur score enregistré, **afin de** m'entraîner de façon intensive et compétitive.
+
+### US 12.1 : Sprint chronométré côté serveur
+
+**Description :** un sprint de 60 secondes pendant lequel un maximum de problèmes tactiques doit être résolu, avec un score final.
+
+**Critères d'Acceptation (DoD) :**
+- Table `tactical_sprints` (`sprint_id`, `user_id`, `score`, `problems_solved_count`, `duration_seconds`).
+- Le chrono est géré côté serveur (impossible de tricher en modifiant l'horloge du client) : la fenêtre de temps autorisée est vérifiée à chaque tentative en comparant l'horodatage de démarrage à l'horloge serveur.
+- Chaque coup est validé 100 % serveur (jamais de confiance aveugle au client), comme le reste du produit.
+
+### US 12.2 : Mode Ghost — replay du meilleur sprint
+
+**Description :** afficher en surimpression la progression du meilleur sprint enregistré (toutes utilisateurs confondus), pour se mesurer à lui.
+
+**Critères d'Acceptation (DoD) :** la séquence de coups résolus du meilleur sprint terminé est enregistrée et récupérable via un simple GET (pas de WebSocket) ; le frontend peut activer/désactiver son affichage en surimpression.
+
+**Statut (US 12.1 + 12.2) :** ✅ Implémenté — voir §4.13 du README pour le détail technique complet (schéma, chrono anti-triche, routes, câblage frontend, tests).
+
 ## Amélioration outillage : suite E2E Playwright persistée
 
 **Contexte :** demande explicite de l'utilisateur — les vérifications Playwright de US 8.3/8.4, EPIC 9 et EPIC 10 étaient jusqu'ici des scripts ad hoc écrits dans le scratchpad puis jetés à chaque US. Par souci d'économie (ne pas réécrire ce câblage à chaque fois) et de qualité (couverture de régression bout-en-bout rejouable), ces scripts sont désormais persistés dans le dépôt (`frontend/tests/e2e/`) et exécutables via `npm run test:e2e`, avec un job CI dédié (`.github/workflows/e2e-tests.yml`).
