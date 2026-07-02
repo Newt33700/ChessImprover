@@ -1974,6 +1974,20 @@ body.endgame-trainer-active #endgame-trainer-col { display: block; }
 .tactics-theme-btn.active { background: var(--green); color: #fff; border-color: var(--green-dark); }
 .tactics-theme-btn:hover:not(.active) { background: var(--bg-600); }
 
+/* EPIC 11 (US 9.2) : bandeau "Entraînement Personnalisé" */
+.tactics-custom-training {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-md);
+  background: rgba(255,159,28,0.1);
+  border: 1px solid rgba(255,159,28,0.3);
+  border-radius: var(--radius-sm);
+  padding: var(--space-sm) var(--space-md);
+  margin-bottom: var(--space-lg);
+}
+.tactics-custom-hint { color: var(--text-secondary); font-size: 0.85rem; margin: 0; }
+
 .tactics-problem-card { max-width: 480px; margin: 0 auto; }
 .tactics-fen {
   font-family: var(--font-mono, monospace);

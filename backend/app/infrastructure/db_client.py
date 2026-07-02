@@ -533,6 +533,68 @@ def delete_opening_line(line_id: str, user_id: str) -> bool:
     return True
 
 
+# ---------------------------------------------------------------------------
+# EPIC 11 — Profils d'erreur comportementale (US 9.1/9.2)
+# ---------------------------------------------------------------------------
+
+_error_profiles: Dict[str, Dict[str, Dict[str, Any]]] = {}  # user_id -> error_type -> profile
+
+
+def get_error_profile(user_id: str, error_type: str) -> Optional[Dict[str, Any]]:
+    repo = _pg()
+    if repo is not None:  # pragma: no cover - nécessite DATABASE_URL
+        return repo.get_error_profile(user_id, error_type)
+    return _error_profiles.get(user_id, {}).get(error_type)
+
+
+def get_error_profiles(user_id: str) -> List[Dict[str, Any]]:
+    """Tous les profils d'erreur de l'utilisateur (un par type observé au moins une fois)."""
+    repo = _pg()
+    if repo is not None:  # pragma: no cover - nécessite DATABASE_URL
+        return repo.get_error_profiles(user_id)
+    return list(_error_profiles.get(user_id, {}).values())
+
+
+def upsert_error_profile(
+    user_id: str, error_type: str, frequency_score: float, last_observed: str
+) -> Dict[str, Any]:
+    """Crée ou met à jour le score de fréquence d'un type d'erreur (1 ligne par
+    couple user_id/error_type, cf. contrainte UNIQUE de la migration)."""
+    repo = _pg()
+    if repo is not None:  # pragma: no cover - nécessite DATABASE_URL
+        return repo.upsert_error_profile(user_id, error_type, frequency_score, last_observed)
+    profile = {
+        "user_id": user_id,
+        "error_type": error_type,
+        "frequency_score": frequency_score,
+        "last_observed": last_observed,
+    }
+    _error_profiles.setdefault(user_id, {})[error_type] = profile
+    return profile
+
+
+def get_next_tactical_problem_for_categories(
+    tactical_elo: int, categories: List[str]
+) -> Optional[Dict[str, Any]]:
+    """EPIC 11 — variante multi-catégories de `get_next_tactical_problem`.
+
+    Sert l'entraînement personnalisé (US 9.2) quand un type d'erreur pointe
+    vers plusieurs thèmes tactiques (ex. `missed_mate` -> mate_in_1 +
+    mate_in_2). Réutilise directement `select_nearest_problem` (US 8.1),
+    aucune duplication de la logique de sélection adaptative.
+    """
+    repo = _pg()
+    if repo is not None:  # pragma: no cover - nécessite DATABASE_URL, cf. gap §10.6
+        pool = []
+        for cat in categories:
+            problem = repo.get_next_tactical_problem(tactical_elo, cat)
+            if problem is not None:
+                pool.append(problem)
+        return select_nearest_problem(pool, tactical_elo) if pool else None
+    pool = [p for p in _tactical_problems.values() if p["category"] in categories]
+    return select_nearest_problem(pool, tactical_elo)
+
+
 def _reset_store() -> None:
     """Reset in-memory store between tests."""
     _users.clear()
@@ -542,3 +604,4 @@ def _reset_store() -> None:
     _progress_history.clear()
     _tactical_attempts.clear()
     _opening_lines.clear()
+    _error_profiles.clear()

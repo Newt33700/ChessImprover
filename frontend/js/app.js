@@ -24,6 +24,13 @@ const XP_PER_GAME     = 50;
 const XP_PER_EXERCISE = 10;
 const XP_PER_LEVEL    = (lvl) => lvl * 100;
 
+// EPIC 11 (US 9.1/9.2) — libellés lisibles des error_type du profil comportemental.
+const ERROR_TYPE_LABELS = {
+  hanging_piece: "Gaffe sur pièce non protégée",
+  time_pressure: "Erreur sous pression de temps",
+  missed_mate: "Oubli de tactique de mat",
+};
+
 // Calibré pour analyse depth-5 (moteur asm.js) : 100cp perte → ~74% précision
 const DECAY = 0.003;
 
@@ -379,6 +386,11 @@ class ChessImproverApp {
       document.querySelectorAll("#tactics-themes .tactics-theme-btn").forEach((b) => b.classList.remove("active"));
       btn.classList.add("active");
       this._loadTacticalProblem(btn.dataset.theme || null);
+    });
+
+    // Analyse Comportementale (EPIC 11, US 9.2) — Entraînement Personnalisé
+    document.getElementById("btn-custom-training")?.addEventListener("click", () => {
+      this._startCustomTraining();
     });
 
     // Entraîneur d'Ouvertures (EPIC 9) — ajout d'une ligne au répertoire
@@ -1653,6 +1665,40 @@ class ChessImproverApp {
     document.body.classList.add("tactics-active");
     this._loadTacticalProblem(null);
     this._loadTacticsStreak();
+    this._loadErrorProfileHint();
+  }
+
+  /**
+   * EPIC 11 (US 9.1/9.2) — affiche le bandeau « Entraînement Personnalisé »
+   * si un type d'erreur du profil comportemental est marqué récurrent
+   * (`is_recurring`, calculé côté serveur : score de fréquence > 70).
+   */
+  async _loadErrorProfileHint() {
+    const container = document.getElementById("tactics-custom-training");
+    const hint = document.getElementById("tactics-custom-hint");
+    if (!container || !hint) return;
+    container.hidden = true;
+    this._recurringErrorType = null;
+    if (!window.ApiClient || !ApiClient.isConfigured() || !window.Auth?.isLoggedIn()) return;
+    try {
+      const { profiles } = await ApiClient.getErrorProfile();
+      const recurring = (profiles || [])
+        .filter((p) => p.is_recurring)
+        .sort((a, b) => b.frequency_score - a.frequency_score)[0];
+      if (!recurring) return;
+      this._recurringErrorType = recurring.error_type;
+      hint.textContent = `Problème récurrent détecté : ${ERROR_TYPE_LABELS[recurring.error_type] || recurring.error_type}`;
+      container.hidden = false;
+    } catch {
+      /* pas de bandeau si l'appel échoue — dégrade silencieusement */
+    }
+  }
+
+  /** Démarre une boucle d'entraînement ciblée sur le type d'erreur récurrent détecté. */
+  _startCustomTraining() {
+    if (!this._recurringErrorType) return;
+    document.querySelectorAll("#tactics-themes .tactics-theme-btn").forEach((b) => b.classList.remove("active"));
+    this._loadTacticalProblem(null, this._recurringErrorType);
   }
 
   /** Initialise le badge Série (🔥) à l'ouverture du Coach Tactique (US 8.4). */
@@ -1676,17 +1722,20 @@ class ChessImproverApp {
    * l'affiche. Nécessite d'être connecté (route protégée par JWT, US 6.4) :
    * affiche un message explicite plutôt qu'une erreur brute sinon.
    */
-  async _loadTacticalProblem(themeId) {
+  async _loadTacticalProblem(themeId, customFocus) {
     const body = document.getElementById("tactics-problem-body");
     if (!body) return;
     this._currentTacticsTheme = themeId || null;
+    this._customFocus = customFocus || null;
     if (!window.ApiClient || !ApiClient.isConfigured() || !window.Auth?.isLoggedIn()) {
       body.innerHTML = `<p class="empty-state">Connectez-vous pour accéder au Coach Tactique.</p>`;
       return;
     }
     body.innerHTML = `<p class="empty-state">Chargement…</p>`;
     try {
-      const problem = await ApiClient.getNextTacticalProblem(themeId || undefined);
+      const problem = customFocus
+        ? await ApiClient.getCustomTacticalProblem(customFocus)
+        : await ApiClient.getNextTacticalProblem(themeId || undefined);
       const badge = document.getElementById("tactics-elo-badge");
       if (badge) badge.textContent = `Elo ${problem.difficulty_elo}`;
       body.innerHTML = `
@@ -1767,7 +1816,7 @@ class ChessImproverApp {
         this._renderXP(xp, level);
         StreakSystem.record();
       }
-      setTimeout(() => this._loadTacticalProblem(this._currentTacticsTheme), 1600);
+      setTimeout(() => this._loadTacticalProblem(this._currentTacticsTheme, this._customFocus), 1600);
     } catch {
       if (feedback) feedback.textContent = "Erreur lors de la validation du coup.";
       this._tacticsSolved = false;

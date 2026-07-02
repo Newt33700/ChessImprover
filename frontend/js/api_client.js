@@ -121,6 +121,27 @@ const ApiClient = (() => {
   }
 
   /**
+   * Profil d'erreurs comportementales (EPIC 11, US 9.1) : un score de
+   * fréquence (0-100) par type d'erreur déjà observé, avec `is_recurring`
+   * calculé côté serveur (score > 70).
+   */
+  async function getErrorProfile() {
+    return _json(await fetch(url("/api/v1/error-profile"), { headers: _authHeaders() }));
+  }
+
+  /**
+   * Problème tactique ciblant un type d'erreur du profil comportemental
+   * (EPIC 11, US 9.2 — bouton « Entraînement Personnalisé »). `focus` est un
+   * `error_type` (`hanging_piece`/`time_pressure`/`missed_mate`), pas un
+   * `theme_id` tactique brut : le backend fait la correspondance.
+   */
+  async function getCustomTacticalProblem(focus) {
+    return _json(
+      await fetch(url("/api/v1/tactics/custom", { focus }), { headers: _authHeaders() })
+    );
+  }
+
+  /**
    * Sélectionne la prochaine position de finale (EPIC 10), proche de l'Elo
    * « finales » de l'utilisateur. `themeId` filtre par catégorie de mat.
    */
@@ -211,6 +232,7 @@ const ApiClient = (() => {
     getNextTacticalProblem, submitTacticalAttempt, getTacticsStats,
     createOpeningLine, getOpeningLines, getDueOpeningLines, reviewOpeningLine, deleteOpeningLine,
     getNextEndgameProblem, submitEndgameAttempt,
+    getErrorProfile, getCustomTacticalProblem,
     getStatsSummary, getStatsHistory, isConfigured,
   };
 })();
