@@ -114,6 +114,8 @@ class PgRepository:
         "move_number", "color", "move_san", "eval_before", "eval_after",
         "score_cp", "cpl", "is_mate", "mate_in", "phase", "position_type",
         "fen", "best_move_san", "time_spent_seconds",
+        # EPIC 14 (US 14.1/14.2) : alerte vocale contextuelle, optionnelle.
+        "alert_severity", "alert_text", "tts_text",
     )
 
     def bulk_insert_moves(self, game_id: str, moves: List[Dict[str, Any]]) -> int:  # pragma: no cover

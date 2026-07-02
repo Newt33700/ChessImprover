@@ -125,6 +125,27 @@ describe("updateGameStatus (US 7.3)", () => {
   });
 });
 
+describe("salvageGame (EPIC 15, US 15.2)", () => {
+  test("POST /api/v1/games/{id}/salvage et renvoie la position du pivot", async () => {
+    global.fetch = jest.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        game_id: "g1", pivot_move_index: 4, fen: "startpos", side_to_move: "white", move_number: 3,
+      }),
+    });
+    const out = await ApiClient.salvageGame("g1");
+    expect(global.fetch.mock.calls[0][0]).toBe("/api/v1/games/g1/salvage");
+    expect(global.fetch.mock.calls[0][1].method).toBe("POST");
+    expect(out.pivot_move_index).toBe(4);
+    expect(out.side_to_move).toBe("white");
+  });
+
+  test("rejette sur HTTP non-ok (ex. aucun pivot détecté)", async () => {
+    global.fetch = jest.fn().mockResolvedValue({ ok: false, status: 404 });
+    await expect(ApiClient.salvageGame("g1")).rejects.toThrow("HTTP 404");
+  });
+});
+
 describe("getNextTacticalProblem (US 8.1/8.2)", () => {
   test("sans themeId : pas de query theme_id (Aléatoire)", async () => {
     global.fetch = jest.fn().mockResolvedValue({

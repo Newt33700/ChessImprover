@@ -333,6 +333,14 @@ input, textarea { font-family: inherit; }
 }
 #btn-mark-reviewed.is-reviewed:hover { background: var(--green-light); }
 
+/* EPIC 14 (US 14.2) — Coach vocal actif */
+#btn-voice-coach.is-active {
+  background: var(--green);
+  color: #fff;
+  border-color: var(--green-dark);
+}
+#btn-voice-coach.is-active:hover { background: var(--green-light); }
+
 .btn--full { width: 100%; margin-top: var(--space-sm); }
 .btn--sm { font-size: 0.78rem; padding: 5px 10px; }
 .btn--lg { font-size: 0.95rem; font-weight: 700; padding: 12px 18px; }

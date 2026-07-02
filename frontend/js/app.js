@@ -265,10 +265,13 @@ class ChessImproverApp {
     this.recentGames = [];
     this.serverGames = []; // US 7.1 — parties déjà soumises/analysées côté serveur
 
+    if (window.CoachingVoice) CoachingVoice.loadPreference(); // EPIC 14 (US 14.2)
+
     this._openingBookPromise = this._buildOpeningBook();
     this._initBoard();
     this._bindEvents();
     this._renderAll();
+    this._renderVoiceCoachButton();
 
     if (this.username) {
       document.getElementById("username-input").value = this.username;
@@ -522,6 +525,7 @@ class ChessImproverApp {
     this._renderMovesList(analysis.moves);
     this._renderGameStats(analysis);
     this._renderReviewedButton();
+    this._renderSalvageButton();
 
     this.boardMgr.startReview(analysis.moves.map((m) => ({
       san: m.san, classification: m.classification, fen: m.fen, color: m.color,
@@ -804,17 +808,35 @@ class ChessImproverApp {
     this._updateGameAccuracy();
 
     // US 4 : créer automatiquement une carte SRS pour les gaffes
-    if (classification === "blunder" && moveIdx > 0) {
+    let pv = [];
+    if (moveIdx > 0) {
       const prevFen  = game.moves[moveIdx - 1].fen;
       const prevFenEntry = this.boardMgr?.evalCache?.[prevFen];
-      const pv = prevFenEntry?.pv || [];
-      if (pv.length >= 1) {
-        const cardId = `blunder_${game.game_id || Date.now()}_${moveIdx}`;
-        const existing = SRS.load().find((c) => c.id === cardId);
-        if (!existing) {
-          const card = SRS.createCard(cardId, prevFen, pv);
-          SRS.saveCard(card);
-        }
+      pv = prevFenEntry?.pv || [];
+    }
+    if (classification === "blunder" && moveIdx > 0 && pv.length >= 1) {
+      const prevFen = game.moves[moveIdx - 1].fen;
+      const cardId = `blunder_${game.game_id || Date.now()}_${moveIdx}`;
+      const existing = SRS.load().find((c) => c.id === cardId);
+      if (!existing) {
+        const card = SRS.createCard(cardId, prevFen, pv);
+        SRS.saveCard(card);
+      }
+    }
+
+    // EPIC 14 (US 14.1/14.2) : alerte Coach Vocal — signal + texte contextuel,
+    // et narration du meilleur coup lue à voix haute si activée.
+    if (window.CoachingVoice && (classification === "blunder" || classification === "mistake")) {
+      const alert = CoachingVoice.alertFor(classification, game.moves[moveIdx].san);
+      if (alert) {
+        this._toast(`🔊 ${alert.text}`, classification === "blunder" ? "error" : "info");
+        CoachingVoice.beep(alert.severity);
+        const prevFen = moveIdx > 0 ? game.moves[moveIdx - 1].fen : new Chess().fen();
+        const bestSan = pv.length ? this._sanFromUci(prevFen, pv[0]) : null;
+        const narration = bestSan
+          ? `${alert.text} ${CoachingVoice.bestMoveNarration(bestSan)}`
+          : alert.text;
+        CoachingVoice.speak(narration);
       }
     }
 
@@ -1602,6 +1624,7 @@ class ChessImproverApp {
         const { game } = await ApiClient.getGame(gameId);
         analysis.isReviewed = !!game?.is_reviewed;
         this._renderReviewedButton();
+        this._renderSalvageButton();
       }
     } catch { /* best-effort */ }
   }
@@ -1633,6 +1656,66 @@ class ChessImproverApp {
       this._toast(next ? "Partie marquée comme étudiée" : "Partie remise à étudier", "success");
     } catch {
       this._toast("Impossible de mettre à jour le statut", "error");
+    }
+  }
+
+  // ─── EPIC 14 (US 14.1/14.2) : Coach Vocal ───────────────────────
+
+  /** Convertit un coup UCI (ex. issu de la PV Stockfish) en SAN lisible. */
+  _sanFromUci(fen, uci) {
+    if (!uci) return null;
+    try {
+      const tmp = new Chess();
+      if (!tmp.load(fen)) return null;
+      const move = tmp.move({ from: uci.slice(0, 2), to: uci.slice(2, 4), promotion: uci.slice(4) || "q" });
+      return move ? move.san : null;
+    } catch {
+      return null;
+    }
+  }
+
+  /** Active/désactive la synthèse vocale du Coach Vocal (US 14.2). */
+  _toggleVoiceCoach() {
+    if (!window.CoachingVoice) return;
+    const next = !CoachingVoice.isEnabled();
+    CoachingVoice.setEnabled(next);
+    this._renderVoiceCoachButton();
+    this._toast(next ? "🔊 Coach vocal activé" : "🔇 Coach vocal désactivé", "info");
+  }
+
+  _renderVoiceCoachButton() {
+    const btn = document.getElementById("btn-voice-coach");
+    if (!btn || !window.CoachingVoice) return;
+    const on = CoachingVoice.isEnabled();
+    btn.classList.toggle("is-active", on);
+    btn.textContent = on ? "🔊 Coach vocal" : "🔇 Coach vocal";
+  }
+
+  // ─── EPIC 15 (US 15.1/15.2) : Réparation de Partie (Game-Salvage) ─
+
+  /** Affiche/masque #btn-salvage selon que la partie en cours a un pendant serveur (US 7.3-like). */
+  _renderSalvageButton() {
+    const btn = document.getElementById("btn-salvage");
+    if (!btn) return;
+    btn.hidden = !this.currentGame?.serverGameId;
+  }
+
+  /** Recharge la position au pivot de défaite et lance le mode Sandbox (US 15.2). */
+  async _startSalvage() {
+    const gameId = this.currentGame?.serverGameId;
+    if (!gameId || !window.ApiClient) return;
+    this._setLoading(true, "Recherche du pivot de défaite…");
+    try {
+      const res = await ApiClient.salvageGame(gameId);
+      this._hideBoardPanels();
+      this._showBoardActive();
+      this._setModePill("Sauvetage");
+      this.boardMgr.startSandbox(res.fen, res.side_to_move === "white" ? "w" : "b");
+      this._toast(`🚑 Rejouez le coup ${res.move_number} — sauvez la partie !`, "info");
+    } catch {
+      this._toast("Aucun pivot de défaite détecté pour cette partie.", "error");
+    } finally {
+      this._setLoading(false);
     }
   }
 

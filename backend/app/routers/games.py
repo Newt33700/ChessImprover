@@ -23,6 +23,7 @@ from app.config import settings
 from app.domain.analysis_pipeline import analyze_pgn, build_client_engine, compute_pgn_hash
 from app.domain.cognitive_load import build_decision_fluidity_report, build_time_allocation_report
 from app.domain.error_profile import ERROR_TYPES, detect_error_occurrences, update_frequency_score
+from app.domain.game_salvage import find_defeat_pivot, reconstruct_position_before_move
 from app.domain.models import (
     AnalyzeAccepted,
     AnalyzeAcceptedItem,
@@ -79,6 +80,10 @@ def run_analysis(
             result=outcome.get("result"),
             eco=outcome.get("eco"),
             opening_name=outcome.get("opening_name"),
+            # EPIC 15 (US 15.1) : pivot de défaite — premier coup DU JOUEUR
+            # (`user_color`) dont la perte de centipions atteint le seuil de
+            # gaffe, pour proposer une reprise en sandbox (US 15.2).
+            pivot_move_index=find_defeat_pivot(outcome["moves"], user_color),
         )
     except Exception:  # pragma: no cover - garde-fou worker
         db_client.update_game(game_id, status=GameStatus.FAILED.value)
@@ -213,6 +218,29 @@ async def update_game_status(
         raise HTTPException(status_code=404, detail="Partie introuvable.")
     updated = db_client.update_game(game_id, is_reviewed=body.is_reviewed)
     return {"game": updated}
+
+
+@router.post("/games/{game_id}/salvage")
+async def salvage_game(
+    game_id: str, user_id: str = Depends(get_current_user_id),
+) -> Dict[str, Any]:
+    """EPIC 15 (US 15.2) — Position exacte à rejouer à partir du pivot de
+    défaite (US 15.1), pour un mode Sandbox « Sauver la partie ».
+    """
+    game = db_client.get_game(game_id)
+    if game is None or game.get("user_id") != user_id:
+        raise HTTPException(status_code=404, detail="Partie introuvable.")
+    if game.get("status") != GameStatus.COMPLETED.value:
+        raise HTTPException(status_code=409, detail="Partie pas encore analysée.")
+    pivot_index = game.get("pivot_move_index")
+    if pivot_index is None:
+        raise HTTPException(
+            status_code=404, detail="Aucun pivot de défaite détecté pour cette partie."
+        )
+    position = reconstruct_position_before_move(game["pgn"], pivot_index)
+    if position is None:
+        raise HTTPException(status_code=422, detail="Position introuvable pour cette partie.")
+    return {"game_id": game_id, "pivot_move_index": pivot_index, **position}
 
 
 @router.get("/stats/summary")

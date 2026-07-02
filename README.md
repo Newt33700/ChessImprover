@@ -108,7 +108,8 @@ ChessImprover/
 │   │   ├── personal_coach.js           # Coach arbre de décision offline (US 6)
 │   │   ├── advanced_stats.js           # Stats Avancées : matrice + deep-dive (US 4.1/4.2)
 │   │   ├── cognitive_dashboard.js      # EPIC 19 : temps de réflexion par phase + fluidité de décision (US 19.1/19.2)
-│   │   ├── api_client.js               # Client HTTP backend (analyze, stats/summary, cognitive-load, flashcards) — EPIC 1/19/20
+│   │   ├── coaching_voice.js           # EPIC 14 : alertes tactiques + synthèse vocale (Web Speech API)
+│   │   ├── api_client.js               # Client HTTP backend (analyze, stats/summary, salvage EPIC 15, cognitive-load/flashcards EPIC 19/20) — EPIC 1
 │   │   └── auth.js                     # Auth JWT frontend (US 7) — chargé dans index.html
 │   ├── assets/                         # Dépendances externes rapatriées localement (EPIC 13, §4.11)
 │   │   ├── js/                         # jquery-3.7.1.min.js, chess-0.10.3.js, chessboard-1.0.0.min.js, chart-4.4.0.umd.js
@@ -127,7 +128,8 @@ ChessImprover/
 │       ├── personal_coach.test.js      # Tests PersonalCoach (toutes les branches)
 │       ├── advanced_stats.test.js      # Tests AdvancedStats (couleurs, deltas, gauge, détails)
 │       ├── cognitive_dashboard.test.js # EPIC 19 : formatSeconds, insights, fetchReport, render (19 tests)
-│       └── api_client.test.js          # Tests ApiClient (base URL, analyze, stats/summary, cognitive-load, flashcards, en-tête Authorization US 6.4)
+│       ├── coaching_voice.test.js      # EPIC 14 : alertFor/bestMoveNarration/beep/speak/préférence localStorage
+│       └── api_client.test.js          # Tests ApiClient (base URL, analyze, stats/summary, salvage EPIC 15, cognitive-load/flashcards EPIC 19/20, en-tête Authorization US 6.4)
 │
 ├── backend/
 │   ├── Dockerfile                      # Image Docker + Stockfish natif (Render) — EPIC 2
@@ -153,7 +155,9 @@ ChessImprover/
 │       │   ├── error_profile.py        # EPIC 11 : détection patterns + score EMA (US 9.1/9.2)
 │       │   ├── tactical_sprint.py      # EPIC 12 : chrono serveur + score + séquence Ghost (US 11.1/11.2)
 │       │   ├── cognitive_load.py       # EPIC 19 : temps de réflexion par phase/pression + fluidité de décision (US 19.1/19.2)
-│       │   └── srs_flashcards.py       # EPIC 20 : extraction flashcards depuis les gaffes (US 20.1)
+│       │   ├── srs_flashcards.py       # EPIC 20 : extraction flashcards depuis les gaffes (US 20.1)
+│       │   ├── coaching_voice.py       # EPIC 14 : alerte vocale contextuelle par coup (US 14.1/14.2)
+│       │   └── game_salvage.py         # EPIC 15 : pivot de défaite + reconstruction FEN (US 15.1/15.2)
 │       ├── infrastructure/
 │       │   ├── chess_com_client.py     # Proxy httpx vers Chess.com API
 │       │   ├── engine.py               # EngineProvider (évals client / Stockfish natif) — EPIC 2
@@ -163,7 +167,7 @@ ChessImprover/
 │       │   ├── deps.py                 # get_current_user/get_current_user_id (JWT partagé, US 6.4)
 │       │   ├── auth.py                 # POST /auth/signup /auth/login GET+PATCH /auth/me (US 7/6.3)
 │       │   ├── sync.py                 # POST /sync — stratégie Client Wins (US 7)
-│       │   ├── games.py                # POST /games/analyze, GET /games (US 7.1), GET stats/summary, GET stats/history, GET stats/cognitive-load (EPIC 19) (JWT requis, US 6.4)
+│       │   ├── games.py                # POST /games/analyze, GET /games (US 7.1), POST /games/{id}/salvage (EPIC 15), GET stats/summary, GET stats/history, GET stats/cognitive-load (EPIC 19) (JWT requis, US 6.4)
 │       │   ├── tactics.py              # GET /tactics/next, /tactics/custom (EPIC 11), POST /tactics/attempt (US 8.1)
 │       │   ├── error_profile.py        # EPIC 11 : GET /error-profile (US 9.1)
 │       │   ├── tactical_sprint.py      # EPIC 12 : POST /sprints/start /{id}/attempt /{id}/finish, GET /sprints/ghost
@@ -203,7 +207,9 @@ ChessImprover/
 │       │   ├── test_cognitive_load.py  # EPIC 19 : derive_time_spent, pression, temps par phase, fluidité de décision
 │       │   ├── test_srs_flashcards.py  # EPIC 20 : extraction flashcards depuis les gaffes (US 20.1)
 │       │   ├── test_db_srs_flashcards.py # EPIC 20 : store flashcards (CRUD, isolation, échéance)
-│       │   └── test_srs_flashcards_api.py # EPIC 20 : câblage worker + routes /flashcards, /flashcards/due, /review
+│       │   ├── test_srs_flashcards_api.py # EPIC 20 : câblage worker + routes /flashcards, /flashcards/due, /review
+│       │   ├── test_coaching_voice.py  # EPIC 14 : build_move_alert (sévérité, pièce en prise) + attach_move_alert
+│       │   └── test_game_salvage.py    # EPIC 15 : find_defeat_pivot (filtre couleur, seuil) + reconstruct_position_before_move
 │       └── mutants/                    # Mutation testing mutmut
 │
 ├── supabase/
@@ -221,6 +227,8 @@ ChessImprover/
 │       ├── 20260702051516_endgames_epic10.sql  # Table endgame_problems + profiles.endgame_elo + seed 9 positions (EPIC 10)
 │       ├── 20260702064353_user_error_profiles_epic11.sql # Table user_error_profiles (score EMA, RLS) (EPIC 11)
 │       ├── 20260702070437_tactical_sprints_epic12.sql # Table tactical_sprints (chrono, moves Ghost, RLS lecture publique) (EPIC 12)
+│       ├── 20260702080000_game_moves_voice_alerts_epic14.sql # Colonnes alert_severity/alert_text/tts_text sur game_moves (EPIC 14)
+│       ├── 20260702090000_games_pivot_epic15.sql # Colonne pivot_move_index sur games (EPIC 15)
 │       ├── 20260702120000_game_moves_cognitive_load.sql # Colonnes fen/best_move_san/time_spent_seconds sur game_moves (EPIC 19)
 │       └── 20260702130000_srs_flashcards_epic20.sql # Table srs_flashcards (calendrier SM-2, RLS) (EPIC 20)
 │
@@ -1165,7 +1173,48 @@ Modules **purs** (couche domaine), entièrement testés, indépendants de l'infr
 - Vérifié en navigateur (Playwright + Chromium) : sprint démarré, coup résolu → compteur à jour, sprint clôturé (simulation d'expiration) → message de score final, Ghost affiché avec le score du meilleur sprint précédent. Captures à l'appui.
 - Tests : `backend/tests/test_tactical_sprint.py` (chrono + score, 12 tests), `backend/tests/test_db_tactical_sprint.py` (CRUD store + visibilité publique du meilleur sprint, 9 tests), `backend/tests/test_tactical_sprint_api.py` (14 tests d'intégration : cycle complet start/attempt/finish, expiration côté serveur, isolation propriétaire, `/sprints/ghost`), `backend/tests/test_pg_repository.py` (contrat de signature), `frontend/tests/api_client.test.js` (5 nouveaux tests), `frontend/tests/e2e/sprint.spec.js` (3 tests bout-en-bout).
 
-### 4.14 EPIC 19 — Dashboard de Performance Cognitive (Analyse de la Charge Cognitive)
+### 4.14 EPIC 14 — Système de "Shadow Coaching" Vocal (Coach Vocal et Feedback Instantané)
+
+**Fichiers :** `domain/coaching_voice.py`, `domain/analysis_pipeline.py` (câblage), `infrastructure/pg_repository.py` (`_MOVE_COLS`), `supabase/migrations/20260702080000_game_moves_voice_alerts_epic14.sql`, `js/coaching_voice.js`, `js/app.js` (`_onMoveAccuracy`), `index.html` (`#btn-voice-coach`)
+
+> **Contexte :** backlog fourni par l'utilisateur (« Idée 3 »), initialement numéroté « EPIC 13 » dans le paste — **renuméroté EPIC 14** pour éviter la collision avec l'EPIC 13 déjà enregistré dans ce dépôt (Indépendance des Assets, §4.11), même rationale que les renumérotations EPIC 11/12/13 précédentes.
+
+**US 14.1 (alertes tactiques) + US 14.2 (TTS)** sont traitées ensemble : la même détection produit à la fois le texte d'alerte affiché et sa variante narrée.
+
+**Détection (`domain.coaching_voice.build_move_alert`)** — aucune duplication de seuils :
+- La gravité réutilise directement la classification de précision existante (`elo_calculator.classify_move(elo_calculator.move_accuracy(cpl))`) — mêmes seuils que la coloration Review déjà affichée au joueur (`brilliant`..`blunder`). Seules les classifications `mistake`/`blunder` déclenchent une alerte ; le reste reste silencieux.
+- Le message est **contextuel**, pas un simple label : `analyzer.is_piece_hanging` (déjà utilisé par EPIC 11 pour le profil comportemental) identifie, sur la position résultant du coup, la pièce la plus précieuse du joueur laissée en prise et non défendue. Trouvée → « Attention, Qd4 expose ta dame en d4 ! » ; sinon → message générique par gravité (« Gaffe ! … perd un avantage important. » / « … n'était pas le meilleur coup. »).
+- `attach_move_alert` enrichit en place un enregistrement `game_moves` (`alert_severity`/`alert_text`/`tts_text`), appelé depuis `analysis_pipeline.analyze_pgn` juste après le calcul du CPL de chaque coup — zéro appel moteur supplémentaire (la position après-coup est déjà disponible dans la boucle d'analyse).
+
+**Persistance :** 3 colonnes nullable ajoutées à `game_moves` (`alert_severity`, `alert_text`, `tts_text`) — absentes du dict si le coup ne déclenche aucune alerte, cohérent avec le reste du schéma (`mate_in`, `eval_before`… déjà optionnels).
+
+**US 14.2 — Synthèse vocale (frontend, `js/coaching_voice.js`) :** branchée sur le flux **temps réel** existant du mode Review (`_onMoveAccuracy`, déclenché à chaque évaluation Stockfish pendant que le joueur navigue/rejoue une partie) plutôt que sur le pipeline batch backEND ci-dessus (qui alimente les parties EPIC 1/Stats Avancées, un système distinct du Bilan client-side, cf. §2) :
+- **Zero External Assets** (contrainte EPIC 13/17) : la synthèse vocale utilise l'API **Web Speech** native du navigateur (`speechSynthesis`/`SpeechSynthesisUtterance`, `lang="fr-FR"`) — aucun fichier audio, aucun appel réseau (contrairement à gTTS, qui nécessiterait un aller-retour vers un service Google). Le signal sonore (`CoachingVoice.beep`) est un oscillateur `AudioContext` généré en code (220Hz gaffe / 330Hz erreur), pour la même raison.
+- `CoachingVoice.alertFor(classification, san)` reproduit côté client la même logique de gravité (blunder/mistake) que le backend, sur la classification déjà calculée par `EloEngine.classify` (US 5) — pas de duplication de seuils, juste du texte.
+- La narration lit l'**idée principale du meilleur coup** (US 14.2) : le premier coup de la PV Stockfish déjà mise en cache par `board_manager.js` (`evalCache[fen].pv`, déjà utilisée pour créer les cartes SRS US 4) est converti UCI → SAN (`_sanFromUci`, chess.js) puis narré (« Le meilleur coup était Nxe5. »).
+- Désactivée par défaut (opt-in, persisté `localStorage["ci_voice_coach"]`) — toggle `#btn-voice-coach` dans la barre d'outils Review ; un toast visuel (`_toast`) accompagne systématiquement l'alerte, que la voix soit activée ou non.
+
+- Vérifié en intégration réelle (backend local + `curl`) : un PGN avec une gaffe programmée (cpl=300, pièce en prise construite) renvoie bien `alert_severity: "blunder"`, `alert_text` nommant la pièce et la case, `tts_text`, et `games.pivot_move_index` correctement calculé (cf. §4.15). Vérifié en navigateur (Playwright + Chromium) : bouton `#btn-voice-coach` bascule texte/classe et persiste en `localStorage` après un clic réel.
+- Tests : `backend/tests/test_coaching_voice.py` (8 tests : silence sans CPL/bon coup, message générique vs pièce nommée, ignoré si la pièce en prise n'appartient pas au joueur, `attach_move_alert`), `backend/tests/test_analysis_pipeline.py` (existant, toujours vert — le câblage n'altère aucun champ existant), `backend/tests/test_pg_repository.py` (contrat `_MOVE_COLS` étendu), `frontend/tests/coaching_voice.test.js` (19 tests : préférence localStorage, `alertFor`/`bestMoveNarration`, `beep`/`speak` avec/sans API navigateur disponible).
+
+### 4.15 EPIC 15 — Moteur de "Replay Correction" (Game-Salvage / Réparation de Partie)
+
+**Fichiers :** `domain/game_salvage.py`, `routers/games.py` (`run_analysis` + `POST /games/{id}/salvage`), `supabase/migrations/20260702090000_games_pivot_epic15.sql`, `js/board_manager.js` (mode `sandbox`), `js/api_client.js` (`salvageGame`), `js/app.js` (`_startSalvage`), `index.html` (`#btn-salvage`)
+
+> **Contexte :** backlog fourni par l'utilisateur (« Idée 4 »), initialement numéroté « EPIC 14 » dans le paste — **renuméroté EPIC 15** pour la même raison que §4.14 (collision avec l'EPIC 14 déjà attribué au Coach Vocal dans ce dépôt).
+
+**US 15.1 — Pivot de défaite (`domain.game_salvage.find_defeat_pivot`)** : premier coup **joué par le joueur** (filtré par `color == user_color`, pas l'adversaire — sauver la partie signifie réparer sa propre gaffe) dont le CPL atteint le seuil de gaffe déjà défini par `stats_aggregator.BLUNDER_CPL` (200 centipions, réutilisé tel quel plutôt que d'introduire un second seuil de gaffe dans le produit). Calculé une fois à la fin de `run_analysis` (comme `eco`/`opening_name`) et persisté dans une nouvelle colonne `games.pivot_move_index` (nullable — `None` si aucune gaffe de cette ampleur n'a été commise ou si la partie n'a pas été évaluée par un moteur).
+
+**US 15.2 — Reconstruction + Sandbox :**
+- `domain.game_salvage.reconstruct_position_before_move(pgn, move_index)` rejoue le PGN (python-chess) jusqu'au coup précédant le pivot et renvoie `{fen, side_to_move, move_number}` — la position **juste avant** la gaffe historique, pour que le joueur puisse tenter un autre coup à la place plutôt que de revivre la même erreur.
+- `POST /api/v1/games/{game_id}/salvage` (JWT requis) : 404 si la partie n'existe pas/n'appartient pas à l'utilisateur (même traitement indiscernable que le reste du produit, US 6.4), 409 si l'analyse n'est pas encore terminée (`status != completed`), 404 si aucun pivot n'a été détecté (« Aucun pivot de défaite détecté pour cette partie. »), 422 en dernier recours si le PGN stocké est invalide.
+- **Frontend — mode Sandbox** (`board_manager.js:startSandbox`) : nouveau 4ᵉ mode de `BoardManager` (aux côtés de review/exercise/ghost), qui laisse le joueur rejouer librement contre le moteur Stockfish déjà embarqué (`engine_worker_wasm.js`) — après chaque coup joué, le moteur est interrogé (`go depth 15 movetime 500`, déjà en place pour l'analyse) et son `bestmove` est **auto-joué** comme réponse (`_sandboxPlayEngineMove`), contrairement au mode Ghost qui rejoue des coups historiques figés. C'est la première fois que le worker Stockfish du produit joue réellement des coups plutôt que de seulement les évaluer.
+- `#btn-salvage` (« 🚑 Sauver la partie ») apparaît dans la barre d'outils Review dès qu'une partie a un pendant serveur connu (`currentGame.serverGameId`, même condition que `#btn-mark-reviewed`, US 7.3) ; un clic échoue proprement (toast) si le backend répond qu'aucun pivot n'existe.
+
+- Vérifié en intégration réelle (backend local + `curl`) : partie soumise avec une gaffe programmée au 3ᵉ demi-coup → `games.pivot_move_index == 2`, `POST /salvage` renvoie la FEN exacte après « 1. e4 e5 » (position avant la gaffe), `side_to_move: "white"`. Vérifié en navigateur (Playwright + Chromium) : `_startSalvage()` appelle bien `ApiClient.salvageGame` puis `boardMgr.startSandbox(fen, "w")` avec la FEN renvoyée par le backend, et `#btn-salvage` bascule visible/masqué selon `currentGame.serverGameId`.
+- Tests : `backend/tests/test_game_salvage.py` (11 tests : filtre par couleur, seuil exact, PGN invalide, index hors bornes, position de départ/side-to-move), `backend/tests/test_games_api.py` (6 nouveaux tests d'intégration : 200 avec FEN exacte, 401/404/409/404-sans-pivot), `frontend/tests/api_client.test.js` (2 nouveaux tests `salvageGame`).
+
+### 4.16 EPIC 19 — Dashboard de Performance Cognitive (Analyse de la Charge Cognitive)
 
 **Fichiers :** `domain/cognitive_load.py`, `domain/cadence.py` (`parse_increment`), `domain/analyzer.py` (`read_mainline_clocks`, rendue publique), `domain/analysis_pipeline.py` (`fen`/`best_move_san`/`time_spent_seconds`), `routers/games.py` (route `/stats/cognitive-load`), `supabase/migrations/20260702120000_game_moves_cognitive_load.sql`, `js/cognitive_dashboard.js`, `js/api_client.js`, `index.html` (carte « CHARGE COGNITIVE »)
 
@@ -1190,13 +1239,13 @@ Modules **purs** (couche domaine), entièrement testés, indépendants de l'infr
 - Vérifié en navigateur (Playwright + Chromium) : `frontend/tests/e2e/cognitive_flashcards.spec.js` — partie avec gaffe + horloges analysée via l'API réelle → insight visible dans la carte Charge Cognitive.
 - Tests : `backend/tests/test_cadence.py` (`parse_increment`, 7 tests), `backend/tests/test_cognitive_load.py` (35 tests), `backend/tests/test_analysis_pipeline.py` (fen/best_move_san/time_spent_seconds), `backend/tests/test_games_api.py::TestStatsCognitiveLoad` (6 tests d'intégration), `frontend/tests/cognitive_dashboard.test.js` (19 tests, 87 % lignes/branches — ajouté à `collectCoverageFrom`).
 
-### 4.15 EPIC 20 — Bibliothèque de Mémoire Tactique (Flashcards SRS auto-générées)
+### 4.17 EPIC 20 — Bibliothèque de Mémoire Tactique (Flashcards SRS auto-générées)
 
 **Fichiers :** `domain/srs_flashcards.py`, `domain/opening_repertoire.py` (`infer_quality`, réutilisée), `domain/tactics.py` (`is_correct_move`, réutilisée), `routers/srs_flashcards.py`, `routers/games.py` (câblage worker), `infrastructure/db_client.py` + `pg_repository.py`, `supabase/migrations/20260702130000_srs_flashcards_epic20.sql`, `js/api_client.js`, `js/app.js` (`#flashcards-col`), `index.html`
 
 > **Contexte :** backlog fourni par l'utilisateur (paste PO), délégué en parallèle d'EPIC 19. Objectif : utiliser la répétition espacée (SRS) sur les erreurs passées du joueur — « construire son propre dictionnaire de patterns » — plutôt que sur des problèmes curés aléatoires (EPIC 8).
 
-**US 20.1 — Extraction automatique (`domain.srs_flashcards.extract_blunder_flashcards`)** : fonction pure qui parcourt les `game_moves` du joueur (déjà enrichis de `fen`/`best_move_san`/`cpl` par EPIC 19) et retient chaque gaffe (perte ≥ 200cp, même seuil que `stats_aggregator.BLUNDER_CPL`) sous la forme `{fen, solution}`. Câblée dans `routers/games.run_analysis` : un 4ᵉ bloc `try/except` (même garde-fou que les blocs snapshot/profil d'erreur voisins) crée les flashcards après chaque analyse réussie, sans jamais faire échouer l'analyse déjà persistée.
+**US 20.1 — Extraction automatique (`domain.srs_flashcards.extract_blunder_flashcards`)** : fonction pure qui parcourt les `game_moves` du joueur (déjà enrichis de `fen`/`best_move_san`/`cpl` par EPIC 19) et retient chaque gaffe (perte ≥ 200cp, même seuil que `stats_aggregator.BLUNDER_CPL`) sous la forme `{fen, solution}`. Câblée dans `routers/games.run_analysis` : un bloc `try/except` supplémentaire (même garde-fou que les blocs snapshot/profil d'erreur voisins) crée les flashcards après chaque analyse réussie, sans jamais faire échouer l'analyse déjà persistée.
 
 **Calendrier SM-2 — aucune duplication d'algorithme** : `srs_flashcards.DEFAULT_EASE_FACTOR`/`DEFAULT_INTERVAL_DAYS` (2.5/1) sont la même convention de démarrage que `domain.opening_repertoire`/`domain.srs_engine.create_card` — c'est la **3ᵉ réutilisation** de l'algorithme SM-2 dans le produit (après le SRS tactique JS du mode Exercice et le répertoire d'ouvertures EPIC 9), toujours via `domain.srs_engine.sm2_schedule`.
 
@@ -1398,7 +1447,28 @@ successRatio (%) = tactical_success_ratio(tous les coups tactiques, toutes caden
                     → 0.0 si aucune position tactique (pas de None exposé au frontend)
 ```
 
-### 5.17 Charge Cognitive — temps de réflexion, pression, fluidité (EPIC 19)
+### 5.17 Alerte Coach Vocal (EPIC 14)
+
+```
+classification = classify_move(move_accuracy(cpl))      # seuils US 5.1, inchangés
+alerte déclenchée ⟺ classification ∈ {mistake, blunder}  # good/excellent/brilliant/book = silence
+pièce nommée     = pièce la + précieuse du joueur en prise ET non défendue
+                   sur la position APRÈS le coup (analyzer.is_piece_hanging)
+message          = contextuel (pièce + case) si trouvée, générique par gravité sinon
+```
+
+### 5.18 Pivot de défaite (EPIC 15)
+
+```
+pivot = premier index i (0-based, ligne principale) tel que :
+          moves[i].color == user_color  ET  moves[i].cpl >= BLUNDER_CPL (200, §5.16-adjacent stats_aggregator)
+None si aucun coup du joueur n'atteint ce seuil (ou partie non évaluée par un moteur)
+
+position de sauvetage = position AVANT que moves[pivot] ne soit joué
+                         (rejoue le PGN jusqu'à l'index pivot exclu)
+```
+
+### 5.19 Charge Cognitive — temps de réflexion, pression, fluidité (EPIC 19)
 
 ```
 temps_de_réflexion(coup) = horloge_avant_même_camp − horloge_après + incrément_cadence
@@ -1413,7 +1483,7 @@ qualité_coup : TOP3 si cpl ≤ 50 cp ; WEAK si cpl ≥ 100 cp ; sinon non class
 fatigue_décisionnelle ⟺ temps_moyen(WEAK) > temps_moyen(TOP3) × 1.3
 ```
 
-### 5.18 Extraction de flashcards depuis les gaffes (EPIC 20, US 20.1)
+### 5.20 Extraction de flashcards depuis les gaffes (EPIC 20, US 20.1)
 
 ```
 gaffe exploitable ⟺ cpl ≥ 200  ET  fen connu  ET  best_move_san connu  ET  best_move_san ≠ move_san
@@ -1457,8 +1527,9 @@ npm run test:mutation # Stryker
 | `personal_coach.test.js` | PersonalCoach | computeMetrics, diagnose (toutes les 6 branches), renderHTML, _detectResult, _detectUserColor, _extractOpening |
 | `advanced_stats.test.js` | AdvancedStats | cellClass, deltas, deepDiveFor, gaugeAngle, matrixRows, `categoryDetailHtml` (tactics/endgames/openings/strategy), `tacticSuccessGaugeHtml` (bornes, clamp, NaN-safe), fetchSummary (fallbacks), `formatShortDate`, `buildProgressDatasets`, `toggleProgressSeries`, `fetchHistory` (fallbacks) |
 | `cognitive_dashboard.test.js` (EPIC 19) | CognitiveDashboard | formatSeconds, buildPhaseChartData, buildInsightMessages (phase dominante, pression, fatigue décisionnelle), fetchReport (fallbacks), renderHTML, render |
-| `api_client.test.js` | ApiClient | baseUrl/isConfigured (window/localStorage), url (query), analyzeGame (POST + erreur), getStatsSummary, getGame, getStatsHistory, **en-tête `Authorization: Bearer` présent/absent selon `Auth.getToken()` (US 6.4)**, **getGames (US 7.1)**, **updateGameStatus (US 7.3)**, **getNextTacticalProblem + régression bug `?` orphelin (US 8.2)**, **submitTacticalAttempt + time_taken, getTacticsStats (US 8.3/8.4)**, **createOpeningLine/getOpeningLines/getDueOpeningLines/reviewOpeningLine/deleteOpeningLine (EPIC 9)**, **getNextEndgameProblem/submitEndgameAttempt (EPIC 10)**, **getCognitiveLoad (EPIC 19)**, **getFlashcards/getDueFlashcards/reviewFlashcard (EPIC 20)** |
+| `api_client.test.js` | ApiClient | baseUrl/isConfigured (window/localStorage), url (query), analyzeGame (POST + erreur), getStatsSummary, getGame, getStatsHistory, **en-tête `Authorization: Bearer` présent/absent selon `Auth.getToken()` (US 6.4)**, **getGames (US 7.1)**, **updateGameStatus (US 7.3)**, **getNextTacticalProblem + régression bug `?` orphelin (US 8.2)**, **submitTacticalAttempt + time_taken, getTacticsStats (US 8.3/8.4)**, **createOpeningLine/getOpeningLines/getDueOpeningLines/reviewOpeningLine/deleteOpeningLine (EPIC 9)**, **getNextEndgameProblem/submitEndgameAttempt (EPIC 10)**, **salvageGame (EPIC 15)**, **getCognitiveLoad (EPIC 19)**, **getFlashcards/getDueFlashcards/reviewFlashcard (EPIC 20)** |
 | `auth.test.js` (US 6.1/6.3) | Auth | signup/login (succès, `detail` chaîne, `detail` liste Pydantic 422 — un ou plusieurs champs, absence de `detail`), `updateChessUsername` (sans token, succès + PATCH + persistance session, format invalide), isLoggedIn/logout |
+| `coaching_voice.test.js` (EPIC 14) | CoachingVoice | `isSupported`, `setEnabled`/`isEnabled`/`loadPreference` (persistance localStorage), `alertFor` (blunder/mistake/aucune alerte, coup absent), `bestMoveNarration`, `beep` (no-op sans AudioContext, fréquence par gravité), `speak` (no-op désactivé/non supporté, appel réel `speechSynthesis`) |
 
 > `advanced_stats.js` n'est pas dans `collectCoverageFrom` (comme `app.js`, `auth.js`, `board_manager.js`) : seules ses fonctions pures sont testées, les `render*` sont de la glue DOM. `cognitive_dashboard.js` y a été ajouté (EPIC 19, 87 % lignes/branches).
 
@@ -1512,12 +1583,14 @@ JWT_SECRET=ci-test-secret pytest tests/ -v
 | `test_tactical_sprint.py` | `elapsed_seconds`/`is_sprint_active` (fenêtre exacte, bornes), `compute_score` (pur, déterministe), `record_ghost_move` (immutabilité) | EPIC 12 |
 | `test_db_tactical_sprint.py` | Store sprints : création (defaults), mise à jour, **`get_best_sprint` public** (visible entre utilisateurs, ignore les sprints non terminés) | EPIC 12 |
 | `test_tactical_sprint_api.py` | Cycle complet `POST /start` → `POST /{id}/attempt` (succès/échec, score, problème suivant) → `POST /{id}/finish` (idempotent), **expiration côté serveur** (horloge manipulée directement dans le store, sprint clôturé automatiquement), isolation propriétaire (404), `GET /sprints/ghost` (200/401, meilleur score toutes utilisateurs confondus) | EPIC 12 |
+| `test_coaching_voice.py` | `build_move_alert` (silence sans CPL/bon coup, message générique blunder/mistake, pièce en prise nommée par nom+case, pièce adverse ignorée), `attach_move_alert` (ajoute/n'ajoute pas les clés selon le cas) | EPIC 14 |
+| `test_game_salvage.py` | `find_defeat_pivot` (pas de pivot sans données moteur/sous le seuil, premier coup du joueur au-dessus du seuil, gaffes adverses ignorées, seuil exact, couleur noire), `reconstruct_position_before_move` (PGN invalide, index hors bornes, position/side-to-move/move_number à chaque index) | EPIC 15 |
 | `test_cognitive_load.py` | `derive_time_spent` (incrément, horloge manquante/négative, plancher 0), `classify_pressure`, `build_time_allocation_report` (phase dominante, bucket pression), `move_quality_bucket`, `is_decision_fatigue`, `build_decision_fluidity_report` | EPIC 19 |
 | `test_srs_flashcards.py` | `extract_blunder_flashcards` (seuil de gaffe, fen/best_move manquants, solution = coup joué, plusieurs gaffes) | EPIC 20 |
 | `test_db_srs_flashcards.py` | Store flashcards : création (calendrier SM-2 initial), liste/isolation par utilisateur, cartes dues (bornes de date), mise à jour de calendrier, reset | EPIC 20 |
 | `test_srs_flashcards_api.py` | Génération auto depuis une gaffe analysée (evals moteur), aucune flashcard sur partie propre, isolation entre utilisateurs, `POST /{id}/review` (rappel correct avance le calendrier, rappel incorrect réinitialise + révèle la solution), 404 carte inconnue/non-propriétaire, 401 sans JWT | EPIC 20 |
 
-**Couverture backend :** 724 TUs au total, couverture globale **89 %+** ; cœur Stats Avancées + EPIC 1/5.1/US 4.2/EPIC 19 à 92–100 % (`stats_aggregator`, `cadence`, `progress_history`, `models`, `engine`, `cognitive_load`, `srs_flashcards` à 100 %, `analysis_pipeline` 92 %, `routers/games` 92 %, `db_client` 98 %). Les requêtes SQL réelles de `pg_repository` (nécessitant une base) sont marquées `pragma: no cover`.
+**Couverture backend :** 749 TUs au total, couverture globale **89 %+** ; cœur Stats Avancées + EPIC 1/5.1/US 4.2/EPIC 19 à 92–100 % (`stats_aggregator`, `cadence`, `progress_history`, `models`, `engine`, `cognitive_load`, `srs_flashcards` à 100 %, `analysis_pipeline` 92 %, `routers/games` 92 %, `db_client` 98 %). Les requêtes SQL réelles de `pg_repository` (nécessitant une base) sont marquées `pragma: no cover`.
 
 **Architecture de test `test_auth.py` :**
 - App de test minimale (`FastAPI()` + routers auth/sync uniquement) pour éviter la dépendance `python-chess`
@@ -1708,6 +1781,8 @@ UNIQUE (user_id)
 | **Indépendance des assets externes** (EPIC 13, US 12.1) | `frontend/assets/{js,css,fonts,images,data}/` + `index.html` + `app.js`/`board_manager.js` (`pieceTheme`) + `engine_worker_wasm.js` | jQuery/chess.js/chessboard.js/Chart.js/polices/pièces/ouvertures ECO servis depuis le dépôt, zéro appel `cdnjs`/`jsdelivr`/`lichess1.org`/`fonts.googleapis.com` au chargement, vérifié (zéro requête externe) |
 | **Analyse Comportementale — profil d'erreurs** (EPIC 11, US 9.1/9.2) | `domain/error_profile.py` + `routers/error_profile.py` + `routers/tactics.py:/custom` + `routers/games.py:run_analysis` + `index.html:#tactics-custom-training` + `app.js:_loadErrorProfileHint/_startCustomTraining` | Profil mis à jour après chaque partie analysée (score EMA par type d'erreur), bandeau « Entraînement Personnalisé » affiché si récurrent (score > 70), bouton chargeant un problème du thème associé, opérationnel et testé |
 | **Mode Tactical Sprint** (EPIC 12, US 11.1/11.2) | `domain/tactical_sprint.py` + `routers/tactical_sprint.py` + `index.html:#sprint-col` + `app.js:_startSprint/_onSprintDrop/_submitSprintAttempt/_endSprint/_renderGhostOverlay` | Carte SPRINT → vue plein écran, sprint 60s chronométré côté serveur (anti-triche), score/compteur en direct, mode Ghost (fetch unique, surimpression togglable), opérationnel et testé |
+| **Coach Vocal — alertes tactiques + TTS** (EPIC 14, US 14.1/14.2) | `domain/coaching_voice.py` + `analysis_pipeline.py` + `js/coaching_voice.js` + `app.js:_onMoveAccuracy` + `index.html:#btn-voice-coach` | Alerte contextuelle (pièce en prise nommée, ou message générique) sur chaque gaffe/erreur du mode Review, signal sonore `AudioContext`, narration du meilleur coup via `speechSynthesis` (opt-in, 100 % local) |
+| **Réparation de Partie — Game-Salvage** (EPIC 15, US 15.1/15.2) | `domain/game_salvage.py` + `routers/games.py:run_analysis`/`POST /games/{id}/salvage` + `board_manager.js` (mode `sandbox`) + `app.js:_startSalvage` + `index.html:#btn-salvage` | Pivot de défaite détecté et persisté (`games.pivot_move_index`) après chaque analyse ; bouton « Sauver la partie » recharge la position juste avant la gaffe et lance un mode Sandbox où le joueur affronte librement le moteur Stockfish déjà embarqué |
 | **Dashboard de Performance Cognitive** (EPIC 19, US 19.1/19.2) | `domain/cognitive_load.py` + `routers/games.py:/stats/cognitive-load` + `js/cognitive_dashboard.js` + `index.html:#cog-dashboard-container` + `app.js:_loadAdvStats` | Carte CHARGE COGNITIVE de la vue Stats Avancées : temps de réflexion par phase/pression (graphe barre) + fluidité de décision (alerte fatigue décisionnelle), opérationnel et testé (backend + frontend + E2E) |
 | **Le Cimetière des Erreurs — Flashcards SRS** (EPIC 20, US 20.1/20.2) | `domain/srs_flashcards.py` + `routers/srs_flashcards.py` + `routers/games.py:run_analysis` + `index.html:#flashcards-col`/`#card-flashcards` + `app.js:_showFlashcards/_onFlashcardDrop/_submitFlashcardAttempt` | Chaque gaffe (perte ≥ 200cp) devient automatiquement une flashcard SM-2 ; vue plein écran Rappel Actif (échiquier indépendant, validation 100 % serveur, qualité déduite automatiquement) ; opérationnel et testé (backend + frontend + E2E) |
 
@@ -1835,6 +1910,13 @@ Identifier les ouvertures jouées le plus souvent, montrer leurs performances pa
 ### 11.10 Entraîneur de finales essentielles
 
 > **✅ Implémenté (EPIC 10, §4.10).** Technique de mat essentielle (Roi+Dame/Roi+Tour/Roi+2 Tours) sur le modèle exact d'EPIC 8, avec sélection adaptative par Elo. **Reste pour aller plus loin** : les finales de *technique* au sens strict (opposition, Lucena, Philidor, R+P vs R) nécessitent une vérification d'exactitude par tablebase/moteur — non faisables avec seulement `python-chess` (pas d'accès réseau à une tablebase dans cet environnement) contrairement aux positions de mat forcé, vérifiables par recherche exhaustive. Un dataset externe pré-vérifié (Lichess/Syzygy) serait nécessaire pour ce volet.
+
+### 11.11 Coach Vocal & Game-Salvage — pistes d'approfondissement
+
+> **✅ Implémentés (EPIC 14/15, §4.14/§4.15).** **Reste pour aller plus loin :**
+> - **Difficulté du Sandbox** (EPIC 15) : le moteur répond toujours à profondeur/temps fixes (`depth 15 movetime 500`, identiques à l'analyse) — pas de niveau de difficulté réglable (ex. profondeur réduite pour un adversaire plus faible que le joueur ne l'affrontait en partie réelle).
+> - **Narration TTS enrichie** (EPIC 14) : la synthèse vocale actuelle lit un texte fixe par gravité + le meilleur coup (SAN) ; une narration plus « coach » (expliquer *pourquoi* le coup est mauvais — fourchette, clouage, finale perdue — pas seulement *qu'*il l'est) demanderait de réutiliser la détection de motifs tactiques (`analyzer.find_fork_moves`, EPIC 11) en plus de la pièce en prise déjà couverte.
+> - **Persistance des sessions de Sandbox** : contrairement à `tactical_attempts` (EPIC 8), les coups joués en mode Sandbox (Game-Salvage) ne sont pour l'instant pas journalisés côté serveur — aucune statistique de progrès n'est encore tirée du taux de réussite à « sauver » une position (idée : table dédiée `salvage_attempts`, distincte de `tactical_attempts` qui référence des `tactical_problems` curés plutôt que des positions de parties réelles).
 
 ---
 

@@ -90,6 +90,15 @@ const ApiClient = (() => {
     return _json(res);
   }
 
+  /** EPIC 15 (US 15.2) — Position exacte au pivot de défaite (US 15.1), pour rejouer en Sandbox. */
+  async function salvageGame(gameId) {
+    const res = await fetch(url(`/api/v1/games/${gameId}/salvage`), {
+      method: "POST",
+      headers: _authHeaders(),
+    });
+    return _json(res);
+  }
+
   /**
    * Sélectionne le prochain problème tactique (US 8.1/8.2), proche de l'Elo
    * tactique de l'utilisateur. `themeId` filtre par catégorie ("Aléatoire"
@@ -292,7 +301,7 @@ const ApiClient = (() => {
   }
 
   return {
-    baseUrl, url, analyzeGame, getGame, getGames, updateGameStatus,
+    baseUrl, url, analyzeGame, getGame, getGames, updateGameStatus, salvageGame,
     getNextTacticalProblem, submitTacticalAttempt, getTacticsStats,
     createOpeningLine, getOpeningLines, getDueOpeningLines, reviewOpeningLine, deleteOpeningLine,
     getNextEndgameProblem, submitEndgameAttempt,
