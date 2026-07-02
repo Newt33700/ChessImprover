@@ -151,6 +151,10 @@ class BoardManager {
           if (pv && pv.length) this.evalCache[f].pv = pv;
         }
         this.isAnalyzing = false;
+        if (this.mode === "sandbox" && move && f === this.chess.fen()
+            && this.chess.turn() !== this.sandboxPlayerColor) {
+          this._sandboxPlayEngineMove(move);
+        }
         this._processQueue();
         break;
       }
@@ -281,6 +285,10 @@ class BoardManager {
     if (this.mode === "ghost" && this.chess.turn() !== this.ghostPlayerColor) {
       return false;
     }
+    // Sandbox (Game-Salvage) : bloquer pendant que le moteur réfléchit
+    if (this.mode === "sandbox" && this.chess.turn() !== this.sandboxPlayerColor) {
+      return false;
+    }
     return true;
   }
 
@@ -303,6 +311,11 @@ class BoardManager {
     // Mode Ghost : répondre avec le coup historique adverse
     if (this.mode === "ghost") {
       setTimeout(() => this._ghostPlayOpponentMove(), 400);
+    }
+
+    // Mode Sandbox (Game-Salvage) : le moteur répond après le coup du joueur
+    if (this.mode === "sandbox" && !this.chess.isGameOver()) {
+      this._requestSandboxEngineMove();
     }
 
     return undefined;
@@ -522,6 +535,47 @@ class BoardManager {
     document.dispatchEvent(new CustomEvent("ghost:result", {
       detail: { success, evaluation: playerEval }
     }));
+  }
+
+  // -------------------------------------------------------------------------
+  // Mode Sandbox (EPIC 15 — « Réparation de Partie » / Game-Salvage)
+  // -------------------------------------------------------------------------
+
+  /**
+   * Lance le mode Sandbox : rejouer librement contre Stockfish à partir du
+   * pivot de défaite (US 15.1), pour tenter de sauver la position (US 15.2).
+   * @param {string} fen          – position de départ (juste avant la gaffe)
+   * @param {string} playerColor  – couleur du joueur ("w" | "b")
+   */
+  startSandbox(fen, playerColor = "w") {
+    this.mode = "sandbox";
+    this.sandboxPlayerColor = playerColor;
+    this.chess.load(fen);
+    this.board.position(fen);
+    if (playerColor === "b") this.board.flip();
+  }
+
+  _requestSandboxEngineMove() {
+    const fen = this.chess.fen();
+    const cached = this.evalCache[fen];
+    if (cached && cached.bestMove) {
+      setTimeout(() => this._sandboxPlayEngineMove(cached.bestMove), 300);
+      return;
+    }
+    this._queueAnalysis(fen);
+  }
+
+  _sandboxPlayEngineMove(uciMove) {
+    if (this.mode !== "sandbox" || this.chess.isGameOver()) return;
+    const from = uciMove.slice(0, 2);
+    const to = uciMove.slice(2, 4);
+    const promotion = uciMove.length > 4 ? uciMove.slice(4) : "q";
+    const move = this.chess.move({ from, to, promotion });
+    if (!move) return;
+    this.board.position(this.chess.fen(), false);
+    const fen = this.chess.fen();
+    if (this.onMove) this.onMove(move, fen);
+    this._requestAnalysis(fen);
   }
 
   // -------------------------------------------------------------------------

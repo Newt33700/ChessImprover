@@ -18,6 +18,7 @@ import chess
 import chess.pgn
 
 from app.domain.acpl import centipawn_loss
+from app.domain.coaching_voice import attach_move_alert
 from app.domain.move_class import classify_position
 from app.domain.phases import segment_phases
 from app.infrastructure.engine import (
@@ -137,10 +138,14 @@ def analyze_pgn(pgn: str, engine: Optional[EngineProvider] = None) -> Dict[str, 
     cursor = board.copy(stack=False)
     for i, move in enumerate(moves):
         fen = cursor.fen()
+        mover_color = cursor.turn
         record = _blank_record(cursor, move, phases[i])
         if engine is not None:
             _enrich_with_engine(record, engine, fen, move)
-        records.append(record)
         cursor.push(move)
+        # EPIC 14 (US 14.1/14.2) : alerte vocale contextuelle — nécessite la
+        # position APRÈS le coup pour détecter une pièce laissée en prise.
+        attach_move_alert(record, cursor, mover_color)
+        records.append(record)
 
     return {"result": result, "eco": eco, "opening_name": opening_name, "moves": records}

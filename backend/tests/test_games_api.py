@@ -40,6 +40,21 @@ def _evals(pgn, played=40):
     return evals
 
 
+def _evals_with_blunder(pgn, blunder_index, loss=300, base=40):
+    """Comme `_evals`, mais le coup d'index `blunder_index` (0-based, ligne
+    principale) perd `loss` centipions face à une meilleure ligne fictive
+    (EPIC 15 — pivot de défaite)."""
+    game = chess.pgn.read_game(io.StringIO(pgn))
+    board = game.board()
+    evals = {}
+    for i, move in enumerate(game.mainline_moves()):
+        fen = board.fen()
+        best = base + loss if i == blunder_index else base
+        evals[fen] = [["0000", best], [move.uci(), base]]
+        board.push(move)
+    return evals
+
+
 def _signup_and_token(email="alice@ex.com", username="alice") -> str:
     r = client.post("/auth/signup", json={"email": email, "username": username, "password": "pass123"})
     return r.json()["token"]
@@ -490,3 +505,67 @@ class TestStatsHistory:
         r = client.get("/api/v1/stats/history", params={"cadence": "blitz"}, headers=_auth(token))
         assert r.status_code == 200
         assert r.json()["history"] == []
+
+
+class TestSalvageEndpoint:
+    """EPIC 15 (US 15.1/15.2) — POST /api/v1/games/{game_id}/salvage."""
+
+    def test_salvage_returns_position_before_pivot(self):
+        token = _signup_and_token()
+        r = client.post(
+            "/api/v1/games/analyze",
+            json={"pgn": PGN, "user_color": "white", "evals": _evals_with_blunder(PGN, 2)},
+            headers=_auth(token),
+        )
+        gid = r.json()["accepted"][0]["game_id"]
+        s = client.post(f"/api/v1/games/{gid}/salvage", headers=_auth(token))
+        assert s.status_code == 200
+        body = s.json()
+        assert body["game_id"] == gid
+        assert body["pivot_move_index"] == 2
+        assert body["side_to_move"] == "white"
+        assert body["move_number"] == 2
+        expected = chess.Board()
+        expected.push_san("e4")
+        expected.push_san("e5")
+        assert body["fen"] == expected.fen()
+
+    def test_salvage_without_token_returns_401_or_403(self):
+        assert client.post("/api/v1/games/whatever/salvage").status_code in (401, 403)
+
+    def test_salvage_unknown_game_404(self):
+        token = _signup_and_token()
+        assert client.post("/api/v1/games/missing/salvage", headers=_auth(token)).status_code == 404
+
+    def test_salvage_other_users_game_returns_404(self):
+        token_a = _signup_and_token(email="a2@ex.com", username="usera2")
+        token_b = _signup_and_token(email="b2@ex.com", username="userb2")
+        r = client.post(
+            "/api/v1/games/analyze",
+            json={"pgn": PGN, "user_color": "white", "evals": _evals_with_blunder(PGN, 2)},
+            headers=_auth(token_a),
+        )
+        gid = r.json()["accepted"][0]["game_id"]
+        s = client.post(f"/api/v1/games/{gid}/salvage", headers=_auth(token_b))
+        assert s.status_code == 404
+
+    def test_salvage_no_pivot_detected_returns_404(self):
+        token = _signup_and_token()
+        r = client.post(
+            "/api/v1/games/analyze",
+            json={"pgn": PGN, "user_color": "white", "evals": _evals(PGN)},
+            headers=_auth(token),
+        )
+        gid = r.json()["accepted"][0]["game_id"]
+        s = client.post(f"/api/v1/games/{gid}/salvage", headers=_auth(token))
+        assert s.status_code == 404
+        assert "pivot" in s.json()["detail"].lower()
+
+    def test_salvage_processing_game_returns_409(self):
+        from app.domain.auth import decode_token
+
+        token = _signup_and_token()
+        user_id = decode_token(token)["sub"]
+        game = db_client.create_game(pgn=PGN, user_id=user_id, status="processing")
+        s = client.post(f"/api/v1/games/{game['id']}/salvage", headers=_auth(token))
+        assert s.status_code == 409
