@@ -10,16 +10,12 @@
  *   { type:"ready" }                          – moteur prêt
  */
 
-const WASM_CDNS = [
-  "https://cdn.jsdelivr.net/npm/stockfish.wasm@0.10.0/stockfish.js",
-  "https://unpkg.com/stockfish.wasm@0.10.0/stockfish.js",
-];
-
-const ASM_CDNS = [
-  "stockfish.js",
-  "https://cdn.jsdelivr.net/npm/stockfish.js@10.0.2/stockfish.js",
-  "https://cdnjs.cloudflare.com/ajax/libs/stockfish.js/10.0.2/stockfish.js",
-];
+// EPIC 13, US 13.1 : fichiers locaux uniquement (aucun appel externe, cf.
+// §4.11 du README). Pas de build WASM+NNUE auto-hébergé pour l'instant
+// (cf. §10 « reste à faire ») — le worker retombe directement sur le
+// moteur asm.js déjà vendorisé (`js/stockfish.js`).
+const WASM_CDNS = [];
+const ASM_CDNS = ["stockfish.js"];
 
 const MIN_DEPTH   = 15;
 const MIN_TIME_MS = 500;
