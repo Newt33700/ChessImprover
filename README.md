@@ -176,7 +176,9 @@ ChessImprover/
 │       │   ├── test_srs.py             # SM-2 backend + sm2_schedule (EPIC 9)
 │       │   ├── test_opening_repertoire.py # EPIC 9 : validation séquence + infer_quality
 │       │   ├── test_db_opening_repertoire.py # EPIC 9 : store répertoire (CRUD, isolation)
-│       │   └── test_openings_trainer_api.py # EPIC 9 : routes CRUD + révision SM-2
+│       │   ├── test_openings_trainer_api.py # EPIC 9 : routes CRUD + révision SM-2
+│       │   ├── test_db_endgames.py     # EPIC 10 : store finales + intégrité du seed (python-chess)
+│       │   └── test_endgames_api.py    # EPIC 10 : routes GET next (+ filtre theme_id) / POST attempt
 │       └── mutants/                    # Mutation testing mutmut
 │
 ├── supabase/
@@ -190,7 +192,8 @@ ChessImprover/
 │       ├── 20260701191149_games_is_reviewed.sql # Colonne is_reviewed (défaut false) sur games (US 7.3)
 │       ├── 20260701194517_tactics_epic8.sql    # Table tactical_problems + profiles.tactical_elo + seed 15 problèmes (US 8.1)
 │       ├── 20260701201530_tactical_attempts.sql # Table tactical_attempts (historique, RLS) (US 8.4)
-│       └── 20260701223519_opening_repertoire.sql # Table opening_repertoire (répertoire + SRS, RLS) (EPIC 9)
+│       ├── 20260701223519_opening_repertoire.sql # Table opening_repertoire (répertoire + SRS, RLS) (EPIC 9)
+│       └── 20260702051516_endgames_epic10.sql  # Table endgame_problems + profiles.endgame_elo + seed 9 positions (EPIC 10)
 │
 └── .github/
     └── workflows/
@@ -1004,6 +1007,30 @@ Modules **purs** (couche domaine), entièrement testés, indépendants de l'infr
 - Vérifié en navigateur (Playwright + Chromium, backend/frontend locaux) : ajout d'une ligne, échiquier de révision monté, ligne rejouée sans erreur → Elo... XP +10, prochaine échéance 2026-07-02 (J+1, cohérent avec un premier succès SM-2), état vide gamifié affiché ensuite. Captures à l'appui.
 - Tests : `backend/tests/test_opening_repertoire.py` (validation + `infer_quality`), `backend/tests/test_db_opening_repertoire.py` (CRUD + isolation), `backend/tests/test_openings_trainer_api.py` (17 tests d'intégration : création/liste/due/révision/suppression, 401/404/422, isolation entre utilisateurs), `backend/tests/test_srs.py` (`sm2_schedule` + équivalence avec `review_card`), `backend/tests/test_pg_repository.py` (contrat de signature + mapping `line_name`↔`name`), `frontend/tests/api_client.test.js` (6 nouveaux tests).
 
+### 4.10 EPIC 10 — Entraîneur de Finales Essentielles — 2ᵉ fonctionnalité bonus auto-initiée
+
+**Fichiers :** `routers/endgames.py`, `domain/endgames.py`, `infrastructure/db_client.py`, `supabase/migrations/20260702051516_endgames_epic10.sql`, `js/api_client.js`, `js/app.js`, `index.html` (`#endgame-trainer-col`)
+
+> **Contexte :** une fois EPIC 9 mergée, l'utilisateur a explicitement demandé de lancer la piste « finales », déjà notée comme idée future (ancien §11.10) faute de temps lors du choix initial d'EPIC 9. Distinct du mode **FINALES** existant (`EndgameDetector`, diagnostic post-partie sur les propres parties jouées) : ce nouvel entraîneur est un **jeu de positions curées** de technique de mat essentielle, sur le modèle exact d'EPIC 8 (US 8.1) mais pour un thème différent.
+
+**Pas de duplication d'architecture** : `routers/endgames.py` réutilise **directement** `domain.tactics.is_correct_move`/`select_nearest_problem` et `domain.tactical_elo.update_elo` — ce sont des fonctions pures déjà génériques (elles opèrent sur des dicts `fen`/`solution`/`difficulty_elo`, sans rien de spécifique aux puzzles tactiques). `domain/endgames.py` ne contient donc que la liste des catégories (`ENDGAME_THEMES`) et la justification de ce choix ; aucune formule n'est réécrite.
+
+**Routes** (JWT requis) :
+
+| Route | Méthode | Comportement |
+|---|---|---|
+| `/api/v1/endgames/next` | GET | Position la plus proche de l'Elo « finales » de l'utilisateur (1000 par défaut, distinct de l'Elo tactique EPIC 8). `?theme_id=` filtre par catégorie ; valeur hors `ENDGAME_THEMES` → 422. |
+| `/api/v1/endgames/attempt` | POST | Corps `{problem_id, move}`. Valide le coup **côté serveur**, ajuste l'Elo « finales » (+15/-15), révèle la solution après la tentative. |
+
+**Règles métier :**
+- **Elo « finales »** (`db_client.get_endgame_elo`/`update_endgame_elo`) : stocké directement dans le dict utilisateur in-memory (`endgame_elo`, 1000 par défaut), comme `tactical_elo` — même gap connu (in-memory quel que soit `DATABASE_URL`, §10.1). Colonne SQL `profiles.endgame_elo` créée par la migration pour la persistance Supabase, sans tentative de délégation Postgres côté `db_client`/`PgRepository` pour la table `endgame_problems` (volontaire : évite de reproduire le piège d'US 8.1 où `tactical_problems` délègue à des méthodes jamais écrites, cf. §10.6 — cette table reste ici honnêtement 100 % in-memory, sans fausse promesse de support Postgres).
+- **Catégories (`domain.endgames.ENDGAME_THEMES`)** : `queen_mate` (Roi+Dame vs Roi), `rook_mate` (Roi+Tour vs Roi), `two_rooks_mate` (Roi+2 Tours vs Roi) — trois techniques de mat fondamentales, chacune un thème distinct des catégories tactiques d'EPIC 8 (`mate_in_1`/`mate_in_2`/`hanging_piece`, positions avec plus de matériel où il faut *repérer* un coup, contre ici *exécuter* une technique de mat avec matériel réduit).
+- **Seed de données** : 9 positions (3 par catégorie), **chacune vérifiée programmatiquement par python-chess** (recherche exhaustive par force brute des combinaisons Roi/Roi/pièce(s) menant à un mat en 1, même méthodologie que le seed tactique d'US 8.1) avant intégration — verrouillé par `test_db_endgames.py::TestSeedIntegrity`.
+
+**Frontend :** carte **TECHNIQUE DE MAT** dans le dashboard → vue plein écran `#endgame-trainer-col` (`body.endgame-trainer-active`), échiquier indépendant identique en tout point à l'implémentation US 8.3 (`_initEndgameBoard`/`_onEndgameDrop`/`_submitEndgameAttempt`, dupliqué avec des identifiants DOM et endpoints distincts plutôt que factorisé avec le Coach Tactique — cohérent avec le fait qu'aucun des trois échiquiers indépendants du produit, EPIC 8/9/10, ne partage de code de câblage DOM entre eux : trois blocs similaires mais autonomes plutôt qu'une abstraction prématurée). Réutilise les classes CSS génériques `.tactics-board`/`.tactics-feedback`/`.tactics-theme-btn` déjà définies pour EPIC 8.
+- Vérifié en navigateur (Playwright + Chromium, backend/frontend locaux) : coup correct → halo vert, Elo 1000→1015, message « Bravo, mat trouvé ! » ; coup incorrect → halo rouge, solution révélée. Captures à l'appui.
+- Tests : `backend/tests/test_db_endgames.py` (intégrité du seed + store), `backend/tests/test_endgames_api.py` (13 tests d'intégration), `frontend/tests/api_client.test.js` (5 nouveaux tests).
+
 ---
 
 ## 5. Règles métier
@@ -1214,7 +1241,7 @@ npm run test:mutation # Stryker
 | `stats_dashboard.test.js` | StatsDashboard | wpFromCp, estimateEloLogistic, movingAverage, filterByDays, buildChartData, render (Chart mock) |
 | `personal_coach.test.js` | PersonalCoach | computeMetrics, diagnose (toutes les 6 branches), renderHTML, _detectResult, _detectUserColor, _extractOpening |
 | `advanced_stats.test.js` | AdvancedStats | cellClass, deltas, deepDiveFor, gaugeAngle, matrixRows, `categoryDetailHtml` (tactics/endgames/openings/strategy), `tacticSuccessGaugeHtml` (bornes, clamp, NaN-safe), fetchSummary (fallbacks), `formatShortDate`, `buildProgressDatasets`, `toggleProgressSeries`, `fetchHistory` (fallbacks) |
-| `api_client.test.js` | ApiClient | baseUrl/isConfigured (window/localStorage), url (query), analyzeGame (POST + erreur), getStatsSummary, getGame, getStatsHistory, **en-tête `Authorization: Bearer` présent/absent selon `Auth.getToken()` (US 6.4)**, **getGames (US 7.1)**, **updateGameStatus (US 7.3)**, **getNextTacticalProblem + régression bug `?` orphelin (US 8.2)**, **submitTacticalAttempt + time_taken, getTacticsStats (US 8.3/8.4)**, **createOpeningLine/getOpeningLines/getDueOpeningLines/reviewOpeningLine/deleteOpeningLine (EPIC 9)** |
+| `api_client.test.js` | ApiClient | baseUrl/isConfigured (window/localStorage), url (query), analyzeGame (POST + erreur), getStatsSummary, getGame, getStatsHistory, **en-tête `Authorization: Bearer` présent/absent selon `Auth.getToken()` (US 6.4)**, **getGames (US 7.1)**, **updateGameStatus (US 7.3)**, **getNextTacticalProblem + régression bug `?` orphelin (US 8.2)**, **submitTacticalAttempt + time_taken, getTacticsStats (US 8.3/8.4)**, **createOpeningLine/getOpeningLines/getDueOpeningLines/reviewOpeningLine/deleteOpeningLine (EPIC 9)**, **getNextEndgameProblem/submitEndgameAttempt (EPIC 10)** |
 | `auth.test.js` (US 6.1/6.3) | Auth | signup/login (succès, `detail` chaîne, `detail` liste Pydantic 422 — un ou plusieurs champs, absence de `detail`), `updateChessUsername` (sans token, succès + PATCH + persistance session, format invalide), isLoggedIn/logout |
 
 > `advanced_stats.js` n'est pas dans `collectCoverageFrom` (comme `app.js`, `auth.js`, `board_manager.js`) : seules ses fonctions pures sont testées, les `render*` sont de la glue DOM.
@@ -1261,8 +1288,10 @@ JWT_SECRET=ci-test-secret pytest tests/ -v
 | `test_opening_repertoire.py` | `validate_move_sequence` (ligne valide, vide, coup illégal, entrée invalide), `infer_quality` (0/1/2+ erreurs) | EPIC 9 |
 | `test_db_opening_repertoire.py` | Store répertoire : création (calendrier SM-2 initial), liste/isolation par utilisateur, lignes dues (bornes de date), mise à jour de calendrier, suppression (propriétaire/non-propriétaire), reset | EPIC 9 |
 | `test_openings_trainer_api.py` | `POST /openings/repertoire` (création, 422 séquence/couleur invalide, 401), `GET` (liste, isolation), `GET /due`, `POST /{id}/review` (planification J+1, échec réinitialise, 404 ligne inconnue/non-propriétaire, 401), `DELETE /{id}` (propriétaire/non-propriétaire, 404, 401) | EPIC 9 |
+| `test_db_endgames.py` | Store finales (Elo par défaut, distinct de `tactical_elo`), **intégrité des 9 positions du seed vérifiée par python-chess** (mat en 1 effectif), sélection/filtre par catégorie | EPIC 10 |
+| `test_endgames_api.py` | `GET /endgames/next` (sans solution, 401, filtre theme_id ×3 + 422 si inconnu), `POST /endgames/attempt` (succès/échec ±15, persistance, 404, 401, isolation entre utilisateurs, Elo distinct de l'Elo tactique) | EPIC 10 |
 
-**Couverture backend :** 540 TUs au total, couverture globale **89 %+** ; cœur Stats Avancées + EPIC 1/5.1/US 4.2 à 92–100 % (`stats_aggregator`, `cadence`, `progress_history`, `models`, `engine` à 100 %, `analysis_pipeline` 92 %, `routers/games` 92 %, `db_client` 98 %). Les requêtes SQL réelles de `pg_repository` (nécessitant une base) sont marquées `pragma: no cover`.
+**Couverture backend :** 566 TUs au total, couverture globale **89 %+** ; cœur Stats Avancées + EPIC 1/5.1/US 4.2 à 92–100 % (`stats_aggregator`, `cadence`, `progress_history`, `models`, `engine` à 100 %, `analysis_pipeline` 92 %, `routers/games` 92 %, `db_client` 98 %). Les requêtes SQL réelles de `pg_repository` (nécessitant une base) sont marquées `pragma: no cover`.
 
 **Architecture de test `test_auth.py` :**
 - App de test minimale (`FastAPI()` + routers auth/sync uniquement) pour éviter la dépendance `python-chess`
@@ -1409,6 +1438,7 @@ UNIQUE (user_id)
 | **Échiquier tactique jouable** (US 8.3) | `app.js:_initTacticsBoard/_onTacticsDrop/_submitTacticsAttempt` + `api_client.js:submitTacticalAttempt` + `index.html`/`style.css` (`.tactics-board`) | Échiquier indépendant (`Chess`/`Chessboard` directs, pas de `BoardManager`), validation de la solution 100 % serveur, feedback vert/rouge, enchaînement auto vers le problème suivant |
 | **Persistance + série du jour** (US 8.4) | `tactical_attempts` (migration) + `db_client.record_tactical_attempt`/`get_tactical_attempts` + `domain/tactics.compute_daily_streak`/`compute_stats_by_theme` + `GET /tactics/stats` + `app.js:#tactics-streak-badge` | Chaque tentative est persistée ; badge 🔥 Série (problèmes résolus d'affilée aujourd'hui) mis à jour en direct ; taux de réussite par catégorie calculable via `/tactics/stats` |
 | **Entraîneur d'Ouvertures** (EPIC 9, bonus) | `routers/openings_trainer.py` + `domain/opening_repertoire.py` + `domain/srs_engine.sm2_schedule` + `index.html:#openings-trainer-col` + `app.js:_startOpeningReview/_onOtDrop/_finishOpeningReview` | Carte OUVERTURES → vue plein écran : ajout de ligne (validée serveur), révision SRS avec échiquier auto-enchaîné, qualité SM-2 déduite automatiquement (0 notation manuelle), CRUD complet opérationnel et testé |
+| **Entraîneur de Finales Essentielles** (EPIC 10, bonus) | `routers/endgames.py` (réutilise `domain/tactics.py` + `domain/tactical_elo.py`) + `index.html:#endgame-trainer-col` + `app.js:_initEndgameBoard/_onEndgameDrop/_submitEndgameAttempt` | Carte TECHNIQUE DE MAT → vue plein écran, 3 catégories (Roi+Dame/Roi+Tour/Roi+2 Tours), Elo « finales » distinct, échiquier jouable avec feedback vert/rouge, opérationnel et testé |
 
 ### ❌ Non câblé ou incomplet
 
@@ -1515,7 +1545,7 @@ Identifier les ouvertures jouées le plus souvent, montrer leurs performances pa
 
 ### 11.10 Entraîneur de finales essentielles
 
-Sur le modèle de l'EPIC 9 (répertoire + SRS) et de l'EPIC 8 (échiquier jouable + validation serveur), un deck de positions de finales incontournables (opposition, Lucena, Philidor, R+P vs R, mats de base) avec sélection adaptative et répétition espacée — pour couvrir le second axe (« les finales ») évoqué par l'utilisateur en plus des ouvertures, non traité dans cette session faute de temps/crédits restants.
+> **✅ Implémenté (EPIC 10, §4.10).** Technique de mat essentielle (Roi+Dame/Roi+Tour/Roi+2 Tours) sur le modèle exact d'EPIC 8, avec sélection adaptative par Elo. **Reste pour aller plus loin** : les finales de *technique* au sens strict (opposition, Lucena, Philidor, R+P vs R) nécessitent une vérification d'exactitude par tablebase/moteur — non faisables avec seulement `python-chess` (pas d'accès réseau à une tablebase dans cet environnement) contrairement aux positions de mat forcé, vérifiables par recherche exhaustive. Un dataset externe pré-vérifié (Lichess/Syzygy) serait nécessaire pour ce volet.
 
 ---
 
