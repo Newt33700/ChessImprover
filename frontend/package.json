@@ -7,7 +7,8 @@
     "test": "jest --coverage",
     "test:watch": "jest --watch",
     "test:mutation": "stryker run",
-    "test:e2e": "playwright test"
+    "test:e2e": "playwright test",
+    "validate:assets": "python3 scripts/validate_assets.py"
   },
   "devDependencies": {
     "@playwright/test": "^1.61.1",

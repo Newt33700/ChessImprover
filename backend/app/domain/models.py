@@ -191,6 +191,24 @@ class UserProfile(BaseModel):
     chess_username: Optional[str] = Field(
         None, description="Pseudo Chess.com lié (US 6.3), distinct du username de connexion"
     )
+    settings: Dict[str, Any] = Field(
+        default_factory=dict,
+        description="EPIC 18 — préférences de personnalisation (thème pièces/plateau), JSONB libre",
+    )
+
+
+class UserSettingsUpdate(BaseModel):
+    """EPIC 18 (US 18.2/18.3) — Remplace les préférences de personnalisation du profil.
+
+    Volontairement permissif (``Dict[str, Any]``, pas de schéma de clés figé) :
+    l'objectif explicite (cf. UserStory.md) est de pouvoir ajouter de nouveaux
+    réglages (sons, animations, taille d'échiquier…) sans jamais modifier ce
+    contrat ni le schéma de la colonne JSONB ``profiles.settings``. La
+    résilience à une valeur invalide (ex. un nom de thème inconnu) est de la
+    responsabilité du frontend (``ThemeService``), qui retombe toujours sur un
+    thème par défaut plutôt que de planter l'échiquier.
+    """
+    settings: Dict[str, Any] = Field(default_factory=dict)
 
 
 class AuthResponse(BaseModel):

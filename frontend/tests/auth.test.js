@@ -111,6 +111,49 @@ describe("updateChessUsername (US 6.3)", () => {
   });
 });
 
+describe("updateSettings (EPIC 18, US 18.2)", () => {
+  test("sans token → rejette sans appeler fetch", async () => {
+    global.fetch = jest.fn();
+    await expect(Auth.updateSettings({ piece_theme: "cyber-tactics" })).rejects.toThrow("Non connecté");
+    expect(global.fetch).not.toHaveBeenCalled();
+  });
+
+  test("succès : PATCH /auth/me/settings, met à jour la session locale", async () => {
+    global.fetch = jest.fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ token: "t1", user: { id: "u1", email: "a@b.com", username: "a", settings: {} } }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          id: "u1", email: "a@b.com", username: "a",
+          settings: { piece_theme: "cyber-tactics", board_theme: "cyber" },
+        }),
+      });
+    await Auth.signup("a@b.com", "a", "secret1");
+    const user = await Auth.updateSettings({ piece_theme: "cyber-tactics", board_theme: "cyber" });
+    expect(user.settings).toEqual({ piece_theme: "cyber-tactics", board_theme: "cyber" });
+    expect(Auth.getUser().settings).toEqual({ piece_theme: "cyber-tactics", board_theme: "cyber" });
+    const [, patchCall] = global.fetch.mock.calls;
+    expect(patchCall[1].method).toBe("PATCH");
+    expect(JSON.parse(patchCall[1].body)).toEqual({ settings: { piece_theme: "cyber-tactics", board_theme: "cyber" } });
+  });
+
+  test("settings absent → envoie un objet vide", async () => {
+    global.fetch = jest.fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ token: "t1", user: { id: "u1", email: "a@b.com", username: "a", settings: {} } }),
+      })
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ id: "u1", settings: {} }) });
+    await Auth.signup("a@b.com", "a", "secret1");
+    await Auth.updateSettings();
+    const [, patchCall] = global.fetch.mock.calls;
+    expect(JSON.parse(patchCall[1].body)).toEqual({ settings: {} });
+  });
+});
+
 describe("isLoggedIn / logout", () => {
   test("faux par défaut, vrai après signup, faux après logout", async () => {
     expect(Auth.isLoggedIn()).toBe(false);

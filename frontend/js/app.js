@@ -267,6 +267,11 @@ class ChessImproverApp {
 
     if (window.CoachingVoice) CoachingVoice.loadPreference(); // EPIC 14 (US 14.2)
 
+    // EPIC 18 (US 18.3) : appliquer le thème en cache AVANT tout échiquier
+    // (BoardManager/_initBoard ci-dessous lit ThemeService.getPieceThemePath()
+    // à la construction) — évite le flash du thème par défaut.
+    if (window.ThemeService) ThemeService.applySettings(ThemeService.loadLocalCache());
+
     this._openingBookPromise = this._buildOpeningBook();
     this._initBoard();
     this._bindEvents();
@@ -1162,10 +1167,56 @@ class ChessImproverApp {
     }
   }
 
+  // ─── EPIC 18 (US 18.1-18.3) : Personnalisation Visuelle (Theme & Board) ─
+
+  /** Applique + met en cache local les préférences du profil serveur (US 18.3). */
+  _applyServerTheme(user) {
+    if (!window.ThemeService) return;
+    const settings = user?.settings || {};
+    ThemeService.applySettings(settings);
+    ThemeService.saveLocalCache(settings);
+    this.boardMgr?.refreshTheme();
+  }
+
+  _openThemeModal() {
+    if (!window.ThemeService) return;
+    const current = ThemeService.loadLocalCache();
+    const pieceSelect = document.getElementById("theme-piece-select");
+    const boardSelect = document.getElementById("theme-board-select");
+    if (pieceSelect) pieceSelect.value = current.piece_theme || ThemeService.DEFAULT_PIECE_THEME;
+    if (boardSelect) boardSelect.value = current.board_theme || ThemeService.DEFAULT_BOARD_THEME;
+    const modal = document.getElementById("theme-modal");
+    if (modal) modal.hidden = false;
+  }
+
+  _closeThemeModal() {
+    const modal = document.getElementById("theme-modal");
+    if (modal) modal.hidden = true;
+  }
+
+  async _saveThemeSettings(event) {
+    event.preventDefault();
+    if (!window.ThemeService) return;
+    const pieceTheme = document.getElementById("theme-piece-select")?.value;
+    const boardTheme = document.getElementById("theme-board-select")?.value;
+    const settings = { ...ThemeService.loadLocalCache(), piece_theme: pieceTheme, board_theme: boardTheme };
+
+    const applied = ThemeService.applySettings(settings);
+    ThemeService.saveLocalCache(settings);
+    this.boardMgr?.refreshTheme();
+
+    if (window.Auth?.isLoggedIn()) {
+      try { await Auth.updateSettings(settings); } catch { /* best-effort, déjà appliqué localement */ }
+    }
+    this._toast(`🎨 Thème « ${applied.pieceTheme} » appliqué`, "success");
+    this._closeThemeModal();
+  }
+
   _onAuthSuccess(user) {
     this._closeAuthModal();
     this._toast(`Bienvenue ${user.username} !`, "success");
     this._renderAuthState();
+    this._applyServerTheme(user);
     this._loadServerGames();
     // Auto-charger les parties Chess.com si un username est mémorisé
     if (this.username && !this.recentGames.length) {
@@ -1856,7 +1907,7 @@ class ChessImproverApp {
       draggable: true,
       position: problem.fen,
       orientation,
-      pieceTheme: "assets/images/pieces/{piece}.svg",
+      pieceTheme: window.ThemeService ? ThemeService.getPieceThemePath() : "assets/images/pieces/{piece}.svg",
       onDragStart: (src, piece) => this._onTacticsDragStart(src, piece),
       onDrop: (src, tgt) => this._onTacticsDrop(src, tgt),
       onSnapEnd: () => this._tacticsBoard.position(this._tacticsChess.fen()),
@@ -2028,7 +2079,7 @@ class ChessImproverApp {
       draggable: true,
       position: "start",
       orientation: line.color,
-      pieceTheme: "assets/images/pieces/{piece}.svg",
+      pieceTheme: window.ThemeService ? ThemeService.getPieceThemePath() : "assets/images/pieces/{piece}.svg",
       onDragStart: (src, piece) => this._onOtDragStart(src, piece),
       onDrop: (src, tgt) => this._onOtDrop(src, tgt),
       onSnapEnd: () => this._otBoard.position(this._otChess.fen()),
@@ -2150,7 +2201,7 @@ class ChessImproverApp {
       draggable: true,
       position: problem.fen,
       orientation,
-      pieceTheme: "assets/images/pieces/{piece}.svg",
+      pieceTheme: window.ThemeService ? ThemeService.getPieceThemePath() : "assets/images/pieces/{piece}.svg",
       onDragStart: (src, piece) => this._onEndgameDragStart(src, piece),
       onDrop: (src, tgt) => this._onEndgameDrop(src, tgt),
       onSnapEnd: () => this._endgameBoard.position(this._endgameChess.fen()),
@@ -2350,7 +2401,7 @@ class ChessImproverApp {
       draggable: true,
       position: problem.fen,
       orientation,
-      pieceTheme: "assets/images/pieces/{piece}.svg",
+      pieceTheme: window.ThemeService ? ThemeService.getPieceThemePath() : "assets/images/pieces/{piece}.svg",
       onDragStart: (src, piece) => this._onSprintDragStart(src, piece),
       onDrop: (src, tgt) => this._onSprintDrop(src, tgt),
       onSnapEnd: () => this._sprintBoard.position(this._sprintChess.fen()),

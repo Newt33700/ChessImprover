@@ -259,6 +259,81 @@ class TestUpdateMe:
         assert r_b.json()["chess_username"] is None
 
 
+class TestUpdateSettings:
+    """EPIC 18 (US 18.2/18.3) — PATCH /auth/me/settings."""
+
+    def _signup_and_token(self, email="theo@ex.com", username="theo") -> str:
+        r = client.post("/auth/signup", json={"email": email, "username": username, "password": "pass123"})
+        return r.json()["token"]
+
+    def test_settings_default_to_empty_object_on_signup(self):
+        r = client.post("/auth/signup", json={"email": "new@ex.com", "username": "newu", "password": "pass123"})
+        assert r.json()["user"]["settings"] == {}
+
+    def test_update_settings_success(self):
+        token = self._signup_and_token()
+        settings = {"piece_theme": "cyber-tactics", "board_theme": "slate"}
+        r = client.patch(
+            "/auth/me/settings", json={"settings": settings},
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert r.status_code == 200
+        assert r.json()["settings"] == settings
+
+    def test_update_settings_persists(self):
+        token = self._signup_and_token()
+        client.patch(
+            "/auth/me/settings", json={"settings": {"piece_theme": "cyber-tactics"}},
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        r = client.get("/auth/me", headers={"Authorization": f"Bearer {token}"})
+        assert r.json()["settings"] == {"piece_theme": "cyber-tactics"}
+
+    def test_update_settings_replaces_rather_than_merges(self):
+        token = self._signup_and_token()
+        client.patch(
+            "/auth/me/settings", json={"settings": {"piece_theme": "cyber-tactics", "board_theme": "slate"}},
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        r = client.patch(
+            "/auth/me/settings", json={"settings": {"board_theme": "ocean"}},
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert r.json()["settings"] == {"board_theme": "ocean"}
+
+    def test_update_settings_accepts_arbitrary_keys(self):
+        # Permissif par conception (US 18.2) : aucune clé n'est figée dans le contrat.
+        token = self._signup_and_token()
+        r = client.patch(
+            "/auth/me/settings", json={"settings": {"sound_enabled": True, "board_size": 480}},
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert r.status_code == 200
+        assert r.json()["settings"] == {"sound_enabled": True, "board_size": 480}
+
+    def test_update_settings_rejects_non_object_settings(self):
+        token = self._signup_and_token()
+        r = client.patch(
+            "/auth/me/settings", json={"settings": "not-an-object"},
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert r.status_code == 422
+
+    def test_update_settings_without_token_returns_401_or_403(self):
+        r = client.patch("/auth/me/settings", json={"settings": {"piece_theme": "cyber-tactics"}})
+        assert r.status_code in (401, 403)
+
+    def test_update_settings_only_affects_own_profile(self):
+        token_a = self._signup_and_token(email="leo@ex.com", username="leo")
+        token_b = self._signup_and_token(email="mia@ex.com", username="mia")
+        client.patch(
+            "/auth/me/settings", json={"settings": {"piece_theme": "cyber-tactics"}},
+            headers={"Authorization": f"Bearer {token_a}"},
+        )
+        r_b = client.get("/auth/me", headers={"Authorization": f"Bearer {token_b}"})
+        assert r_b.json()["settings"] == {}
+
+
 # ── POST /sync ─────────────────────────────────────────────────────────────────
 
 class TestSync:

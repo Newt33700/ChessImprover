@@ -5,7 +5,14 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, HTTPException, status
 
 from app.domain import auth as auth_domain
-from app.domain.models import AuthResponse, ChessUsernameUpdate, UserCreate, UserLogin, UserProfile
+from app.domain.models import (
+    AuthResponse,
+    ChessUsernameUpdate,
+    UserCreate,
+    UserLogin,
+    UserProfile,
+    UserSettingsUpdate,
+)
 from app.infrastructure import db_client
 from app.routers.deps import get_current_user as _current_user
 
@@ -16,6 +23,7 @@ def _to_profile(user: dict) -> UserProfile:
     return UserProfile(
         id=user["id"], email=user["email"], username=user["username"],
         chess_username=user.get("chess_username"),
+        settings=user.get("settings") or {},
     )
 
 
@@ -49,4 +57,13 @@ def me(user: dict = Depends(_current_user)) -> UserProfile:
 def update_me(body: ChessUsernameUpdate, user: dict = Depends(_current_user)) -> UserProfile:
     """US 6.3 — Lie/délie le pseudo Chess.com du profil de l'utilisateur authentifié uniquement."""
     updated = db_client.update_chess_username(user["id"], body.chess_username or None)
+    return _to_profile(updated)
+
+
+@router.patch("/me/settings", response_model=UserProfile)
+def update_settings(body: UserSettingsUpdate, user: dict = Depends(_current_user)) -> UserProfile:
+    """EPIC 18 (US 18.2/18.3) — Remplace les préférences de personnalisation (thème pièces/plateau)
+    du profil de l'utilisateur authentifié uniquement.
+    """
+    updated = db_client.update_settings(user["id"], body.settings)
     return _to_profile(updated)
