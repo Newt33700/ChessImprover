@@ -391,6 +391,8 @@
             <button class="mode-pill" data-mode="finales" onclick="window.app?._showEndgame()">Finales</button>
           </div>
           <button id="btn-mark-reviewed" class="btn btn--sm btn--secondary" hidden onclick="window.app?._toggleReviewed()">✓ Marquer étudiée</button>
+          <button id="btn-salvage" class="btn btn--sm btn--secondary" hidden onclick="window.app?._startSalvage()" title="Rejouer depuis le pivot de défaite (EPIC 15)">🚑 Sauver la partie</button>
+          <button id="btn-voice-coach" class="btn btn--sm btn--secondary" onclick="window.app?._toggleVoiceCoach()" title="Synthèse vocale du Coach (EPIC 14)">🔇 Coach vocal</button>
           <div id="engine-eval" class="engine-eval">…</div>
         </div>
 
@@ -765,6 +767,7 @@
 <script src="assets/js/chart-4.4.0.umd.js"></script>
 <script src="js/db.js"></script>
 <script src="js/board_manager.js"></script>
+<script src="js/coaching_voice.js"></script>
 <script src="js/wp_chart.js"></script>
 <script src="js/openings_stats.js"></script>
 <script src="js/endgame_detector.js"></script>

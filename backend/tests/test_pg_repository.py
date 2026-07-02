@@ -23,6 +23,7 @@ class TestPgRepository:
         assert PgRepository._MOVE_COLS == (
             "move_number", "color", "move_san", "eval_before", "eval_after",
             "score_cp", "cpl", "is_mate", "mate_in", "phase", "position_type",
+            "alert_severity", "alert_text", "tts_text",
         )
 
     def test_progress_history_methods_exist(self):
