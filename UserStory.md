@@ -704,3 +704,84 @@ En tant qu'équipe, nous voulons que chaque modification de `supabase/migrations
 - **Non traité (cf. §10, backlog futur)** : build WASM+NNUE de Stockfish (le moteur retombe sur le vendoring asm.js déjà en place, fonctionnel mais plus lent) ; stockage Supabase Storage pour ces assets (non nécessaire tant que le volume reste faible — servis directement par le frontend statique).
 - Vérifié en navigateur (Playwright + Chromium) : chargement complet de la page avec **zéro requête externe** (vérifié en journalisant toutes les requêtes hors `localhost`), rendu correct des pièces d'échecs (SVG cburnett) et de la police Inter (`getComputedStyle().fontFamily`).
 - Tests : suite E2E existante (`frontend/tests/e2e/`) adaptée pour intercepter les nouveaux chemins locaux (`assets/js/...`) au lieu des anciens domaines CDN — 8/8 tests toujours verts après le rapatriement. `Jest` (226 tests) inchangé.
+
+## EPIC 19 : Dashboard de Performance Cognitive (Analyse de la Charge Cognitive)
+
+**Contexte :** backlog fourni par l'utilisateur (paste PO), délégué en parallèle d'EPIC 20 avec la directive « moins de temps à jouer, plus de temps à progresser ». Chess.com montre des statistiques de victoire ; l'objectif ici est de montrer le **processus de décision** du joueur (temps de réflexion) plutôt que son résultat brut.
+
+**En tant qu'** utilisateur, **je veux** voir comment mon temps de réflexion se répartit selon la phase de jeu et la qualité de mes décisions, **afin de** identifier les moments où je « panique » ou réfléchis trop sans que cela n'améliore mes coups.
+
+### US 19.1 : Détection des « Temps morts » par type de phase
+
+**Description :** segmenter le temps de réflexion moyen selon la phase de jeu (Ouverture/Milieu/Finale) et le niveau de pression (adversaire qui attaque vs égalité).
+
+**Critères d'Acceptation (DoD) :**
+- Le temps de réflexion par coup est dérivé des horloges PGN (`[%clk]`), avec correction de l'incrément de cadence (sinon un coup joué vite avec un gros incrément peut faire *remonter* l'horloge et biaiser le calcul vers le bas).
+- Répartition par phase (réutilise `domain.phases`, EPIC 2) avec part du temps total (`share_pct`) — permet de révéler qu'un joueur passe 80 % de son temps sur des ouvertures non maîtrisées.
+- Répartition par niveau de pression (`under_pressure` si le joueur est en net désavantage, `equality` sinon), dérivée de l'éval moteur déjà persistée par coup.
+
+**Statut :** ✅ Implémenté :
+- `domain/cognitive_load.py` : `derive_time_spent` (temps de réflexion pur, gère l'incrément, plancher à 0, `None` sans référence antérieure), `classify_pressure`/`PressureLevel`, `build_time_allocation_report`. Module PUR, aucune I/O.
+- `domain/cadence.parse_increment` : extrait l'incrément d'un `time_control` Chess.com (``"180+2"`` → 2), réutilisé pour la correction ci-dessus.
+- `domain/analyzer.read_mainline_clocks` rendue publique (au lieu de privée) et réutilisée par `domain/analysis_pipeline.analyze_pgn`, qui calcule désormais `fen`, `best_move_san` et `time_spent_seconds` pour chaque coup (nouveau paramètre `time_control`, avec repli sur l'en-tête PGN `TimeControl`).
+- Migration `20260702120000_game_moves_cognitive_load.sql` : 3 colonnes ajoutées à `game_moves` (`fen`, `best_move_san`, `time_spent_seconds`).
+- `GET /api/v1/stats/cognitive-load` (`routers/games.py`) : agrège tous les coups du joueur (toutes parties analysées confondues, même filtrage par couleur *par partie* que `/stats/summary` — un même joueur peut avoir joué Blancs sur une partie et Noirs sur une autre). Dégrade en résumé vide (200) plutôt qu'un 500 si la base est indisponible.
+- Frontend : `js/cognitive_dashboard.js` — carte « CHARGE COGNITIVE » dans le dashboard Statistiques Avancées (graphe barre Chart.js du temps moyen par phase + messages d'insight en langage naturel générés par `buildInsightMessages`, ex. « Tu passes 80% de ton temps de réflexion en ouverture »).
+- Tests : `backend/tests/test_cadence.py` (`parse_increment`), `backend/tests/test_cognitive_load.py` (35 tests, y compris les cas limites d'incrément/horloge manquante), `backend/tests/test_analysis_pipeline.py` (fen/best_move_san/time_spent_seconds), `backend/tests/test_games_api.py::TestStatsCognitiveLoad`, `frontend/tests/cognitive_dashboard.test.js` (19 tests, 87 % de couverture lignes/branches).
+
+### US 19.2 : Indicateur de « Fluidité de Décision »
+
+**Description :** comparer le temps de réflexion du joueur selon que son coup joué était quasi optimal (« Top 3 ») ou franchement perdant.
+
+**Critères d'Acceptation (DoD) :**
+- Un coup Top 3 (perte ≤ 50 cp) joué rapidement est valorisé.
+- Un coup perdant (perte ≥ 100 cp) joué lentement (ex. 3 minutes) signale une « fatigue décisionnelle ».
+
+**Statut :** ✅ Implémenté :
+- `domain/cognitive_load.move_quality_bucket` (bandes disjointes Top3/Weak avec zone intermédiaire non classée, même principe que `domain.move_class`), `is_decision_fatigue` (ratio temps-perdant / temps-top3 ≥ 1.3), `build_decision_fluidity_report`.
+- Exposé dans la même route `GET /api/v1/stats/cognitive-load` (clé `decision_fluidity`), même carte frontend que US 19.1 (alerte « Fatigue décisionnelle détectée » ou message positif « Bonne fluidité »).
+- Tests inclus dans `test_cognitive_load.py`/`cognitive_dashboard.test.js` ci-dessus.
+
+**Note d'architecture :** le backlog mentionnait « le temps moyen de Stockfish » comme référence — Stockfish n'a pas de « temps de réflexion » réel dans ce produit (évaluation par profondeur fixe, pas par horloge). L'indicateur compare donc le temps du joueur sur ses propres coups Top 3 vs perdants (référence auto-relative), ce qui sert la même valeur métier (détecter l'écart entre confiance et qualité de décision) sans halluciner une donnée moteur inexistante.
+
+**Vérifié en navigateur (Playwright + Chromium)** : `frontend/tests/e2e/cognitive_flashcards.spec.js` — une partie avec gaffe + horloges analysée via l'API réelle fait apparaître l'insight dans le Dashboard Cognitif.
+
+## EPIC 20 : Bibliothèque de Mémoire Tactique (Système de Flashcards SRS)
+
+**Contexte :** backlog fourni par l'utilisateur (paste PO), délégué en parallèle d'EPIC 19. Objectif : utiliser la répétition espacée (SRS) non pas sur des problèmes aléatoires (EPIC 8), mais sur les erreurs passées du joueur lui-même — « construire son propre dictionnaire de patterns ».
+
+**En tant qu'** utilisateur, **je veux** que mes gaffes deviennent automatiquement des exercices de mémorisation, **afin de** les ancrer en mémoire long terme plutôt que de simplement les analyser une fois.
+
+### US 20.1 : Le « Cimetière des Erreurs » (Auto-généré)
+
+**Description :** chaque erreur détectée dans une partie importée est automatiquement transformée en un exercice flashcard dans le moteur SRS.
+
+**Critères d'Acceptation (DoD) :**
+- Chaque gaffe (perte ≥ 200 cp, même seuil que `stats_aggregator.BLUNDER_CPL`) devient une flashcard `{fen, solution}` sans action de l'utilisateur.
+- Le calendrier SRS repose sur l'algorithme SM-2 **déjà existant et testé** (`domain.srs_engine`) — aucune duplication : c'est la 3ᵉ réutilisation après le SRS tactique JS (mode Exercice) et le répertoire d'ouvertures (EPIC 9).
+
+**Statut :** ✅ Implémenté :
+- `domain/srs_flashcards.py` : `extract_blunder_flashcards(own_moves)` — fonction pure extrayant les flashcards candidates depuis les enregistrements `game_moves` enrichis d'US 19.1 (`fen`/`best_move_san`/`cpl`). Garde-fous : perte ≥ seuil, FEN et meilleur coup connus (nécessite un moteur lors de l'analyse), solution ≠ coup joué.
+- Migration `20260702130000_srs_flashcards_epic20.sql` : table `srs_flashcards` (mêmes colonnes de calendrier SM-2 que `opening_repertoire` — `ease_factor`/`interval_days`/`repetitions`/`due_date` — une seule convention de répétition espacée dans tout le produit), RLS par utilisateur.
+- `db_client`/`pg_repository` : `create_flashcard`, `get_flashcards`, `get_flashcard`, `get_due_flashcards`, `update_flashcard_schedule` (in-memory + délégation Postgres, même double implémentation que `opening_repertoire`).
+- Câblage automatique : `routers/games.run_analysis` détecte les gaffes du joueur (filtrées par couleur, par partie) après chaque analyse et crée les flashcards correspondantes — même garde-fou d'isolation (`try/except` + log) que les blocs US 5.1/EPIC 11 voisins, pour ne jamais faire échouer une analyse déjà persistée.
+- `GET /api/v1/flashcards` (le Cimetière complet, jamais la solution avant tentative) — voir US 20.2 pour le reste de l'API.
+- Frontend : carte « CIMETIÈRE DES ERREURS » sur le dashboard principal (lancement) et sur le dashboard Statistiques Avancées (compteurs total/à réviser en direct).
+- Tests : `backend/tests/test_srs_flashcards.py` (9 tests), `backend/tests/test_db_srs_flashcards.py` (12 tests), `backend/tests/test_pg_repository.py` (contrat de signature).
+
+### US 20.2 : Mode « Recall Training » (Rappel Actif)
+
+**Description :** le système demande au joueur de se souvenir de la solution d'un exercice qu'il a déjà fait, selon un calendrier de répétition espacée.
+
+**Critères d'Acceptation (DoD) :**
+- File des flashcards dont l'échéance est arrivée (`GET /api/v1/flashcards/due`).
+- Validation du coup exclusivement serveur (jamais de confiance aveugle au client, comme le reste du produit).
+- Qualité SM-2 déduite automatiquement du résultat (succès/échec) — pas de notation manuelle, pour rester ludique.
+
+**Statut :** ✅ Implémenté :
+- `POST /api/v1/flashcards/{id}/review` (`routers/srs_flashcards.py`) : réutilise `domain.tactics.is_correct_move` (comparaison de coups `chess.Move`, tolère les variantes de notation) pour la validation, et `domain.opening_repertoire.infer_quality` pour déduire la qualité SM-2 — un échec de rappel unique est mappé sur « 2 erreurs » (repli garanti, pas de crédit partiel, contrairement à la révision multi-coups du répertoire d'ouvertures) afin que le calendrier réinitialise systématiquement en cas d'échec.
+- Frontend : vue plein écran « Rappel Actif » (`#flashcards-col`, réutilise le style générique `.tactics-col`) avec échiquier indépendant (même stratégie que le Coach Tactique US 8.3 : pas de moteur, pas de couplage au `#board` partagé), feedback vert/rouge, révélation de la solution en cas d'échec, enchaînement automatique sur la carte suivante de la file.
+- **Note d'architecture (cadence « 3/7/15 jours »)** : le backlog PO illustrait la répétition espacée par des paliers fixes (3, 7, 15 jours). Le produit dispose déjà d'un algorithme SM-2 continu, testé et documenté comme source de vérité unique pour toute fonctionnalité de répétition espacée (cf. docstring `domain.srs_engine.sm2_schedule`) ; introduire un second algorithme à paliers fixes dupliquerait cette logique pour un gain fonctionnel marginal. Le calendrier SM-2 produit naturellement une cadence croissante (1 jour → 6 jours → ef×intervalle) qui sert la même valeur métier (rappel espacé de plus en plus loin à mesure que la carte est maîtrisée) ; les « 3/7/15 jours » du backlog sont traités comme une illustration de la cadence attendue, pas une spécification algorithmique stricte.
+- Tests : `backend/tests/test_srs_flashcards_api.py` (10 tests d'intégration : génération auto, isolation par utilisateur, rappel correct/incorrect, 404 carte inconnue/non propriétaire), `frontend/tests/api_client.test.js` (`getFlashcards`/`getDueFlashcards`/`reviewFlashcard`).
+
+**Vérifié en navigateur (Playwright + Chromium)** : `frontend/tests/e2e/cognitive_flashcards.spec.js` — partie avec gaffe analysée via l'API réelle → flashcard visible dans le Cimetière → rappel correct (halo vert, message de succès) et rappel incorrect (halo rouge, solution révélée) via le vrai backend local. 18/18 tests E2E verts (14 existants + 4 nouveaux).
