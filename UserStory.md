@@ -759,3 +759,42 @@ En tant qu'équipe, nous voulons que chaque modification de `supabase/migrations
 - Bouton dédié (`#btn-salvage`) dans la barre d'outils Review, visible dès qu'une partie a un pendant serveur analysé.
 
 **Statut (US 15.1 + 15.2) :** ✅ Implémenté — voir §4.15 du README pour le détail technique complet (fichiers, règles métier, routes, câblage frontend, tests).
+
+## EPIC 18 : Système de Personnalisation Visuelle (Theme & Board)
+
+**Contexte :** backlog fourni par l'utilisateur (« Cyber-Tactics » UI Kit, moodboard fourni). Numérotation EPIC 18 conservée telle quelle (pas de collision avec les EPIC déjà enregistrés).
+
+**En tant qu'** utilisateur, **je veux** modifier le look & feel de mon échiquier (jeu de pièces, couleurs des cases) via un menu de paramètres, **afin de** personnaliser mon expérience visuelle sans dépendre d'assets externes.
+
+### US 18.1 : Gestionnaire d'Assets Locaux (Theme Manager)
+
+**Description :** un service qui charge les SVG des pièces depuis `/frontend/assets/pieces/{theme}/`.
+
+**Critères d'Acceptation (DoD) :**
+- `frontend/js/theme_service.js` résout dynamiquement le chemin des images selon le thème choisi (`getPieceThemePath`), avec repli systématique sur un thème par défaut (`cburnett`) si le thème demandé est invalide/inconnu.
+- Deux thèmes de pièces disponibles au lancement : `cburnett` (existant, migré depuis `assets/images/pieces/`) et `cyber-tactics` (nouveau jeu généré, style anguleux/moderne avec lueur néon).
+- Script de validation (`frontend/scripts/validate_assets.py`) qui bloque le lancement du serveur de dev (`serve.py`) si un SVG requis est manquant pour un thème déclaré (astuce PO explicite).
+
+**Statut :** ✅ Implémenté.
+
+### US 18.2 : Paramétrage du Plateau (Board Settings)
+
+**Description :** menu UI permettant de choisir les couleurs des cases (Light/Dark) et le set de pièces.
+
+**Critères d'Acceptation (DoD) :**
+- Modale `#theme-modal` (bouton 🎨 dans l'en-tête) avec un sélecteur de jeu de pièces et un sélecteur de couleurs de plateau (4 présets : classique, slate, océan, cyber).
+- Préférences stockées côté serveur dans `profiles.settings` (JSONB), colonne extensible sans nouvelle migration pour de futurs réglages (sons, animations, taille d'échiquier…).
+- `PATCH /auth/me/settings` (JWT requis) remplace les préférences de l'utilisateur authentifié uniquement.
+
+**Statut :** ✅ Implémenté.
+
+### US 18.3 : Persistance des préférences
+
+**Description :** au chargement de la page, l'app récupère les préférences du profil et applique le thème immédiatement, pour éviter le flash du thème par défaut.
+
+**Critères d'Acceptation (DoD) :**
+- Un instantané local (`localStorage`) des préférences est appliqué dès la construction de l'application (avant tout rendu d'échiquier), avant même la résolution asynchrone de la session serveur.
+- Une fois la session serveur résolue (connexion/inscription/auto-connexion), les préférences réelles du profil sont appliquées et mettent à jour le cache local.
+- Résilience explicitement testée : une valeur de thème invalide/corrompue dans le JSONB (nom de thème inconnu, mauvais type, `settings` absent/`null`) ne fait jamais planter l'échiquier — repli silencieux sur les valeurs par défaut à chaque niveau (`ThemeService.applySettings`, `getPieceThemePath`, `getBoardColors`).
+
+**Statut (US 18.1 + 18.2 + 18.3) :** ✅ Implémenté — voir §4.16 du README pour le détail technique complet (fichiers, règles métier, routes, câblage frontend, tests). Vérifié en intégration réelle (backend local + `curl`) et en navigateur (Playwright + Chromium) : bascule visuelle immédiate du jeu de pièces + lueur néon + couleurs du plateau, persistance confirmée après rechargement de page.

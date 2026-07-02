@@ -112,6 +112,16 @@ const Auth = (() => {
     return user;
   }
 
+  // ── Personnalisation Visuelle (EPIC 18, US 18.2/18.3) ────────────────
+
+  async function updateSettings(settings) {
+    const token = getToken();
+    if (!token) throw new Error("Non connecté");
+    const user = await _patch("/auth/me/settings", { settings: settings || {} }, token);
+    _saveSession(token, user);
+    return user;
+  }
+
   // ── Synchronisation (Client Wins) ───────────────────────────────────
 
   async function syncData(games = [], srsCards = []) {
@@ -123,7 +133,7 @@ const Auth = (() => {
 
   return {
     getToken, getUser, isLoggedIn, logout, signup, login, autoConnect,
-    updateChessUsername, syncData,
+    updateChessUsername, updateSettings, syncData,
   };
 })();
 
