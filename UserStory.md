@@ -630,3 +630,9 @@ En tant qu'équipe, nous voulons que chaque modification de `supabase/migrations
 **Critères d'Acceptation (DoD) :** carte dédiée dans le dashboard, échiquier jouable (réutilise l'infrastructure d'échiquier indépendant d'US 8.3), feedback visuel vert/rouge, menu de catégories.
 
 **Statut (US 10.1 + 10.2) :** ✅ Implémenté — voir §4.10 du README pour le détail technique complet.
+
+## Amélioration outillage : suite E2E Playwright persistée
+
+**Contexte :** demande explicite de l'utilisateur — les vérifications Playwright de US 8.3/8.4, EPIC 9 et EPIC 10 étaient jusqu'ici des scripts ad hoc écrits dans le scratchpad puis jetés à chaque US. Par souci d'économie (ne pas réécrire ce câblage à chaque fois) et de qualité (couverture de régression bout-en-bout rejouable), ces scripts sont désormais persistés dans le dépôt (`frontend/tests/e2e/`) et exécutables via `npm run test:e2e`, avec un job CI dédié (`.github/workflows/e2e-tests.yml`).
+
+**Statut :** ✅ Implémenté — voir §6.3 et §7.3 du README pour le détail complet.

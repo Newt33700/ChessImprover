@@ -1302,6 +1302,27 @@ JWT_SECRET=ci-test-secret pytest tests/ -v
 - Frontend : Stryker JS (`npm run test:mutation`)
 - Backend : mutmut (`mutmut run --paths-to-mutate app/domain/auth.py`)
 
+### 6.3 E2E — Playwright (frontend/tests/e2e/)
+
+**Lancer :**
+```bash
+cd frontend
+npx playwright install --with-deps chromium   # une fois, si absent
+npm run test:e2e
+```
+
+`playwright.config.js` démarre automatiquement le backend (`uvicorn`, port 8006) et le frontend statique (`http.server`, port 8080) — aucune préparation manuelle nécessaire. Chaque test crée son propre compte (`signupFreshUser`) et s'exécute contre le **vrai backend** (store in-memory, réinitialisé au redémarrage du serveur) : ce sont de vrais tests bout-en-bout sur l'API et le câblage `app.js`/`api_client.js`, pas des mocks.
+
+**Stub CDN (`fixtures/stub_chess.js`)** : actif par défaut, partout (local et CI). Les tests pilotent les handlers de coup directement (`window.app._onTacticsDrop(...)`, etc.) avec des cases fixes plutôt que de simuler un vrai glisser-déposer sur `chessboard.js` — objectif : tester le code applicatif et les échanges réseau réels, pas le rendu pixel d'une librairie tierce. `E2E_STUB_CDN=0` reste possible pour un test manuel avec les vraies librairies (nécessite alors d'adapter les scénarios avec des coups réellement légaux).
+
+| Fichier | Couvre |
+|---|---|
+| `tactics.spec.js` | Coach Tactique (EPIC 8) : résolution correcte (Elo +15, série 🔥1), coup incorrect (Elo −15, solution révélée), enchaînement auto vers le problème suivant |
+| `openings.spec.js` | Entraîneur d'Ouvertures (EPIC 9) : ajout + révision complète d'une ligne (calendrier SM-2 avancé à J+1), rejet d'une séquence illégale (422) |
+| `endgames.spec.js` | Entraîneur de Finales (EPIC 10) : mat trouvé (Elo +15), coup incorrect (Elo −15), filtre par catégorie |
+
+> **Origine :** ces 3 specs sont la version persistée des scripts de vérification Playwright ad hoc écrits (puis jetés) pendant le développement d'US 8.3/8.4, EPIC 9 et EPIC 10. Les garder comme suite rejouable évite de réécrire ce câblage à chaque nouvelle fonctionnalité et donne une vraie couverture de régression bout-en-bout, en plus des TUs Jest/pytest.
+
 ---
 
 ## 7. CI/CD
@@ -1338,7 +1359,23 @@ Job 2 : deploy-backend (main seulement, dépend de test-backend)
 
 **Secrets requis :** `RENDER_DEPLOY_HOOK`, `JWT_SECRET`
 
-### 7.3 Pipeline Database → Supabase
+### 7.3 Pipeline E2E → Playwright
+
+**Fichier :** `.github/workflows/e2e-tests.yml`  
+**Déclencheur :** push ou PR sur `main` affectant `backend/**` **ou** `frontend/**` (les tests E2E exercent les deux)
+
+```
+Job 1 : test-e2e (ubuntu-latest, Python 3.11 + Node 20)
+  → pip install -r backend/requirements.txt
+  → npm ci (frontend)
+  → npx playwright install --with-deps chromium
+  → npm run test:e2e   (démarre backend + frontend, cf. §6.3)
+  → upload artifact "playwright-report" (si échec)
+```
+
+**Secrets requis :** aucun (`JWT_SECRET` retombe sur `ci-test-secret`, comme §7.2)
+
+### 7.4 Pipeline Database → Supabase
 
 **Fichier :** `.github/workflows/deploy-database.yml`  
 **Déclencheur :** push ou PR sur `main` affectant `supabase/migrations/**`
@@ -1356,7 +1393,7 @@ Job 2 : push-migrations (main seulement, dépend de lint-migrations)
 
 **Secrets requis :** `SUPABASE_ACCESS_TOKEN`, `SUPABASE_DB_PASSWORD`, `SUPABASE_PROJECT_ID`
 
-### 7.4 Migration SQL initiale
+### 7.5 Migration SQL initiale
 
 **Fichier :** `supabase/migrations/20260630000000_init_auth.sql`
 
