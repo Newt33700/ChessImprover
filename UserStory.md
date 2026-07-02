@@ -704,3 +704,58 @@ En tant qu'équipe, nous voulons que chaque modification de `supabase/migrations
 - **Non traité (cf. §10, backlog futur)** : build WASM+NNUE de Stockfish (le moteur retombe sur le vendoring asm.js déjà en place, fonctionnel mais plus lent) ; stockage Supabase Storage pour ces assets (non nécessaire tant que le volume reste faible — servis directement par le frontend statique).
 - Vérifié en navigateur (Playwright + Chromium) : chargement complet de la page avec **zéro requête externe** (vérifié en journalisant toutes les requêtes hors `localhost`), rendu correct des pièces d'échecs (SVG cburnett) et de la police Inter (`getComputedStyle().fontFamily`).
 - Tests : suite E2E existante (`frontend/tests/e2e/`) adaptée pour intercepter les nouveaux chemins locaux (`assets/js/...`) au lieu des anciens domaines CDN — 8/8 tests toujours verts après le rapatriement. `Jest` (226 tests) inchangé.
+
+## EPIC 14 : Système de "Shadow Coaching" Vocal (Coach Vocal et Feedback Instantané)
+
+**Contexte :** backlog fourni par l'utilisateur (« Idée 3 »), initialement numéroté « EPIC 13 » dans le paste PO — **renuméroté EPIC 14** pour éviter la collision avec l'EPIC 13 déjà enregistré dans ce dépôt (Indépendance des Assets, §4.11 du README). Traité en premier des deux EPIC de la session (14/15), sans ordre de priorité explicite du PO entre les deux.
+
+**En tant qu'** utilisateur, **je veux** que l'application analyse le coup joué en temps réel et me donne une alerte tactique instantanée (texte + son), avec une option de lecture à voix haute de l'idée du meilleur coup, **afin de** être averti de mes erreurs sans avoir à attendre une analyse a posteriori.
+
+### US 14.1 : Déclenchement d'alertes tactiques intelligentes
+
+**Description :** détecter une gaffe et jouer un signal sonore ou afficher une alerte textuelle contextuelle.
+
+**Critères d'Acceptation (DoD) :**
+- Service `backend/app/domain/coaching_voice.py` générant le texte d'alerte selon la gravité détectée (réutilise la classification de précision existante, `elo_calculator.classify_move`).
+- Le message est contextuel quand c'est possible (pièce exposée nommée), générique sinon.
+- Câblé sur le flux temps réel du mode Review (`app.js:_onMoveAccuracy`) : toast + signal sonore (`AudioContext`, aucun fichier audio) dès qu'une gaffe/erreur est détectée pendant que le joueur navigue une partie.
+
+**Statut :** ✅ Implémenté.
+
+### US 14.2 : Synthèse vocale de l'analyse (TTS)
+
+**Description :** lire à haute voix l'idée principale du meilleur coup recommandé.
+
+**Critères d'Acceptation (DoD) :**
+- Synthèse vocale 100 % locale (API Web Speech du navigateur, `speechSynthesis`) — zéro asset externe, conforme à la contrainte Zero External Assets (EPIC 13/17).
+- Narration du meilleur coup (SAN) dérivée de la PV Stockfish déjà mise en cache par `board_manager.js` (pas de calcul moteur supplémentaire).
+- Activation opt-in, persistée (`localStorage`), bouton dédié dans la barre d'outils Review (`#btn-voice-coach`).
+
+**Statut (US 14.1 + 14.2) :** ✅ Implémenté — voir §4.14 du README pour le détail technique complet (fichiers, règles métier, câblage frontend, tests).
+
+## EPIC 15 : Moteur de "Replay Correction" (Game-Salvage / Réparation de Partie)
+
+**Contexte :** backlog fourni par l'utilisateur (« Idée 4 »), initialement numéroté « EPIC 14 » dans le paste PO — **renuméroté EPIC 15** pour éviter la collision avec l'EPIC 14 ci-dessus (Coach Vocal), même rationale de renumérotation que les EPIC 11/12/13 des sessions précédentes.
+
+**En tant qu'** utilisateur, **je veux** que le système recrée ma partie perdue à partir du moment précis où l'avantage a basculé et me propose de rejouer la situation, **afin de** comprendre tactiquement comment sauver la position plutôt que de simplement constater la défaite après coup.
+
+### US 15.1 : Identification du "Pivot de Défaite"
+
+**Description :** identifier automatiquement le coup où l'évaluation bascule vers la défaite, pour proposer de recommencer à partir de ce coup charnière.
+
+**Critères d'Acceptation (DoD) :**
+- Le premier coup **du joueur** (pas de l'adversaire) dont la perte de centipions (CPL) atteint le seuil de gaffe (`stats_aggregator.BLUNDER_CPL` = 200, réutilisé tel quel) est identifié après chaque analyse.
+- Le `move_index` (0-based, ligne principale) est enregistré dans la base (`games.pivot_move_index`, nullable).
+
+**Statut :** ✅ Implémenté.
+
+### US 15.2 : Interface de "Récupération" (Sandbox)
+
+**Description :** rejouer contre Stockfish à partir de ce coup charnière en mode Sandbox, pour comprendre comment sauver la position.
+
+**Critères d'Acceptation (DoD) :**
+- `POST /api/v1/games/{game_id}/salvage` charge la position exacte juste avant le coup pivot (FEN + côté au trait), pour que le joueur puisse tenter un autre coup à la place de la gaffe historique.
+- Le frontend (`board_manager.js`, nouveau mode `sandbox`) permet de rejouer librement contre le moteur Stockfish déjà embarqué (auto-réponse du moteur après chaque coup du joueur) — pas une PV figée comme le mode Exercice, ni des coups historiques comme le mode Ghost.
+- Bouton dédié (`#btn-salvage`) dans la barre d'outils Review, visible dès qu'une partie a un pendant serveur analysé.
+
+**Statut (US 15.1 + 15.2) :** ✅ Implémenté — voir §4.15 du README pour le détail technique complet (fichiers, règles métier, routes, câblage frontend, tests).
