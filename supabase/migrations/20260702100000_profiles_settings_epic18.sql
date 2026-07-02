@@ -4,4 +4,4 @@
 -- à chaque nouveau réglage (sons, animations, taille d'échiquier…).
 
 ALTER TABLE profiles
-ADD COLUMN IF NOT EXISTS settings JSONB NOT NULL DEFAULT '{}'::jsonb;
+ADD COLUMN IF NOT EXISTS settings JSONB NOT NULL DEFAULT '{}'::JSONB;
