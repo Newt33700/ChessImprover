@@ -60,10 +60,10 @@ Backend FastAPI ──► POST /auth/signup  /auth/login  GET /auth/me
 | Élément | Détail |
 |---|---|
 | Langage | JavaScript ES2022 (pas de bundler, fichiers bruts) |
-| Échiquier | chessboard.js v1.0.0 (CDN) |
-| Moteur PGN | chess.js v0.10 (CDN) |
-| Moteur UCI | **Stockfish WASM** (primary) + Stockfish.js v10 asm.js (fallback) |
-| Graphiques | Chart.js v4.4 (CDN) |
+| Échiquier | chessboard.js v1.0.0 (vendorisé localement, `assets/js/`, EPIC 13) |
+| Moteur PGN | chess.js v0.10 (vendorisé localement, `assets/js/`, EPIC 13) |
+| Moteur UCI | Stockfish.js v10 asm.js (vendorisé localement — plus de fallback WASM CDN depuis EPIC 13, cf. §10) |
+| Graphiques | Chart.js v4.4 (vendorisé localement, `assets/js/`, EPIC 13) |
 | Persistance locale | **IndexedDB** (ChessDB wrapper) — migration depuis localStorage |
 | Style | CSS custom properties, dark theme, pas de framework CSS |
 | Tests | Jest 29, fake-indexeddb, coverage V8 |
@@ -98,7 +98,7 @@ ChessImprover/
 │   ├── js/
 │   │   ├── app.js                      # Logique principale (~1450 lignes) — point d'entrée
 │   │   ├── board_manager.js            # Échiquier, Worker Stockfish, modes Review/Ghost/Exercice
-│   │   ├── engine_worker_wasm.js       # Web Worker UCI : WASM primary + asm.js fallback
+│   │   ├── engine_worker_wasm.js       # Web Worker UCI : asm.js local (EPIC 13, plus de CDN WASM)
 │   │   ├── stockfish.js                # Stockfish.js v10 asm.js (fallback local)
 │   │   ├── db.js                       # IndexedDB wrapper (US 0) — tables: games/srs_cards/openings_cache
 │   │   ├── wp_chart.js                 # Graphe Win Probability Chart.js (US 1)
@@ -109,6 +109,12 @@ ChessImprover/
 │   │   ├── advanced_stats.js           # Stats Avancées : matrice + deep-dive (US 4.1/4.2)
 │   │   ├── api_client.js               # Client HTTP backend (analyze, stats/summary) — EPIC 1
 │   │   └── auth.js                     # Auth JWT frontend (US 7) — chargé dans index.html
+│   ├── assets/                         # Dépendances externes rapatriées localement (EPIC 13, §4.11)
+│   │   ├── js/                         # jquery-3.7.1.min.js, chess-0.10.3.js, chessboard-1.0.0.min.js, chart-4.4.0.umd.js
+│   │   ├── css/                        # chessboard-1.0.0.min.css, fonts.css (Google Fonts vendorisées)
+│   │   ├── fonts/                      # 6 .woff2 (IBM Plex Mono 400/600 + Inter variable, subsets latin/latin-ext)
+│   │   ├── images/pieces/              # 12 SVG cburnett (jeu de pièces, ex-lichess1.org CDN)
+│   │   └── data/openings/              # a.tsv…e.tsv — référentiel ECO (ex-raw.githubusercontent.com)
 │   └── tests/
 │       ├── setup.js                    # Mocks globaux : IDBFactory, localStorage, Chart, document
 │       ├── db.test.js                  # Tests IndexedDB (ChessDB)
@@ -1031,6 +1037,32 @@ Modules **purs** (couche domaine), entièrement testés, indépendants de l'infr
 - Vérifié en navigateur (Playwright + Chromium, backend/frontend locaux) : coup correct → halo vert, Elo 1000→1015, message « Bravo, mat trouvé ! » ; coup incorrect → halo rouge, solution révélée. Captures à l'appui.
 - Tests : `backend/tests/test_db_endgames.py` (intégrité du seed + store), `backend/tests/test_endgames_api.py` (13 tests d'intégration), `frontend/tests/api_client.test.js` (5 nouveaux tests).
 
+### 4.11 EPIC 13 — Indépendance et Rapatriement des Assets (Anti-Proxy)
+
+**Fichiers :** `frontend/assets/{js,css,fonts,images/pieces,data/openings}/`, `index.html`, `js/app.js`, `js/board_manager.js`, `js/engine_worker_wasm.js`, `frontend/tests/e2e/helpers.js`
+
+> **Contexte :** demande explicite de l'utilisateur (US 12.1, priorité 0 du PO) — l'application chargeait jusqu'ici jQuery/chess.js/chessboard.js/Chart.js depuis `cdnjs.cloudflare.com`/`cdn.jsdelivr.net`, les polices depuis `fonts.googleapis.com`, les pièces d'échecs depuis `lichess1.org`, et le référentiel d'ouvertures ECO depuis `raw.githubusercontent.com` en direct dans le navigateur de l'utilisateur final. Ces domaines sont fréquemment bloqués par des pare-feux d'entreprise, rendant l'application inutilisable dans ce contexte. Objectif : zéro dépendance réseau tierce au chargement de la page.
+
+**Rapatriement (aucun fichier généré ni build) :**
+- `assets/js/` : jQuery 3.7.1, chess.js 0.10.3, chessboard.js 1.0.0, Chart.js 4.4.0 — binaires strictement identiques aux versions CDN utilisées jusqu'ici (mêmes numéros de version), obtenus via les paquets npm officiels des mêmes librairies plutôt que par téléchargement direct depuis le CDN.
+- `assets/css/chessboard-1.0.0.min.css` : feuille de style associée à chessboard.js.
+- `assets/css/fonts.css` + `assets/fonts/*.woff2` : Google Fonts (IBM Plex Mono 400/600, Inter variable) re-générées avec des `url()` locales ; seuls les sous-ensembles `latin`/`latin-ext` sont conservés (cyrillique/grec/vietnamien supprimés), réduisant le CSS Google d'origine (45 blocs `@font-face`) à 14 blocs pointant vers 6 fichiers `.woff2` uniques.
+- `assets/images/pieces/{w,b}{P,N,B,R,Q,K}.svg` : 12 SVG du jeu cburnett, mêmes tracés que ceux servis jusqu'ici par `lichess1.org`.
+- `assets/data/openings/{a,b,c,d,e}.tsv` : référentiel ECO (nom d'ouverture ↔ PGN), format TSV inchangé.
+
+**Code applicatif mis à jour :** `index.html` (balises `<script>`/`<link>` pointent vers `assets/js/`/`assets/css/`), `app.js` (`pieceTheme` × 3 échiquiers + `_buildOpeningBook()`), `board_manager.js` (`pieceTheme`) — tous remplacent une URL CDN par un chemin local relatif, sans changement de logique.
+
+**Moteur Stockfish :** `engine_worker_wasm.js` ne tente plus de charger un Stockfish WASM depuis un CDN (`WASM_CDNS = []`) et retombe directement sur le fallback asm.js déjà vendorisé localement (`js/stockfish.js`, `ASM_CDNS = ["stockfish.js"]`). Fonctionnellement identique pour l'utilisateur (le fallback se déclenchait de toute façon dès que le CDN WASM était inaccessible) — perte : pas de WASM+NNUE tant qu'un build auto-hébergé n'est pas ajouté (cf. §10).
+
+**Code mort supprimé :** `frontend/js/engine_worker.js` — confirmé non référencé par aucun fichier du dépôt (seul `engine_worker_wasm.js` est câblé, cf. `board_manager.js:_tryWorker`) ; supprimé plutôt que patché.
+
+**Hors périmètre (volontairement non touché)** : `chess-com-api.js`/`api_client.js` vers `api.chess.com` et `tablebase.lichess.ovh` (Syzygy) restent des appels réseau **applicatifs** (données utilisateur/tablebase en temps réel, pas des « assets » statiques) — l'US 12.1 vise l'indépendance de chargement de l'application, pas la suppression de ses intégrations tierces fonctionnelles. `js/config.js` (`API_BASE`) pointe vers notre propre backend, également hors périmètre.
+
+**Suite E2E Playwright** : les routes de stub CDN (`frontend/tests/e2e/helpers.js`) interceptaient jusqu'ici des domaines externes (`**cdnjs.cloudflare.com**`, etc.) — mises à jour pour intercepter les nouveaux chemins locaux (`**/assets/js/chess-0.10.3.js`, etc.), sans quoi les vraies librairies auraient chargé et cassé les scénarios à cases fixes. Les 8 tests E2E existants repassent inchangés après cette migration.
+
+- Vérifié en navigateur (Playwright + Chromium) : chargement complet + inscription + ouverture du Coach Tactique avec **zéro requête réseau externe** (toutes les requêtes restent sur `localhost`), pièces cburnett et police Inter correctement rendues (capture à l'appui).
+- Pas de nouveaux tests unitaires (aucune logique métier modifiée — uniquement des chemins de ressources statiques) ; couverture de régression assurée par la suite E2E existante + vérification manuelle du zéro-appel-externe.
+
 ---
 
 ## 5. Règles métier
@@ -1476,6 +1508,7 @@ UNIQUE (user_id)
 | **Persistance + série du jour** (US 8.4) | `tactical_attempts` (migration) + `db_client.record_tactical_attempt`/`get_tactical_attempts` + `domain/tactics.compute_daily_streak`/`compute_stats_by_theme` + `GET /tactics/stats` + `app.js:#tactics-streak-badge` | Chaque tentative est persistée ; badge 🔥 Série (problèmes résolus d'affilée aujourd'hui) mis à jour en direct ; taux de réussite par catégorie calculable via `/tactics/stats` |
 | **Entraîneur d'Ouvertures** (EPIC 9, bonus) | `routers/openings_trainer.py` + `domain/opening_repertoire.py` + `domain/srs_engine.sm2_schedule` + `index.html:#openings-trainer-col` + `app.js:_startOpeningReview/_onOtDrop/_finishOpeningReview` | Carte OUVERTURES → vue plein écran : ajout de ligne (validée serveur), révision SRS avec échiquier auto-enchaîné, qualité SM-2 déduite automatiquement (0 notation manuelle), CRUD complet opérationnel et testé |
 | **Entraîneur de Finales Essentielles** (EPIC 10, bonus) | `routers/endgames.py` (réutilise `domain/tactics.py` + `domain/tactical_elo.py`) + `index.html:#endgame-trainer-col` + `app.js:_initEndgameBoard/_onEndgameDrop/_submitEndgameAttempt` | Carte TECHNIQUE DE MAT → vue plein écran, 3 catégories (Roi+Dame/Roi+Tour/Roi+2 Tours), Elo « finales » distinct, échiquier jouable avec feedback vert/rouge, opérationnel et testé |
+| **Indépendance des assets externes** (EPIC 13, US 12.1) | `frontend/assets/{js,css,fonts,images,data}/` + `index.html` + `app.js`/`board_manager.js` (`pieceTheme`) + `engine_worker_wasm.js` | jQuery/chess.js/chessboard.js/Chart.js/polices/pièces/ouvertures ECO servis depuis le dépôt, zéro appel `cdnjs`/`jsdelivr`/`lichess1.org`/`fonts.googleapis.com` au chargement, vérifié (zéro requête externe) |
 
 ### ❌ Non câblé ou incomplet
 
@@ -1535,6 +1568,12 @@ L'API Chess.com retourne `g.accuracies.white/black`. Les afficher dans les barre
 **Fait :** moteur de sélection adaptative + validation serveur (US 8.1), filtre par catégorie + dashboard de sélection (US 8.2), échiquier jouable avec feedback visuel et anti-triche serveur (US 8.3), persistance des tentatives + taux de réussite par thème + série du jour (US 8.4), avec un seed de 15 problèmes vérifiés. L'intégralité du backlog EPIC 8 enregistré dans `UserStory.md` est ✅ Implémenté.
 
 **Reste (idées non bloquantes) :** (1) remplacer/enrichir le seed par un dataset externe plus large (ex. export CSV Lichess Puzzle Database) — non fait dans cet environnement d'exécution faute d'accès réseau vers les sources habituelles (proxy sortant restreint) ; (2) exposer `GET /tactics/stats` dans l'UI (ex. une carte dédiée dans Stats Avancées) — l'endpoint existe et est testé, mais aucune vue ne l'affiche encore graphiquement ; (3) **gap Postgres pré-existant (US 8.1, non corrigé ici, hors scope de cette US)** : `db_client.get_tactical_problem`/`get_next_tactical_problem` délèguent à `PgRepository` si `DATABASE_URL` est défini, mais `PgRepository` n'implémente pas ces deux méthodes (contrairement à `tactical_attempts`, dont la délégation US 8.4 est complète et testée) — à corriger avant toute mise en production avec base réelle pour les tables `tactical_problems`/`profiles.tactical_elo`.
+
+### 10.7 🟢 EPIC 13 — Indépendance des assets (reste)
+
+**Fait :** intégralité de l'audit + rapatriement (§4.11) — zéro dépendance CDN au chargement de l'application.
+
+**Reste (idées non bloquantes) :** (1) build WASM+NNUE de Stockfish auto-hébergé — le fallback asm.js local suffit fonctionnellement (mêmes profondeur/temps minimum, `depth 15`/`movetime 500`) mais un futur build `.wasm` vendorisé restaurerait le gain de performance perdu par la suppression du CDN WASM ; (2) bucket Supabase Storage « assets » pour servir ces fichiers statiques (pièces/polices/librairies) via CDN Supabase plutôt que depuis le dépôt git/Vercel, envisageable si le volume d'assets grossit significativement — non nécessaire à ce stade (poids total < 1 Mo).
 
 ---
 
