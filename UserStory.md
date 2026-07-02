@@ -614,3 +614,19 @@ En tant qu'équipe, nous voulons que chaque modification de `supabase/migrations
 - Le calendrier (facteur de facilité, intervalle, prochaine échéance) est recalculé côté serveur selon l'algorithme SM-2 déjà utilisé et testé côté frontend pour le mode Exercice (portage à l'identique, pour cohérence de comportement).
 
 **Statut (US 9.1 + 9.2) :** ✅ Implémenté — voir §4.9 du README pour le détail technique complet (routes, règles métier, câblage frontend, tests).
+
+## EPIC 10 : Entraîneur de Finales Essentielles — Fonctionnalité auto-initiée (2ᵉ bonus)
+
+**Contexte :** l'utilisateur a validé la fusion d'EPIC 9 et explicitement demandé de lancer la piste « finales », déjà documentée comme idée future (README §11.10) faute de temps lors du choix initial d'EPIC 9.
+
+**Choix d'architecture :** reprend le moteur de sélection adaptative par Elo d'EPIC 8 (US 8.1) — pas de duplication : `domain/tactics.is_correct_move`/`select_nearest_problem` et `domain/tactical_elo.update_elo` sont **réutilisés directement** (ce sont des fonctions pures déjà génériques, sans rien de spécifique aux puzzles tactiques) plutôt que réécrits pour les finales. Seuls le jeu de données, le stockage (Elo/problèmes dédiés aux finales) et le câblage sont nouveaux. Distinct du mode « Finales » existant (`EndgameDetector`, diagnostic post-partie) : ce nouvel entraîneur est un **jeu de positions curées** de technique de mat essentielle (Roi+Dame, Roi+Tour, Roi+2 Tours), sur le modèle exact d'EPIC 8 mais pour un thème différent.
+
+### US 10.1 : Moteur de sélection + validation (backend)
+
+**Critères d'Acceptation (DoD) :** Elo « finales » distinct (1000 par défaut, +15/-15), sélection adaptative par catégorie, validation du coup exclusivement serveur, jeu de données vérifié programmatiquement (python-chess) avant intégration.
+
+### US 10.2 : Échiquier interactif + câblage frontend
+
+**Critères d'Acceptation (DoD) :** carte dédiée dans le dashboard, échiquier jouable (réutilise l'infrastructure d'échiquier indépendant d'US 8.3), feedback visuel vert/rouge, menu de catégories.
+
+**Statut (US 10.1 + 10.2) :** ✅ Implémenté — voir §4.10 du README pour le détail technique complet.
