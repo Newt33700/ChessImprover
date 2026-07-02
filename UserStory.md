@@ -631,6 +631,30 @@ En tant qu'équipe, nous voulons que chaque modification de `supabase/migrations
 
 **Statut (US 10.1 + 10.2) :** ✅ Implémenté — voir §4.10 du README pour le détail technique complet.
 
+## EPIC 11 : Analyse Comportementale (Psychologie) — profil d'erreurs récurrentes
+
+**Contexte :** backlog fourni par l'utilisateur (paste PO), initialement numéroté « US 9.1/9.2 » — **renuméroté EPIC 11** pour éviter la collision avec l'EPIC 9 (Ouvertures) déjà enregistré dans cette session (cf. rationale complet en tête de l'EPIC 13, traité en premier par priorité PO). Traité en second, après EPIC 13 (« Priorité 0 »).
+
+**En tant qu'** utilisateur, **je veux** que l'application identifie mes types d'erreur récurrents (gaffes de pièce non protégée, erreurs sous pression de temps, oublis de tactique de mat), **afin de** m'entraîner spécifiquement sur ma faiblesse dominante plutôt que sur des problèmes aléatoires.
+
+### US 11.1 : Moteur d'analyse comportementale + profil persistant
+
+**Description :** à chaque partie analysée, détecter si chacun des 3 types d'erreur suivis est survenu, et mettre à jour un score de fréquence par type dans un profil persistant.
+
+**Critères d'Acceptation (DoD) :**
+- 3 patterns détectés : « Gaffe sur pièce non protégée », « Erreur sous pression de temps » (chute de temps sur un coup fautif), « Oubli de tactique de mat » (mat forcé disponible mais non joué).
+- Table `user_error_profiles` (`user_id`, `error_type`, `frequency_score`, `last_observed`).
+- Le profil est mis à jour après **chaque** partie analysée, jamais recalculé depuis zéro (mise à jour incrémentale).
+- Un score de fréquence `> 70` marque l'erreur comme « Problème récurrent ».
+
+### US 11.2 : Entraînement Personnalisé ciblé
+
+**Description :** un bouton « Entraînement Personnalisé » propose des problèmes tactiques du thème le plus proche de l'erreur récurrente détectée.
+
+**Critères d'Acceptation (DoD) :** `GET /api/v1/tactics/custom?focus={error_type}` renvoie un problème du thème tactique associé au type d'erreur, sélectionné par la même logique adaptative (Elo) que `/tactics/next`.
+
+**Statut (US 11.1 + 11.2) :** ✅ Implémenté — voir §4.12 du README pour le détail technique complet (schéma, formule de fréquence, routes, câblage frontend, tests).
+
 ## Amélioration outillage : suite E2E Playwright persistée
 
 **Contexte :** demande explicite de l'utilisateur — les vérifications Playwright de US 8.3/8.4, EPIC 9 et EPIC 10 étaient jusqu'ici des scripts ad hoc écrits dans le scratchpad puis jetés à chaque US. Par souci d'économie (ne pas réécrire ce câblage à chaque fois) et de qualité (couverture de régression bout-en-bout rejouable), ces scripts sont désormais persistés dans le dépôt (`frontend/tests/e2e/`) et exécutables via `npm run test:e2e`, avec un job CI dédié (`.github/workflows/e2e-tests.yml`).
