@@ -23,6 +23,7 @@ class TestPgRepository:
         assert PgRepository._MOVE_COLS == (
             "move_number", "color", "move_san", "eval_before", "eval_after",
             "score_cp", "cpl", "is_mate", "mate_in", "phase", "position_type",
+            "fen", "best_move_san", "time_spent_seconds",
         )
 
     def test_progress_history_methods_exist(self):
@@ -115,6 +116,28 @@ class TestPgRepository:
 
         best_sig = inspect.signature(PgRepository.get_best_sprint)
         assert list(best_sig.parameters) == ["self"]
+
+    def test_srs_flashcards_methods_exist(self):
+        # Verrouille le contrat EPIC 20 : les méthodes doivent exister avec
+        # cette signature, indépendamment de toute connexion réelle.
+        import inspect
+
+        create_sig = inspect.signature(PgRepository.create_flashcard)
+        assert list(create_sig.parameters) == ["self", "user_id", "game_id", "fen", "solution"]
+
+        get_sig = inspect.signature(PgRepository.get_flashcards)
+        assert list(get_sig.parameters) == ["self", "user_id"]
+
+        get_one_sig = inspect.signature(PgRepository.get_flashcard)
+        assert list(get_one_sig.parameters) == ["self", "card_id"]
+
+        due_sig = inspect.signature(PgRepository.get_due_flashcards)
+        assert list(due_sig.parameters) == ["self", "user_id", "today"]
+
+        update_sig = inspect.signature(PgRepository.update_flashcard_schedule)
+        assert list(update_sig.parameters) == [
+            "self", "card_id", "ease_factor", "interval_days", "repetitions", "due_date",
+        ]
 
     def test_line_row_maps_line_name_column_to_name_key(self):
         row = {"id": "1", "line_name": "Ruy Lopez", "color": "white"}

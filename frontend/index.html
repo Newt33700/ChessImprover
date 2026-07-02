@@ -355,6 +355,20 @@
           </div>
         </div>
 
+        <!-- CIMETIÈRE card (EPIC 20 — US 20.1/20.2, Flashcards SRS auto-générées) -->
+        <div class="db-card" id="card-flashcards">
+          <div class="db-card-head">
+            <div class="db-card-heading">
+              <h2 class="db-card-title">CIMETIÈRE DES ERREURS</h2>
+              <p class="db-card-sub">Rappel actif de tes gaffes passées (SRS)</p>
+            </div>
+          </div>
+          <div class="db-card-body" id="db-body-flashcards">
+            <p class="empty-state">Chaque gaffe détectée devient une flashcard à réviser.</p>
+            <button class="btn btn--accent btn--full btn--sm" onclick="window.app?._showFlashcards()">Rappel Actif →</button>
+          </div>
+        </div>
+
       </div><!-- /.dash-col (right) -->
 
       <!-- Recent games (hidden, kept for compat) -->
@@ -578,6 +592,20 @@
               <div class="adv-donut-wrap"><canvas id="adv-donut-canvas"></canvas></div>
             </div>
           </div>
+
+          <!-- ── CHARGE COGNITIVE (EPIC 19 — US 19.1/19.2) ── -->
+          <div class="db-card">
+            <div class="db-card-head">
+              <div class="db-card-heading">
+                <h2 class="db-card-title">CHARGE COGNITIVE</h2>
+                <p class="db-card-sub">Temps de réflexion par phase &amp; fluidité de décision</p>
+              </div>
+            </div>
+            <div class="db-card-body">
+              <div class="adv-chart-wrap"><canvas id="cog-phase-chart"></canvas></div>
+              <div id="cog-dashboard-container"></div>
+            </div>
+          </div>
         </div>
 
         <div class="advstats-side">
@@ -593,6 +621,19 @@
               </div>
             </div>
             <div class="db-card-body adv-tactics-body" id="adv-tactics"></div>
+          </div>
+
+          <!-- ── LE CIMETIÈRE DES ERREURS (EPIC 20 — US 20.1/20.2) ── -->
+          <div class="db-card">
+            <div class="db-card-head">
+              <div class="db-card-heading">
+                <h2 class="db-card-title">CIMETIÈRE DES ERREURS</h2>
+                <p class="db-card-sub">Flashcards SRS auto-générées depuis tes gaffes</p>
+              </div>
+            </div>
+            <div class="db-card-body adv-tactics-body" id="flashcards-summary">
+              <p class="empty-state">Chargement…</p>
+            </div>
           </div>
         </div>
       </div>
@@ -661,6 +702,21 @@
     <div class="db-card tactics-problem-card">
       <div class="db-card-body" id="tactics-problem-body">
         <p class="empty-state">Connectez-vous pour accéder au Coach Tactique.</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── LE CIMETIÈRE DES ERREURS — Recall Training (EPIC 20, plein écran, body.flashcards-active) ── -->
+  <div class="tactics-col" id="flashcards-col">
+    <div class="tactics-topbar">
+      <button class="btn-icon" aria-label="Retour" onclick="window.app?._hideFlashcards()">←</button>
+      <h2 class="tactics-title">Rappel Actif</h2>
+      <div class="tactics-elo-badge" id="flashcards-due-badge">— à réviser</div>
+    </div>
+
+    <div class="db-card tactics-problem-card">
+      <div class="db-card-body" id="flashcards-problem-body">
+        <p class="empty-state">Connectez-vous pour accéder au Cimetière des Erreurs.</p>
       </div>
     </div>
   </div>
@@ -773,6 +829,7 @@
 <script src="js/config.js"></script>
 <script src="js/api_client.js"></script>
 <script src="js/advanced_stats.js"></script>
+<script src="js/cognitive_dashboard.js"></script>
 <script src="js/auth.js"></script>
 <script src="js/app.js"></script>
 </body>

@@ -8,6 +8,7 @@ from app.domain.cadence import (
     RAPID_MIN_SECONDS,
     classify_cadence,
     estimate_seconds,
+    parse_increment,
 )
 from app.domain.models import TimeClass
 
@@ -63,3 +64,29 @@ class TestClassifyCadence:
 
     def test_garbage(self):
         assert classify_cadence("xyz") is None
+
+
+class TestParseIncrement:
+    def test_plain_increment(self):
+        assert parse_increment("180+2") == 2
+
+    def test_double_digit_increment(self):
+        assert parse_increment("600+15") == 15
+
+    def test_no_increment_is_zero(self):
+        assert parse_increment("600") == 0
+
+    def test_none_and_empty(self):
+        assert parse_increment(None) == 0
+        assert parse_increment("") == 0
+
+    def test_daily_has_no_increment(self):
+        assert parse_increment("1/86400") == 0
+
+    def test_garbage_increment_is_zero(self):
+        assert parse_increment("180+abc") == 0
+
+    def test_garbage_base_is_zero(self):
+        # Le format de base est illisible ; seul l'incrément importe ici,
+        # `int()` échoue quand même sur la partie droite -> repli à 0.
+        assert parse_increment("abc+xyz") == 0

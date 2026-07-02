@@ -490,3 +490,76 @@ class TestStatsHistory:
         r = client.get("/api/v1/stats/history", params={"cadence": "blitz"}, headers=_auth(token))
         assert r.status_code == 200
         assert r.json()["history"] == []
+
+
+# 1.e4 e5 2.Nf3 Nc6, horloges annotées (base 600s, incrément nul) : le 2e coup
+# blanc (Nf3) chute de 10:00 à 9:40 = 20s de réflexion (le 1er coup de chaque
+# camp n'a pas de référence antérieure, donc time_spent_seconds=None).
+CLOCK_PGN = (
+    '[Event "x"][Result "1-0"]\n\n'
+    "1. e4 {[%clk 0:10:00]} e5 {[%clk 0:10:00]} "
+    "2. Nf3 {[%clk 0:09:40]} Nc6 {[%clk 0:09:50]} 1-0"
+)
+
+
+class TestStatsCognitiveLoad:
+    def test_empty_shape(self):
+        token = _signup_and_token()
+        r = client.get("/api/v1/stats/cognitive-load", headers=_auth(token))
+        assert r.status_code == 200
+        body = r.json()
+        assert set(body["time_allocation"]["by_phase"]) == {"opening", "middlegame", "endgame"}
+        assert set(body["time_allocation"]["by_pressure"]) == {"under_pressure", "equality"}
+        assert body["time_allocation"]["sample_size"] == 0
+        assert body["decision_fluidity"]["decision_fatigue"] is False
+
+    def test_after_analysis_with_clocks(self):
+        token = _signup_and_token()
+        client.post(
+            "/api/v1/games/analyze",
+            json={
+                "pgn": CLOCK_PGN,
+                "time_control": "600+0",
+                "evals": _evals(CLOCK_PGN, played=40),
+            },
+            headers=_auth(token),
+        )
+        r = client.get("/api/v1/stats/cognitive-load", headers=_auth(token))
+        assert r.status_code == 200
+        body = r.json()
+        # Seul le 2e coup blanc (Nf3) a un temps de réflexion connu (1er coup
+        # de chaque camp sans référence antérieure).
+        assert body["time_allocation"]["sample_size"] == 1
+        assert body["time_allocation"]["by_phase"]["opening"]["avg_seconds"] == 20.0
+        assert body["time_allocation"]["by_phase"]["opening"]["share_pct"] == 100.0
+        # cpl=0 (coup joué = meilleur coup, cf. `_evals`) -> bucket "top3".
+        assert body["decision_fluidity"]["top3"]["count"] == 1
+        assert body["decision_fluidity"]["weak"]["count"] == 0
+
+    def test_scoped_to_authenticated_user(self):
+        token_a = _signup_and_token(email="a2@ex.com", username="usera2")
+        token_b = _signup_and_token(email="b2@ex.com", username="userb2")
+        client.post(
+            "/api/v1/games/analyze",
+            json={
+                "pgn": CLOCK_PGN,
+                "time_control": "600+0",
+                "evals": _evals(CLOCK_PGN, played=40),
+            },
+            headers=_auth(token_a),
+        )
+        r_b = client.get("/api/v1/stats/cognitive-load", headers=_auth(token_b))
+        assert r_b.json()["time_allocation"]["sample_size"] == 0
+
+    def test_without_token_returns_401_or_403(self):
+        assert client.get("/api/v1/stats/cognitive-load").status_code in (401, 403)
+
+    def test_degrades_on_db_error(self, monkeypatch):
+        def boom(*_a, **_k):
+            raise RuntimeError("db down")
+
+        token = _signup_and_token()
+        monkeypatch.setattr("app.routers.games.db_client.get_completed_games", boom)
+        r = client.get("/api/v1/stats/cognitive-load", headers=_auth(token))
+        assert r.status_code == 200
+        assert r.json()["time_allocation"]["sample_size"] == 0

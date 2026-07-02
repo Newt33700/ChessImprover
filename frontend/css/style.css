@@ -1926,6 +1926,11 @@ body.sprint-active .dash-grid { display: none; }
 body.sprint-active .board-col { display: none; }
 body.sprint-active #sprint-col { display: block; }
 
+/* Le Cimetière des Erreurs — Recall Training (EPIC 20) réutilise `.tactics-col` */
+body.flashcards-active .dash-grid { display: none; }
+body.flashcards-active .board-col { display: none; }
+body.flashcards-active #flashcards-col { display: block; }
+
 .tactics-topbar {
   display: flex;
   align-items: center;

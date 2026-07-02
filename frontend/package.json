@@ -30,7 +30,8 @@
       "js/openings_stats.js",
       "js/endgame_detector.js",
       "js/stats_dashboard.js",
-      "js/personal_coach.js"
+      "js/personal_coach.js",
+      "js/cognitive_dashboard.js"
     ],
     "coverageThreshold": {
       "global": {
