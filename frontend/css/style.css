@@ -1921,6 +1921,11 @@ body.endgame-trainer-active .dash-grid { display: none; }
 body.endgame-trainer-active .board-col { display: none; }
 body.endgame-trainer-active #endgame-trainer-col { display: block; }
 
+/* Mode Tactical Sprint (EPIC 12) réutilise le style `.tactics-col` générique */
+body.sprint-active .dash-grid { display: none; }
+body.sprint-active .board-col { display: none; }
+body.sprint-active #sprint-col { display: block; }
+
 .tactics-topbar {
   display: flex;
   align-items: center;
@@ -1987,6 +1992,31 @@ body.endgame-trainer-active #endgame-trainer-col { display: block; }
   margin-bottom: var(--space-lg);
 }
 .tactics-custom-hint { color: var(--text-secondary); font-size: 0.85rem; margin: 0; }
+
+/* EPIC 12 : mode Tactical Sprint */
+.sprint-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-md);
+  max-width: 480px;
+  margin: var(--space-md) auto 0;
+  font-size: 0.85rem;
+  color: var(--text-secondary);
+}
+.sprint-solved-count { margin: 0; font-weight: 700; color: var(--text-primary); }
+.sprint-ghost-toggle { display: flex; align-items: center; gap: 6px; cursor: pointer; }
+.sprint-ghost-overlay {
+  position: relative;
+  margin-top: var(--space-sm);
+  background: rgba(129,182,76,0.1);
+  border: 1px solid rgba(129,182,76,0.3);
+  border-radius: var(--radius-sm);
+  padding: 6px 10px;
+  font-size: 0.78rem;
+  color: var(--green-light);
+  text-align: center;
+}
 
 .tactics-problem-card { max-width: 480px; margin: 0 auto; }
 .tactics-fen {

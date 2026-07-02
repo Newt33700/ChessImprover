@@ -341,6 +341,20 @@
           </div>
         </div>
 
+        <!-- SPRINT card (EPIC 12 — Mode "Tactical Sprint") -->
+        <div class="db-card" id="card-sprint">
+          <div class="db-card-head">
+            <div class="db-card-heading">
+              <h2 class="db-card-title">SPRINT</h2>
+              <p class="db-card-sub">60 secondes, un maximum de problèmes</p>
+            </div>
+          </div>
+          <div class="db-card-body" id="db-body-sprint">
+            <p class="empty-state">Résolvez un maximum de problèmes tactiques en 60 secondes.</p>
+            <button class="btn btn--accent btn--full btn--sm" onclick="window.app?._showSprint()">Tactical Sprint →</button>
+          </div>
+        </div>
+
       </div><!-- /.dash-col (right) -->
 
       <!-- Recent games (hidden, kept for compat) -->
@@ -707,6 +721,30 @@
       <div class="db-card-body" id="endgame-problem-body">
         <p class="empty-state">Connectez-vous pour accéder à l'entraîneur de finales.</p>
       </div>
+    </div>
+  </div>
+
+  <!-- ── TACTICAL SPRINT (EPIC 12, plein écran, body.sprint-active) ── -->
+  <div class="tactics-col" id="sprint-col">
+    <div class="tactics-topbar">
+      <button class="btn-icon" aria-label="Retour" onclick="window.app?._hideSprint()">←</button>
+      <h2 class="tactics-title">Tactical Sprint</h2>
+      <div class="tactics-elo-badge" id="sprint-timer-badge">60s</div>
+    </div>
+
+    <div class="db-card tactics-problem-card">
+      <div class="db-card-body" id="sprint-body">
+        <p class="empty-state">Connectez-vous pour lancer un sprint.</p>
+        <button class="btn btn--accent btn--full btn--sm" id="btn-sprint-start">Démarrer (60s)</button>
+      </div>
+      <div class="sprint-ghost-overlay" id="sprint-ghost-overlay" hidden></div>
+    </div>
+
+    <div class="sprint-footer" id="sprint-footer" hidden>
+      <p class="sprint-solved-count" id="sprint-solved-count">0 résolus</p>
+      <label class="sprint-ghost-toggle">
+        <input type="checkbox" id="sprint-ghost-toggle" /> Afficher le Ghost (meilleur score)
+      </label>
     </div>
   </div>
 

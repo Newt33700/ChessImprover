@@ -383,6 +383,55 @@ class ErrorProfileResponse(BaseModel):
     profiles: List[ErrorProfileEntry]
 
 
+# ---------------------------------------------------------------------------
+# Mode Tactical Sprint (EPIC 12, US 11.1/11.2)
+# ---------------------------------------------------------------------------
+
+class SprintStartResponse(BaseModel):
+    """Sprint démarré : identifiant, durée autorisée et premier problème."""
+    sprint_id: str
+    duration_seconds: int
+    problem: TacticalProblemPublic
+
+
+class SprintAttemptRequest(BaseModel):
+    """Coup joué pour le problème en cours dans un sprint."""
+    problem_id: str
+    move: str = Field(..., min_length=2, description="Coup joué en notation SAN")
+
+
+class SprintAttemptResponse(BaseModel):
+    """Résultat d'une tentative de sprint : score courant + problème suivant (si temps restant)."""
+    success: bool
+    score: int
+    problems_solved_count: int
+    time_remaining: float
+    sprint_active: bool
+    next_problem: Optional[TacticalProblemPublic] = None
+
+
+class SprintFinishResponse(BaseModel):
+    """Résultat final d'un sprint (temps écoulé ou arrêt volontaire)."""
+    sprint_id: str
+    score: int
+    problems_solved_count: int
+    duration_seconds: int
+
+
+class GhostMoveEntry(BaseModel):
+    """Un coup de la séquence de replay Ghost (US 11.2)."""
+    problem_id: str
+    move: str
+    elapsed_ms: int
+
+
+class GhostReplayResponse(BaseModel):
+    """Meilleur sprint terminé (toutes utilisateurs confondus) à rejouer en surimpression."""
+    available: bool
+    score: Optional[int] = None
+    moves: List[GhostMoveEntry] = Field(default_factory=list)
+
+
 class GameMoveRecord(BaseModel):
     """Métriques persistées d'un coup (US 1.2)."""
     move_number: int

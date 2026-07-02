@@ -393,6 +393,15 @@ class ChessImproverApp {
       this._startCustomTraining();
     });
 
+    // Mode Tactical Sprint (EPIC 12) — bouton Démarrer/Rejouer (délégué : le
+    // bouton est réinjecté dans #sprint-body à chaque cycle démarrer/terminer).
+    document.getElementById("sprint-col")?.addEventListener("click", (e) => {
+      if (e.target.closest("#btn-sprint-start")) this._startSprint();
+    });
+    document.getElementById("sprint-ghost-toggle")?.addEventListener("change", () => {
+      this._renderGhostOverlay();
+    });
+
     // Entraîneur d'Ouvertures (EPIC 9) — ajout d'une ligne au répertoire
     document.getElementById("ot-add-form")?.addEventListener("submit", (e) => {
       e.preventDefault();
@@ -2104,6 +2113,203 @@ class ChessImproverApp {
     } catch {
       if (feedback) feedback.textContent = "Erreur lors de la validation du coup.";
       this._endgameSolved = false;
+    }
+  }
+
+  // ─── Mode Tactical Sprint (EPIC 12 — Social & Compétitif) ─────────────
+  // Chrono anti-triche 100 % serveur (routers/tactical_sprint.py) : le
+  // décompte local n'est qu'un affichage, jamais la source de vérité — le
+  // serveur clôt le sprint dès qu'une tentative arrive hors fenêtre, quel
+  // que soit ce qu'affiche le client à ce moment-là.
+
+  _showSprint() {
+    document.body.classList.add("sprint-active");
+    this._resetSprintView();
+  }
+
+  async _hideSprint() {
+    document.body.classList.remove("sprint-active");
+    this._stopSprintTimer();
+    if (this._sprintId && !this._sprintFinished) {
+      try { await ApiClient.finishSprint(this._sprintId); } catch { /* best-effort */ }
+    }
+    this._sprintId = null;
+  }
+
+  _resetSprintView() {
+    this._stopSprintTimer();
+    this._sprintId = null;
+    this._sprintFinished = false;
+    this._sprintElapsed = 0;
+    this._ghostData = null;
+    const body = document.getElementById("sprint-body");
+    const footer = document.getElementById("sprint-footer");
+    const overlay = document.getElementById("sprint-ghost-overlay");
+    const timerBadge = document.getElementById("sprint-timer-badge");
+    if (timerBadge) timerBadge.textContent = "60s";
+    if (footer) footer.hidden = true;
+    if (overlay) overlay.hidden = true;
+    if (!window.ApiClient || !ApiClient.isConfigured() || !window.Auth?.isLoggedIn()) {
+      if (body) body.innerHTML = `<p class="empty-state">Connectez-vous pour lancer un sprint.</p>`;
+      return;
+    }
+    if (body) {
+      body.innerHTML = `<p class="empty-state">Résolvez un maximum de problèmes tactiques en 60 secondes.</p>
+        <button class="btn btn--accent btn--full btn--sm" id="btn-sprint-start">Démarrer (60s)</button>`;
+    }
+  }
+
+  _stopSprintTimer() {
+    if (this._sprintInterval) {
+      clearInterval(this._sprintInterval);
+      this._sprintInterval = null;
+    }
+  }
+
+  /** Démarre un sprint : chrono serveur, premier problème, fetch Ghost (US 11.2, un seul appel). */
+  async _startSprint() {
+    const body = document.getElementById("sprint-body");
+    if (!body) return;
+    try {
+      const started = await ApiClient.startSprint();
+      this._sprintId = started.sprint_id;
+      this._sprintFinished = false;
+      this._sprintDuration = started.duration_seconds;
+      this._sprintElapsed = 0;
+      this._sprintSolvedCount = 0;
+
+      document.getElementById("sprint-footer").hidden = false;
+      this._renderSprintSolvedCount();
+      this._loadSprintProblem(started.problem);
+      this._startSprintTimer();
+
+      try {
+        this._ghostData = await ApiClient.getGhostReplay();
+      } catch {
+        this._ghostData = null;
+      }
+    } catch {
+      body.innerHTML = `<p class="empty-state">Impossible de démarrer un sprint pour le moment.</p>`;
+    }
+  }
+
+  _startSprintTimer() {
+    this._stopSprintTimer();
+    this._sprintInterval = setInterval(() => {
+      this._sprintElapsed += 1;
+      const remaining = Math.max(0, this._sprintDuration - this._sprintElapsed);
+      const badge = document.getElementById("sprint-timer-badge");
+      if (badge) badge.textContent = `${remaining}s`;
+      this._renderGhostOverlay();
+      if (remaining <= 0) this._endSprint();
+    }, 1000);
+  }
+
+  async _endSprint() {
+    this._stopSprintTimer();
+    if (this._sprintFinished || !this._sprintId) return;
+    this._sprintFinished = true;
+    try {
+      const result = await ApiClient.finishSprint(this._sprintId);
+      const body = document.getElementById("sprint-body");
+      if (body) {
+        body.innerHTML = `
+          <p class="empty-state">⏱️ Sprint terminé ! ${result.problems_solved_count} problème(s) résolu(s), score ${result.score}.</p>
+          <button class="btn btn--accent btn--full btn--sm" id="btn-sprint-start">Rejouer (60s)</button>
+        `;
+      }
+      if (result.problems_solved_count > 0) {
+        const { xp, level } = XPSystem.add(XP_PER_EXERCISE);
+        this._renderXP(xp, level);
+        StreakSystem.record();
+      }
+    } catch { /* best-effort */ }
+  }
+
+  _renderSprintSolvedCount() {
+    const el = document.getElementById("sprint-solved-count");
+    if (el) el.textContent = `${this._sprintSolvedCount} résolu(s)`;
+  }
+
+  /** Bandeau Ghost (US 11.2) : lecture pure du fetch initial, aucun polling supplémentaire. */
+  _renderGhostOverlay() {
+    const overlay = document.getElementById("sprint-ghost-overlay");
+    const toggle = document.getElementById("sprint-ghost-toggle");
+    if (!overlay || !toggle) return;
+    if (!toggle.checked || !this._ghostData?.available) {
+      overlay.hidden = true;
+      return;
+    }
+    const elapsedMs = this._sprintElapsed * 1000;
+    const reached = this._ghostData.moves.filter((m) => m.elapsed_ms <= elapsedMs).length;
+    overlay.hidden = false;
+    overlay.textContent = `👻 Meilleur score : ${this._ghostData.score} — ${reached}/${this._ghostData.moves.length} coup(s) à ce stade`;
+  }
+
+  _loadSprintProblem(problem) {
+    const body = document.getElementById("sprint-body");
+    if (!body) return;
+    body.innerHTML = `
+      <span class="tactics-category-badge">${problem.category.replace(/_/g, " ")}</span>
+      <div class="tactics-board" id="sprint-board"></div>
+      <p class="tactics-feedback" id="sprint-feedback"></p>
+    `;
+    this._currentSprintProblem = problem;
+    this._sprintDropLocked = false;
+    this._initSprintBoard(problem);
+  }
+
+  _initSprintBoard(problem) {
+    if (typeof Chess === "undefined" || typeof Chessboard === "undefined") return;
+    this._sprintChess = new Chess(problem.fen);
+    const orientation = this._sprintChess.turn() === "w" ? "white" : "black";
+    this._sprintBoard = Chessboard("sprint-board", {
+      draggable: true,
+      position: problem.fen,
+      orientation,
+      pieceTheme: "assets/images/pieces/{piece}.svg",
+      onDragStart: (src, piece) => this._onSprintDragStart(src, piece),
+      onDrop: (src, tgt) => this._onSprintDrop(src, tgt),
+      onSnapEnd: () => this._sprintBoard.position(this._sprintChess.fen()),
+    });
+  }
+
+  _onSprintDragStart(src, piece) {
+    if (this._sprintDropLocked || this._sprintFinished || !this._sprintChess || this._sprintChess.game_over()) return false;
+    const turn = this._sprintChess.turn();
+    if ((turn === "w" && piece.startsWith("b")) || (turn === "b" && piece.startsWith("w"))) return false;
+    return true;
+  }
+
+  _onSprintDrop(src, tgt) {
+    if (this._sprintDropLocked) return "snapback";
+    const move = this._sprintChess.move({ from: src, to: tgt, promotion: "q" });
+    if (move === null) return "snapback";
+    this._sprintDropLocked = true;
+    this._submitSprintAttempt(move.san);
+  }
+
+  async _submitSprintAttempt(san) {
+    const feedback = document.getElementById("sprint-feedback");
+    const problem = this._currentSprintProblem;
+    try {
+      const result = await ApiClient.submitSprintAttempt(this._sprintId, problem.id, san);
+      if (!result.sprint_active) {
+        this._endSprint();
+        return;
+      }
+      this._sprintSolvedCount = result.problems_solved_count;
+      this._renderSprintSolvedCount();
+      if (feedback) {
+        feedback.classList.add(result.success ? "tactics-feedback--success" : "tactics-feedback--error");
+        feedback.textContent = result.success ? "Correct !" : "Incorrect.";
+      }
+      if (result.next_problem) {
+        setTimeout(() => this._loadSprintProblem(result.next_problem), 400);
+      }
+    } catch {
+      if (feedback) feedback.textContent = "Erreur lors de la validation du coup.";
+      this._sprintDropLocked = false;
     }
   }
 

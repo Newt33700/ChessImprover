@@ -222,6 +222,39 @@ const ApiClient = (() => {
     );
   }
 
+  /** Démarre un sprint tactique (EPIC 12, US 11.1) — chrono fixé côté serveur. */
+  async function startSprint() {
+    const res = await fetch(url("/api/v1/sprints/start"), {
+      method: "POST",
+      headers: _authHeaders(),
+    });
+    return _json(res);
+  }
+
+  /** Soumet un coup pour le problème en cours d'un sprint (EPIC 12, US 11.1). */
+  async function submitSprintAttempt(sprintId, problemId, move) {
+    const res = await fetch(url(`/api/v1/sprints/${sprintId}/attempt`), {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ..._authHeaders() },
+      body: JSON.stringify({ problem_id: problemId, move }),
+    });
+    return _json(res);
+  }
+
+  /** Clôture un sprint (temps écoulé côté client ou abandon volontaire, EPIC 12). */
+  async function finishSprint(sprintId) {
+    const res = await fetch(url(`/api/v1/sprints/${sprintId}/finish`), {
+      method: "POST",
+      headers: _authHeaders(),
+    });
+    return _json(res);
+  }
+
+  /** Meilleur sprint terminé, pour le replay Ghost (EPIC 12, US 11.2). */
+  async function getGhostReplay() {
+    return _json(await fetch(url("/api/v1/sprints/ghost"), { headers: _authHeaders() }));
+  }
+
   /** Vrai si une base API est configurée (sinon, mode 100 % local). */
   function isConfigured() {
     return baseUrl() !== "";
@@ -233,6 +266,7 @@ const ApiClient = (() => {
     createOpeningLine, getOpeningLines, getDueOpeningLines, reviewOpeningLine, deleteOpeningLine,
     getNextEndgameProblem, submitEndgameAttempt,
     getErrorProfile, getCustomTacticalProblem,
+    startSprint, submitSprintAttempt, finishSprint, getGhostReplay,
     getStatsSummary, getStatsHistory, isConfigured,
   };
 })();

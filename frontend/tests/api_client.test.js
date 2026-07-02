@@ -231,6 +231,53 @@ describe("getCustomTacticalProblem (EPIC 11, US 9.2)", () => {
   });
 });
 
+describe("Mode Tactical Sprint (EPIC 12)", () => {
+  test("startSprint POST /api/v1/sprints/start", async () => {
+    global.fetch = jest.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ sprint_id: "s1", duration_seconds: 60, problem: { id: "p1", fen: "x", category: "hanging_piece", difficulty_elo: 1000 } }),
+    });
+    const out = await ApiClient.startSprint();
+    expect(global.fetch.mock.calls[0][0]).toBe("/api/v1/sprints/start");
+    expect(global.fetch.mock.calls[0][1].method).toBe("POST");
+    expect(out.sprint_id).toBe("s1");
+  });
+
+  test("submitSprintAttempt POST /api/v1/sprints/{id}/attempt avec problem_id + move", async () => {
+    global.fetch = jest.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ success: true, score: 10, problems_solved_count: 1, time_remaining: 55, sprint_active: true, next_problem: null }),
+    });
+    const out = await ApiClient.submitSprintAttempt("s1", "p1", "Qh5#");
+    expect(global.fetch.mock.calls[0][0]).toBe("/api/v1/sprints/s1/attempt");
+    expect(JSON.parse(global.fetch.mock.calls[0][1].body)).toEqual({ problem_id: "p1", move: "Qh5#" });
+    expect(out.score).toBe(10);
+  });
+
+  test("finishSprint POST /api/v1/sprints/{id}/finish", async () => {
+    global.fetch = jest.fn().mockResolvedValue({
+      ok: true, json: async () => ({ sprint_id: "s1", score: 30, problems_solved_count: 3, duration_seconds: 60 }),
+    });
+    const out = await ApiClient.finishSprint("s1");
+    expect(global.fetch.mock.calls[0][0]).toBe("/api/v1/sprints/s1/finish");
+    expect(out.score).toBe(30);
+  });
+
+  test("getGhostReplay GET /api/v1/sprints/ghost", async () => {
+    global.fetch = jest.fn().mockResolvedValue({
+      ok: true, json: async () => ({ available: true, score: 40, moves: [{ problem_id: "p1", move: "Qh5#", elapsed_ms: 1200 }] }),
+    });
+    const out = await ApiClient.getGhostReplay();
+    expect(global.fetch.mock.calls[0][0]).toBe("/api/v1/sprints/ghost");
+    expect(out.available).toBe(true);
+  });
+
+  test("rejette sur HTTP non-ok", async () => {
+    global.fetch = jest.fn().mockResolvedValue({ ok: false, status: 401 });
+    await expect(ApiClient.startSprint()).rejects.toThrow("HTTP 401");
+  });
+});
+
 describe("getStatsSummary / getGame", () => {
   test("getStatsSummary construit la query period (sans user_id, dérivé du JWT serveur)", async () => {
     global.fetch = jest.fn().mockResolvedValue({ ok: true, json: async () => ({ rows: {} }) });
