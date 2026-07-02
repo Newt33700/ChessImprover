@@ -147,7 +147,8 @@ ChessImprover/
 │       │   ├── analysis_pipeline.py    # Worker : PGN → métriques par coup (US 1.2)
 │       │   ├── stats_aggregator.py     # Agrégation → résumé /stats/summary (US 4.1)
 │       │   ├── progress_history.py     # Snapshot Elo + fenêtre glissante (US 5.1)
-│       │   └── srs_engine.py           # Algorithme SM-2 côté backend
+│       │   ├── srs_engine.py           # Algorithme SM-2 côté backend
+│       │   └── error_profile.py        # EPIC 11 : détection patterns + score EMA (US 9.1/9.2)
 │       ├── infrastructure/
 │       │   ├── chess_com_client.py     # Proxy httpx vers Chess.com API
 │       │   ├── engine.py               # EngineProvider (évals client / Stockfish natif) — EPIC 2
@@ -158,7 +159,8 @@ ChessImprover/
 │       │   ├── auth.py                 # POST /auth/signup /auth/login GET+PATCH /auth/me (US 7/6.3)
 │       │   ├── sync.py                 # POST /sync — stratégie Client Wins (US 7)
 │       │   ├── games.py                # POST /games/analyze, GET /games (US 7.1), GET stats/summary, GET stats/history (JWT requis, US 6.4)
-│       │   └── tactics.py              # GET /tactics/next, POST /tactics/attempt (US 8.1)
+│       │   ├── tactics.py              # GET /tactics/next, /tactics/custom (EPIC 11), POST /tactics/attempt (US 8.1)
+│       │   └── error_profile.py        # EPIC 11 : GET /error-profile (US 9.1)
 │       ├── tests/
 │       │   ├── test_auth.py            # 37 TUs auth : hash, JWT, signup, login, me, PATCH me, sync
 │       │   ├── test_analyzer.py
@@ -184,7 +186,10 @@ ChessImprover/
 │       │   ├── test_db_opening_repertoire.py # EPIC 9 : store répertoire (CRUD, isolation)
 │       │   ├── test_openings_trainer_api.py # EPIC 9 : routes CRUD + révision SM-2
 │       │   ├── test_db_endgames.py     # EPIC 10 : store finales + intégrité du seed (python-chess)
-│       │   └── test_endgames_api.py    # EPIC 10 : routes GET next (+ filtre theme_id) / POST attempt
+│       │   ├── test_endgames_api.py    # EPIC 10 : routes GET next (+ filtre theme_id) / POST attempt
+│       │   ├── test_error_profile.py   # EPIC 11 : détection patterns + score EMA
+│       │   ├── test_db_error_profile.py # EPIC 11 : store profils d'erreur (CRUD)
+│       │   └── test_error_profile_api.py # EPIC 11 : câblage worker + routes /error-profile, /tactics/custom
 │       └── mutants/                    # Mutation testing mutmut
 │
 ├── supabase/
@@ -199,7 +204,8 @@ ChessImprover/
 │       ├── 20260701194517_tactics_epic8.sql    # Table tactical_problems + profiles.tactical_elo + seed 15 problèmes (US 8.1)
 │       ├── 20260701201530_tactical_attempts.sql # Table tactical_attempts (historique, RLS) (US 8.4)
 │       ├── 20260701223519_opening_repertoire.sql # Table opening_repertoire (répertoire + SRS, RLS) (EPIC 9)
-│       └── 20260702051516_endgames_epic10.sql  # Table endgame_problems + profiles.endgame_elo + seed 9 positions (EPIC 10)
+│       ├── 20260702051516_endgames_epic10.sql  # Table endgame_problems + profiles.endgame_elo + seed 9 positions (EPIC 10)
+│       └── 20260702064353_user_error_profiles_epic11.sql # Table user_error_profiles (score EMA, RLS) (EPIC 11)
 │
 └── .github/
     └── workflows/
@@ -1063,6 +1069,34 @@ Modules **purs** (couche domaine), entièrement testés, indépendants de l'infr
 - Vérifié en navigateur (Playwright + Chromium) : chargement complet + inscription + ouverture du Coach Tactique avec **zéro requête réseau externe** (toutes les requêtes restent sur `localhost`), pièces cburnett et police Inter correctement rendues (capture à l'appui).
 - Pas de nouveaux tests unitaires (aucune logique métier modifiée — uniquement des chemins de ressources statiques) ; couverture de régression assurée par la suite E2E existante + vérification manuelle du zéro-appel-externe.
 
+### 4.12 EPIC 11 — Analyse Comportementale (Psychologie) — profil d'erreurs récurrentes
+
+**Fichiers :** `domain/error_profile.py`, `routers/error_profile.py`, `routers/tactics.py` (route `/custom`), `routers/games.py` (câblage worker), `infrastructure/db_client.py` + `pg_repository.py`, `supabase/migrations/20260702064353_user_error_profiles_epic11.sql`, `js/api_client.js`, `js/app.js`, `index.html` (`#tactics-custom-training`)
+
+> **Contexte :** backlog fourni par l'utilisateur, traité juste après EPIC 13 (« Priorité 0 » du PO). Renuméroté EPIC 11 (collision avec EPIC 9 déjà enregistré) — voir rationale complet en tête de §4.11.
+
+**Détection des patterns (`domain/error_profile.detect_error_occurrences`)** — aucune duplication d'algorithme :
+- **`hanging_piece`** / **`time_pressure`** : réutilisent directement le moteur géométrique déjà existant (`domain.analyzer.analyze_pgn`, actif depuis les tout premiers US du produit) plutôt que de redétecter une pièce non défendue depuis `game_moves`, qui ne stocke pas l'état de l'échiquier nécessaire à ce calcul. Une gaffe sous forte chute de temps (`time_panic_count > 0`) est classée exclusivement `time_pressure`, jamais aussi `hanging_piece` (différence d'ensemble entre `blunder_moves` et `time_panic_moves`) — pas de double-comptage d'une même erreur.
+- **`missed_mate`** : dérivé de `game_moves` (US 1.2) — un coup joué **par l'utilisateur** (`color == user_color`) pour lequel le meilleur coup du moteur menait à un mat forcé (`is_mate=True`) mais dont le coup réellement joué n'était pas ce mat (`cpl > 0`).
+
+**Score de fréquence (`update_frequency_score`)** : moyenne mobile exponentielle (0-100, `alpha=0.3`), même principe de mise à jour incrémentale pure que l'Elo tactique (`domain.tactical_elo.update_elo`, ±15) ou le calendrier SM-2 (`domain.srs_engine.sm2_schedule`) — jamais de recalcul depuis tout l'historique des parties à chaque analyse. Une erreur commise pousse le score vers 100, une partie propre sur ce plan le pousse vers 0 ; 4 occurrences consécutives suffisent à dépasser le seuil de 70 (`RECURRING_THRESHOLD`). `is_recurring` (score > 70) est **calculé à la lecture**, jamais stocké — c'est un état dérivé de `frequency_score`, pas une donnée en soi (cohérent avec le schéma minimal demandé : `user_id`/`error_type`/`frequency_score`/`last_observed`, rien de plus).
+
+**Routes** (JWT requis) :
+
+| Route | Méthode | Comportement |
+|---|---|---|
+| `/api/v1/error-profile` | GET | Liste les profils d'erreur déjà observés de l'utilisateur (un par `error_type`), avec `is_recurring` calculé. |
+| `/api/v1/tactics/custom` | GET | Paramètre `focus` = un `error_type` (pas un `theme_id` tactique brut). Le backend fait la correspondance (`ERROR_TYPE_TO_TACTICAL_THEMES` : `hanging_piece`→`hanging_piece`, `time_pressure`→`hanging_piece` (même cause géométrique), `missed_mate`→`mate_in_1`/`mate_in_2`) puis délègue à `select_nearest_problem` (US 8.1, réutilisé sans duplication) sur le pool de thèmes obtenu. `focus` inconnu → 422, comme `theme_id` sur `/tactics/next`. |
+
+**Câblage worker (`routers/games.run_analysis`)** : après chaque analyse de partie réussie, un 3ᵉ bloc `try/except` (même garde-fou que le snapshot de progression US 5.1 juste au-dessus) détecte les occurrences du PGN + des `game_moves` fraîchement persistés, puis met à jour les 3 profils (`ERROR_TYPES`) via `db_client.upsert_error_profile`. Un échec de cette étape ne fait jamais échouer l'analyse déjà persistée.
+
+**Persistance** : table `user_error_profiles` (`error_type` en `TEXT` + `CHECK`, pas un type `ENUM` Postgres natif — cohérence avec `games.status`/`opening_repertoire.color`/`game_moves.phase` qui suivent tous ce même choix), contrainte `UNIQUE(user_id, error_type)` (upsert), RLS scoping par utilisateur. `db_client`/`PgRepository` implémentent la délégation complète (get/list/upsert), sans reproduire le gap `tactical_problems` de US 8.1 (§10.6).
+
+**Frontend :** au moment d'ouvrir le Coach Tactique (`_showTactics`), `_loadErrorProfileHint()` interroge `/error-profile` et affiche un bandeau **« Entraînement Personnalisé »** (`#tactics-custom-training`) si un type d'erreur est récurrent, avec un libellé lisible (`ERROR_TYPE_LABELS`). Cliquer sur le bouton (`_startCustomTraining`) appelle `ApiClient.getCustomTacticalProblem(errorType)` au lieu de `getNextTacticalProblem` ; l'enchaînement automatique après résolution (`_submitTacticsAttempt`, `setTimeout`) préserve le focus personnalisé (`this._customFocus`) tant que l'utilisateur ne sélectionne pas un thème classique.
+
+- Vérifié en navigateur (Playwright + Chromium) : 4 parties avec la même gaffe (pièce non protégée) → bandeau affiché avec le bon libellé ; clic sur le bouton → problème `hanging_piece` chargé ; sans erreur récurrente, bandeau masqué. Captures à l'appui.
+- Tests : `backend/tests/test_error_profile.py` (détection + score EMA, 15 tests), `backend/tests/test_db_error_profile.py` (CRUD store, 10 tests), `backend/tests/test_error_profile_api.py` (12 tests d'intégration : câblage worker, isolation entre utilisateurs, `/tactics/custom` 200/422/401), `backend/tests/test_pg_repository.py` (contrat de signature), `frontend/tests/api_client.test.js` (4 nouveaux tests), `frontend/tests/e2e/error_profile.spec.js` (3 tests bout-en-bout).
+
 ---
 
 ## 5. Règles métier
@@ -1322,8 +1356,11 @@ JWT_SECRET=ci-test-secret pytest tests/ -v
 | `test_openings_trainer_api.py` | `POST /openings/repertoire` (création, 422 séquence/couleur invalide, 401), `GET` (liste, isolation), `GET /due`, `POST /{id}/review` (planification J+1, échec réinitialise, 404 ligne inconnue/non-propriétaire, 401), `DELETE /{id}` (propriétaire/non-propriétaire, 404, 401) | EPIC 9 |
 | `test_db_endgames.py` | Store finales (Elo par défaut, distinct de `tactical_elo`), **intégrité des 9 positions du seed vérifiée par python-chess** (mat en 1 effectif), sélection/filtre par catégorie | EPIC 10 |
 | `test_endgames_api.py` | `GET /endgames/next` (sans solution, 401, filtre theme_id ×3 + 422 si inconnu), `POST /endgames/attempt` (succès/échec ±15, persistance, 404, 401, isolation entre utilisateurs, Elo distinct de l'Elo tactique) | EPIC 10 |
+| `test_error_profile.py` | `detect_error_occurrences` (hanging_piece/time_pressure mutuellement exclusifs, missed_mate depuis `game_moves`, isolation par couleur), `update_frequency_score` (EMA, bornes 0-100, franchissement du seuil récurrent), `is_recurring` | EPIC 11 |
+| `test_db_error_profile.py` | Store profils d'erreur : création/mise à jour (upsert), isolation par utilisateur/type, `get_next_tactical_problem_for_categories` (pool multi-thèmes) | EPIC 11 |
+| `test_error_profile_api.py` | Câblage `run_analysis` → profil mis à jour après analyse (blunder, mat manqué via evals), franchissement du seuil récurrent sur 4 parties, isolation entre utilisateurs, `GET /tactics/custom` (200/422 focus inconnu/401, solution jamais renvoyée) | EPIC 11 |
 
-**Couverture backend :** 566 TUs au total, couverture globale **89 %+** ; cœur Stats Avancées + EPIC 1/5.1/US 4.2 à 92–100 % (`stats_aggregator`, `cadence`, `progress_history`, `models`, `engine` à 100 %, `analysis_pipeline` 92 %, `routers/games` 92 %, `db_client` 98 %). Les requêtes SQL réelles de `pg_repository` (nécessitant une base) sont marquées `pragma: no cover`.
+**Couverture backend :** 604 TUs au total, couverture globale **89 %+** ; cœur Stats Avancées + EPIC 1/5.1/US 4.2 à 92–100 % (`stats_aggregator`, `cadence`, `progress_history`, `models`, `engine` à 100 %, `analysis_pipeline` 92 %, `routers/games` 92 %, `db_client` 98 %). Les requêtes SQL réelles de `pg_repository` (nécessitant une base) sont marquées `pragma: no cover`.
 
 **Architecture de test `test_auth.py` :**
 - App de test minimale (`FastAPI()` + routers auth/sync uniquement) pour éviter la dépendance `python-chess`
@@ -1352,8 +1389,9 @@ npm run test:e2e
 | `tactics.spec.js` | Coach Tactique (EPIC 8) : résolution correcte (Elo +15, série 🔥1), coup incorrect (Elo −15, solution révélée), enchaînement auto vers le problème suivant |
 | `openings.spec.js` | Entraîneur d'Ouvertures (EPIC 9) : ajout + révision complète d'une ligne (calendrier SM-2 avancé à J+1), rejet d'une séquence illégale (422) |
 | `endgames.spec.js` | Entraîneur de Finales (EPIC 10) : mat trouvé (Elo +15), coup incorrect (Elo −15), filtre par catégorie |
+| `error_profile.spec.js` | Analyse Comportementale (EPIC 11) : 4 gaffes répétées déclenchent le bandeau Entraînement Personnalisé, clic → problème `hanging_piece` chargé, bandeau masqué sans erreur récurrente |
 
-> **Origine :** ces 3 specs sont la version persistée des scripts de vérification Playwright ad hoc écrits (puis jetés) pendant le développement d'US 8.3/8.4, EPIC 9 et EPIC 10. Les garder comme suite rejouable évite de réécrire ce câblage à chaque nouvelle fonctionnalité et donne une vraie couverture de régression bout-en-bout, en plus des TUs Jest/pytest.
+> **Origine :** ces 4 specs sont la version persistée des scripts de vérification Playwright ad hoc écrits (puis jetés) pendant le développement d'US 8.3/8.4, EPIC 9, EPIC 10 et EPIC 11. Les garder comme suite rejouable évite de réécrire ce câblage à chaque nouvelle fonctionnalité et donne une vraie couverture de régression bout-en-bout, en plus des TUs Jest/pytest.
 
 ---
 
@@ -1509,6 +1547,7 @@ UNIQUE (user_id)
 | **Entraîneur d'Ouvertures** (EPIC 9, bonus) | `routers/openings_trainer.py` + `domain/opening_repertoire.py` + `domain/srs_engine.sm2_schedule` + `index.html:#openings-trainer-col` + `app.js:_startOpeningReview/_onOtDrop/_finishOpeningReview` | Carte OUVERTURES → vue plein écran : ajout de ligne (validée serveur), révision SRS avec échiquier auto-enchaîné, qualité SM-2 déduite automatiquement (0 notation manuelle), CRUD complet opérationnel et testé |
 | **Entraîneur de Finales Essentielles** (EPIC 10, bonus) | `routers/endgames.py` (réutilise `domain/tactics.py` + `domain/tactical_elo.py`) + `index.html:#endgame-trainer-col` + `app.js:_initEndgameBoard/_onEndgameDrop/_submitEndgameAttempt` | Carte TECHNIQUE DE MAT → vue plein écran, 3 catégories (Roi+Dame/Roi+Tour/Roi+2 Tours), Elo « finales » distinct, échiquier jouable avec feedback vert/rouge, opérationnel et testé |
 | **Indépendance des assets externes** (EPIC 13, US 12.1) | `frontend/assets/{js,css,fonts,images,data}/` + `index.html` + `app.js`/`board_manager.js` (`pieceTheme`) + `engine_worker_wasm.js` | jQuery/chess.js/chessboard.js/Chart.js/polices/pièces/ouvertures ECO servis depuis le dépôt, zéro appel `cdnjs`/`jsdelivr`/`lichess1.org`/`fonts.googleapis.com` au chargement, vérifié (zéro requête externe) |
+| **Analyse Comportementale — profil d'erreurs** (EPIC 11, US 9.1/9.2) | `domain/error_profile.py` + `routers/error_profile.py` + `routers/tactics.py:/custom` + `routers/games.py:run_analysis` + `index.html:#tactics-custom-training` + `app.js:_loadErrorProfileHint/_startCustomTraining` | Profil mis à jour après chaque partie analysée (score EMA par type d'erreur), bandeau « Entraînement Personnalisé » affiché si récurrent (score > 70), bouton chargeant un problème du thème associé, opérationnel et testé |
 
 ### ❌ Non câblé ou incomplet
 
