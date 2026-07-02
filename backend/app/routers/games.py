@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import logging
 import os
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Response
@@ -20,6 +21,7 @@ logger = logging.getLogger(__name__)
 
 from app.config import settings
 from app.domain.analysis_pipeline import analyze_pgn, build_client_engine, compute_pgn_hash
+from app.domain.error_profile import ERROR_TYPES, detect_error_occurrences, update_frequency_score
 from app.domain.models import (
     AnalyzeAccepted,
     AnalyzeAcceptedItem,
@@ -90,6 +92,21 @@ def run_analysis(
             )
     except Exception:  # pragma: no cover - garde-fou worker
         logger.exception("run_analysis: échec de l'enregistrement du snapshot de progression")
+
+    # EPIC 11 (US 9.1) : profil d'erreurs comportementales — même garde-fou
+    # que le snapshot ci-dessus, ne doit jamais faire échouer l'analyse déjà
+    # persistée. Sans utilisateur authentifié (analyse anonyme), rien à faire.
+    try:
+        if user_id:
+            occurrences = detect_error_occurrences(pgn, user_color, outcome["moves"])
+            now_iso = datetime.now(timezone.utc).isoformat()
+            for error_type in ERROR_TYPES:
+                existing = db_client.get_error_profile(user_id, error_type)
+                old_score = existing["frequency_score"] if existing else 0.0
+                new_score = update_frequency_score(old_score, occurrences[error_type])
+                db_client.upsert_error_profile(user_id, error_type, new_score, now_iso)
+    except Exception:  # pragma: no cover - garde-fou worker
+        logger.exception("run_analysis: échec de la mise à jour du profil d'erreurs")
 
 
 # ---------------------------------------------------------------------------

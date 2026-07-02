@@ -366,6 +366,23 @@ class OpeningLineReviewResult(BaseModel):
     due_date: str
 
 
+# ---------------------------------------------------------------------------
+# Analyse Comportementale — Profil d'erreurs (EPIC 11, US 9.1/9.2)
+# ---------------------------------------------------------------------------
+
+class ErrorProfileEntry(BaseModel):
+    """Score de fréquence d'un type d'erreur pour l'utilisateur authentifié."""
+    error_type: str
+    frequency_score: float
+    is_recurring: bool = Field(False, description="frequency_score > seuil (70)")
+    last_observed: Optional[str] = None
+
+
+class ErrorProfileResponse(BaseModel):
+    """Profil d'erreurs complet (un `ErrorProfileEntry` par type déjà observé)."""
+    profiles: List[ErrorProfileEntry]
+
+
 class GameMoveRecord(BaseModel):
     """Métriques persistées d'un coup (US 1.2)."""
     move_number: int

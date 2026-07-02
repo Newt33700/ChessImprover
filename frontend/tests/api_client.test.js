@@ -196,6 +196,41 @@ describe("getTacticsStats (US 8.4)", () => {
   });
 });
 
+describe("getErrorProfile (EPIC 11, US 9.1)", () => {
+  test("appelle GET /api/v1/error-profile et renvoie le JSON", async () => {
+    global.fetch = jest.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        profiles: [{ error_type: "hanging_piece", frequency_score: 76.3, is_recurring: true, last_observed: "2026-07-02T00:00:00Z" }],
+      }),
+    });
+    const out = await ApiClient.getErrorProfile();
+    expect(global.fetch.mock.calls[0][0]).toBe("/api/v1/error-profile");
+    expect(out.profiles[0].is_recurring).toBe(true);
+  });
+
+  test("rejette sur HTTP non-ok", async () => {
+    global.fetch = jest.fn().mockResolvedValue({ ok: false, status: 401 });
+    await expect(ApiClient.getErrorProfile()).rejects.toThrow("HTTP 401");
+  });
+});
+
+describe("getCustomTacticalProblem (EPIC 11, US 9.2)", () => {
+  test("ajoute focus à la query", async () => {
+    global.fetch = jest.fn().mockResolvedValue({
+      ok: true, json: async () => ({ id: "p1", fen: "x", category: "hanging_piece", difficulty_elo: 1000 }),
+    });
+    const out = await ApiClient.getCustomTacticalProblem("hanging_piece");
+    expect(global.fetch.mock.calls[0][0]).toBe("/api/v1/tactics/custom?focus=hanging_piece");
+    expect(out.category).toBe("hanging_piece");
+  });
+
+  test("rejette sur HTTP non-ok (422 focus inconnu)", async () => {
+    global.fetch = jest.fn().mockResolvedValue({ ok: false, status: 422 });
+    await expect(ApiClient.getCustomTacticalProblem("nonsense")).rejects.toThrow("HTTP 422");
+  });
+});
+
 describe("getStatsSummary / getGame", () => {
   test("getStatsSummary construit la query period (sans user_id, dérivé du JWT serveur)", async () => {
     global.fetch = jest.fn().mockResolvedValue({ ok: true, json: async () => ({ rows: {} }) });

@@ -13,6 +13,7 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 
+from app.domain.error_profile import ERROR_TYPE_TO_TACTICAL_THEMES, ERROR_TYPES
 from app.domain.models import (
     TacticalAttemptRequest,
     TacticalAttemptResult,
@@ -83,6 +84,33 @@ async def submit_attempt(
 
     return TacticalAttemptResult(
         success=success, new_elo=new_elo, solution=problem["solution"], streak=streak
+    )
+
+
+@router.get("/custom", response_model=TacticalProblemPublic)
+async def custom_problem(
+    focus: str = Query(..., description="hanging_piece | time_pressure | missed_mate"),
+    user_id: str = Depends(get_current_user_id),
+) -> TacticalProblemPublic:
+    """EPIC 11 (US 9.2) — « Entraînement Personnalisé » ciblant un type d'erreur.
+
+    ``focus`` est un type d'erreur du profil comportemental (`ERROR_TYPES`),
+    pas directement un `theme_id` tactique : `ERROR_TYPE_TO_TACTICAL_THEMES`
+    fait le lien (ex. `missed_mate` -> problèmes `mate_in_1`/`mate_in_2`).
+    Une valeur inconnue est rejetée en 422, comme `theme_id` sur `/next`.
+    """
+    if focus not in ERROR_TYPES:
+        raise HTTPException(status_code=422, detail=f"focus inconnu : {focus!r}")
+    themes = ERROR_TYPE_TO_TACTICAL_THEMES[focus]
+    tactical_elo = db_client.get_tactical_elo(user_id)
+    problem = db_client.get_next_tactical_problem_for_categories(tactical_elo, list(themes))
+    if problem is None:
+        raise HTTPException(status_code=404, detail="Aucun problème tactique disponible.")
+    return TacticalProblemPublic(
+        id=problem["id"],
+        fen=problem["fen"],
+        category=problem["category"],
+        difficulty_elo=problem["difficulty_elo"],
     )
 
 

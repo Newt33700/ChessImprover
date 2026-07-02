@@ -281,3 +281,40 @@ class PgRepository:
             deleted = cur.rowcount > 0
             conn.commit()
             return deleted
+
+    # -- EPIC 11 : profils d'erreur comportementale (US 9.1/9.2) -------------
+
+    def get_error_profile(
+        self, user_id: str, error_type: str
+    ) -> Optional[Dict[str, Any]]:  # pragma: no cover - nécessite une base réelle
+        sql = (
+            "SELECT * FROM user_error_profiles "
+            "WHERE user_id = %s::uuid AND error_type = %s"
+        )
+        with self._connect() as conn, conn.cursor() as cur:
+            cur.execute(sql, (user_id, error_type))
+            row = cur.fetchone()
+            return self._iso(dict(row)) if row else None
+
+    def get_error_profiles(self, user_id: str) -> List[Dict[str, Any]]:  # pragma: no cover
+        sql = "SELECT * FROM user_error_profiles WHERE user_id = %s::uuid"
+        with self._connect() as conn, conn.cursor() as cur:
+            cur.execute(sql, (user_id,))
+            return [self._iso(dict(r)) for r in cur.fetchall()]
+
+    def upsert_error_profile(
+        self, user_id: str, error_type: str, frequency_score: float, last_observed: str
+    ) -> Dict[str, Any]:  # pragma: no cover - nécessite une base réelle
+        sql = (
+            "INSERT INTO user_error_profiles (user_id, error_type, frequency_score, last_observed) "
+            "VALUES (%s::uuid, %s, %s, %s::timestamptz) "
+            "ON CONFLICT (user_id, error_type) "
+            "DO UPDATE SET frequency_score = EXCLUDED.frequency_score, "
+            "last_observed = EXCLUDED.last_observed "
+            "RETURNING *"
+        )
+        with self._connect() as conn, conn.cursor() as cur:
+            cur.execute(sql, (user_id, error_type, frequency_score, last_observed))
+            row = dict(cur.fetchone())
+            conn.commit()
+        return self._iso(row)

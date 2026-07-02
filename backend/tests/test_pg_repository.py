@@ -86,6 +86,22 @@ class TestPgRepository:
         delete_sig = inspect.signature(PgRepository.delete_opening_line)
         assert list(delete_sig.parameters) == ["self", "line_id", "user_id"]
 
+    def test_error_profile_methods_exist(self):
+        # Verrouille le contrat EPIC 11 : les méthodes doivent exister avec
+        # cette signature, indépendamment de toute connexion réelle.
+        import inspect
+
+        get_sig = inspect.signature(PgRepository.get_error_profile)
+        assert list(get_sig.parameters) == ["self", "user_id", "error_type"]
+
+        list_sig = inspect.signature(PgRepository.get_error_profiles)
+        assert list(list_sig.parameters) == ["self", "user_id"]
+
+        upsert_sig = inspect.signature(PgRepository.upsert_error_profile)
+        assert list(upsert_sig.parameters) == [
+            "self", "user_id", "error_type", "frequency_score", "last_observed",
+        ]
+
     def test_line_row_maps_line_name_column_to_name_key(self):
         row = {"id": "1", "line_name": "Ruy Lopez", "color": "white"}
         mapped = PgRepository._line_row(row)
