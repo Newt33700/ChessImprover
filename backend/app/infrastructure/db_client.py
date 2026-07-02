@@ -88,6 +88,7 @@ def create_user(email: str, username: str, password_hash: str) -> Dict[str, Any]
         "password_hash": password_hash,
         "chess_username": None,
         "tactical_elo": DEFAULT_TACTICAL_ELO,
+        "endgame_elo": DEFAULT_TACTICAL_ELO,
     }
     _users[user_id] = user
     _user_data[user_id] = {"games": [], "srs_cards": []}
@@ -107,6 +108,22 @@ def update_tactical_elo(user_id: str, new_elo: int) -> Optional[Dict[str, Any]]:
     if user is None:
         return None
     user["tactical_elo"] = new_elo
+    return user
+
+
+def get_endgame_elo(user_id: str) -> int:
+    """EPIC 10 — Elo « finales » de l'utilisateur (1000 par défaut, distinct de l'Elo tactique)."""
+    user = _users.get(user_id)
+    if user is None:
+        return DEFAULT_TACTICAL_ELO
+    return user.get("endgame_elo", DEFAULT_TACTICAL_ELO)
+
+
+def update_endgame_elo(user_id: str, new_elo: int) -> Optional[Dict[str, Any]]:
+    user = _users.get(user_id)
+    if user is None:
+        return None
+    user["endgame_elo"] = new_elo
     return user
 
 
@@ -349,6 +366,54 @@ def get_next_tactical_problem(
     if category is not None:
         pool = [p for p in pool if p["category"] == category]
     return select_nearest_problem(pool, tactical_elo)
+
+
+# ---------------------------------------------------------------------------
+# EPIC 10 — Entraîneur de Finales Essentielles (fonctionnalité bonus)
+#
+# Même structure que le seed tactique ci-dessus, thème distinct (technique de
+# mat Roi+Dame/Roi+Tour/Roi+2 Tours). Volontairement 100 % in-memory, sans
+# tentative de délégation Postgres : évite de reproduire le piège de
+# US 8.1 (tactical_problems délègue à des méthodes PgRepository jamais
+# écrites, cf. §10.6 du README) pour une table qui n'est de toute façon
+# testée qu'en local dans cet environnement.
+# ---------------------------------------------------------------------------
+
+_ENDGAME_PROBLEMS_SEED = [
+    {"fen": "8/8/8/8/8/8/8/k1KQ4 w - - 0 1", "solution": "Qa4#", "category": "queen_mate", "difficulty_elo": 700},
+    {"fen": "7k/8/5K2/8/8/8/8/6Q1 w - - 0 1", "solution": "Qg7#", "category": "queen_mate", "difficulty_elo": 750},
+    {"fen": "k7/8/K7/8/8/8/8/Q7 w - - 0 1", "solution": "Qh8#", "category": "queen_mate", "difficulty_elo": 700},
+    {"fen": "8/8/8/8/8/R7/8/5K1k w - - 0 1", "solution": "Rh3#", "category": "rook_mate", "difficulty_elo": 850},
+    {"fen": "k7/8/K7/8/8/8/8/2R5 w - - 0 1", "solution": "Rc8#", "category": "rook_mate", "difficulty_elo": 850},
+    {"fen": "7k/8/6K1/8/8/8/8/R7 w - - 0 1", "solution": "Ra8#", "category": "rook_mate", "difficulty_elo": 900},
+    {"fen": "k7/8/8/8/8/8/1R6/KR6 w - - 0 1", "solution": "Ra2#", "category": "two_rooks_mate", "difficulty_elo": 950},
+    {"fen": "7k/8/8/8/8/8/6R1/KR6 w - - 0 1", "solution": "Rh1#", "category": "two_rooks_mate", "difficulty_elo": 1000},
+    {"fen": "8/8/8/8/8/1R6/8/k1KR4 w - - 0 1", "solution": "Ra3#", "category": "two_rooks_mate", "difficulty_elo": 1000},
+]
+
+_endgame_problems: Dict[str, Dict[str, Any]] = {}
+for _seed in _ENDGAME_PROBLEMS_SEED:
+    _pid = str(uuid.uuid4())
+    _endgame_problems[_pid] = {"id": _pid, **_seed}
+del _seed, _pid
+
+
+def get_endgame_problem(problem_id: str) -> Optional[Dict[str, Any]]:
+    return _endgame_problems.get(problem_id)
+
+
+def get_next_endgame_problem(
+    endgame_elo: int, category: Optional[str] = None
+) -> Optional[Dict[str, Any]]:
+    """EPIC 10 — Position la plus proche de l'Elo « finales » du joueur.
+
+    Réutilise directement `select_nearest_problem` (US 8.1) — même logique
+    de sélection adaptative, aucune duplication.
+    """
+    pool = list(_endgame_problems.values())
+    if category is not None:
+        pool = [p for p in pool if p["category"] == category]
+    return select_nearest_problem(pool, endgame_elo)
 
 
 # US 8.4 — historique des tentatives, append-only

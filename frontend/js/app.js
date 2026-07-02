@@ -387,6 +387,15 @@ class ChessImproverApp {
       this._submitOpeningLine();
     });
 
+    // Entraîneur de Finales (EPIC 10) — sélection de thème
+    document.getElementById("endgame-themes")?.addEventListener("click", (e) => {
+      const btn = e.target.closest(".tactics-theme-btn");
+      if (!btn) return;
+      document.querySelectorAll("#endgame-themes .tactics-theme-btn").forEach((b) => b.classList.remove("active"));
+      btn.classList.add("active");
+      this._loadEndgameProblem(btn.dataset.theme || null);
+    });
+
     // Auth modal — switch Login/Signup tabs
     document.querySelectorAll(".auth-tab").forEach((tab) => {
       tab.addEventListener("click", () => {
@@ -1950,6 +1959,103 @@ class ChessImproverApp {
       const lines = await ApiClient.getOpeningLines();
       this._renderOpeningLinesList(lines);
     } catch { /* best-effort */ }
+  }
+
+  // ─── Entraîneur de Finales Essentielles (EPIC 10, fonctionnalité bonus) ──
+  // Même architecture que le Coach Tactique (US 8.3) : échiquier indépendant,
+  // validation de la solution 100 % serveur. Voir domain/endgames.py côté
+  // backend — aucune logique n'est dupliquée, seuls les endpoints diffèrent.
+
+  _showEndgameTrainer() {
+    document.body.classList.add("endgame-trainer-active");
+    this._loadEndgameProblem(null);
+  }
+
+  _hideEndgameTrainer() {
+    document.body.classList.remove("endgame-trainer-active");
+  }
+
+  async _loadEndgameProblem(themeId) {
+    const body = document.getElementById("endgame-problem-body");
+    if (!body) return;
+    this._currentEndgameTheme = themeId || null;
+    if (!window.ApiClient || !ApiClient.isConfigured() || !window.Auth?.isLoggedIn()) {
+      body.innerHTML = `<p class="empty-state">Connectez-vous pour accéder à l'entraîneur de finales.</p>`;
+      return;
+    }
+    body.innerHTML = `<p class="empty-state">Chargement…</p>`;
+    try {
+      const problem = await ApiClient.getNextEndgameProblem(themeId || undefined);
+      const badge = document.getElementById("endgame-elo-badge");
+      if (badge) badge.textContent = `Elo ${problem.difficulty_elo}`;
+      body.innerHTML = `
+        <span class="tactics-category-badge">${problem.category.replace(/_/g, " ")}</span>
+        <div class="tactics-board" id="endgame-board"></div>
+        <p class="tactics-feedback" id="endgame-feedback"></p>
+      `;
+      this._currentEndgameProblem = problem;
+      this._endgameSolved = false;
+      this._initEndgameBoard(problem);
+    } catch {
+      body.innerHTML = `<p class="empty-state">Impossible de charger une position pour le moment.</p>`;
+    }
+  }
+
+  _initEndgameBoard(problem) {
+    if (typeof Chess === "undefined" || typeof Chessboard === "undefined") return;
+    this._endgameChess = new Chess(problem.fen);
+    const orientation = this._endgameChess.turn() === "w" ? "white" : "black";
+    this._endgameBoard = Chessboard("endgame-board", {
+      draggable: true,
+      position: problem.fen,
+      orientation,
+      pieceTheme: "https://lichess1.org/assets/piece/cburnett/{piece}.svg",
+      onDragStart: (src, piece) => this._onEndgameDragStart(src, piece),
+      onDrop: (src, tgt) => this._onEndgameDrop(src, tgt),
+      onSnapEnd: () => this._endgameBoard.position(this._endgameChess.fen()),
+    });
+  }
+
+  _onEndgameDragStart(src, piece) {
+    if (this._endgameSolved || !this._endgameChess || this._endgameChess.game_over()) return false;
+    const turn = this._endgameChess.turn();
+    if ((turn === "w" && piece.startsWith("b")) || (turn === "b" && piece.startsWith("w"))) return false;
+    return true;
+  }
+
+  _onEndgameDrop(src, tgt) {
+    if (this._endgameSolved) return "snapback";
+    const move = this._endgameChess.move({ from: src, to: tgt, promotion: "q" });
+    if (move === null) return "snapback";
+    this._endgameSolved = true;
+    this._submitEndgameAttempt(move.san);
+  }
+
+  async _submitEndgameAttempt(san) {
+    const boardEl = document.getElementById("endgame-board");
+    const feedback = document.getElementById("endgame-feedback");
+    const problem = this._currentEndgameProblem;
+    try {
+      const result = await ApiClient.submitEndgameAttempt(problem.id, san);
+      const badge = document.getElementById("endgame-elo-badge");
+      if (badge) badge.textContent = `Elo ${result.new_elo}`;
+      boardEl?.classList.add(result.success ? "tactics-board--success" : "tactics-board--error");
+      if (feedback) {
+        feedback.classList.add(result.success ? "tactics-feedback--success" : "tactics-feedback--error");
+        feedback.textContent = result.success
+          ? "Bravo, mat trouvé !"
+          : `Coup incorrect. Solution : ${result.solution}`;
+      }
+      if (result.success) {
+        const { xp, level } = XPSystem.add(XP_PER_EXERCISE);
+        this._renderXP(xp, level);
+        StreakSystem.record();
+      }
+      setTimeout(() => this._loadEndgameProblem(this._currentEndgameTheme), 1600);
+    } catch {
+      if (feedback) feedback.textContent = "Erreur lors de la validation du coup.";
+      this._endgameSolved = false;
+    }
   }
 
   /**

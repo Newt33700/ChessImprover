@@ -229,6 +229,46 @@ describe("getStatsHistory", () => {
   });
 });
 
+describe("Entraîneur de Finales (EPIC 10)", () => {
+  test("getNextEndgameProblem sans themeId : pas de query theme_id", async () => {
+    global.fetch = jest.fn().mockResolvedValue({
+      ok: true, json: async () => ({ id: "e1", fen: "x", category: "queen_mate", difficulty_elo: 700 }),
+    });
+    await ApiClient.getNextEndgameProblem();
+    expect(global.fetch.mock.calls[0][0]).toBe("/api/v1/endgames/next");
+  });
+
+  test("getNextEndgameProblem avec themeId : ajoute theme_id à la query", async () => {
+    global.fetch = jest.fn().mockResolvedValue({
+      ok: true, json: async () => ({ id: "e1", fen: "x", category: "rook_mate", difficulty_elo: 850 }),
+    });
+    const out = await ApiClient.getNextEndgameProblem("rook_mate");
+    expect(global.fetch.mock.calls[0][0]).toBe("/api/v1/endgames/next?theme_id=rook_mate");
+    expect(out.category).toBe("rook_mate");
+  });
+
+  test("getNextEndgameProblem rejette sur HTTP non-ok", async () => {
+    global.fetch = jest.fn().mockResolvedValue({ ok: false, status: 401 });
+    await expect(ApiClient.getNextEndgameProblem()).rejects.toThrow("HTTP 401");
+  });
+
+  test("submitEndgameAttempt POST /api/v1/endgames/attempt", async () => {
+    global.fetch = jest.fn().mockResolvedValue({
+      ok: true, json: async () => ({ success: true, new_elo: 1015, solution: "Qa4#" }),
+    });
+    const out = await ApiClient.submitEndgameAttempt("e1", "Qa4#");
+    expect(global.fetch.mock.calls[0][0]).toBe("/api/v1/endgames/attempt");
+    expect(global.fetch.mock.calls[0][1].method).toBe("POST");
+    expect(JSON.parse(global.fetch.mock.calls[0][1].body)).toEqual({ problem_id: "e1", move: "Qa4#" });
+    expect(out).toEqual({ success: true, new_elo: 1015, solution: "Qa4#" });
+  });
+
+  test("submitEndgameAttempt rejette sur HTTP non-ok", async () => {
+    global.fetch = jest.fn().mockResolvedValue({ ok: false, status: 404 });
+    await expect(ApiClient.submitEndgameAttempt("missing", "e4")).rejects.toThrow("HTTP 404");
+  });
+});
+
 describe("Entraîneur d'Ouvertures (EPIC 9)", () => {
   test("createOpeningLine POST /api/v1/openings/repertoire", async () => {
     global.fetch = jest.fn().mockResolvedValue({

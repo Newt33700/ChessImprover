@@ -121,6 +121,26 @@ const ApiClient = (() => {
   }
 
   /**
+   * Sélectionne la prochaine position de finale (EPIC 10), proche de l'Elo
+   * « finales » de l'utilisateur. `themeId` filtre par catégorie de mat.
+   */
+  async function getNextEndgameProblem(themeId) {
+    return _json(
+      await fetch(url("/api/v1/endgames/next", { theme_id: themeId }), { headers: _authHeaders() })
+    );
+  }
+
+  /** Soumet le coup joué pour une position de finale (EPIC 10) ; validation 100 % serveur. */
+  async function submitEndgameAttempt(problemId, move) {
+    const res = await fetch(url("/api/v1/endgames/attempt"), {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ..._authHeaders() },
+      body: JSON.stringify({ problem_id: problemId, move }),
+    });
+    return _json(res);
+  }
+
+  /**
    * Ajoute une ligne au répertoire d'ouvertures (EPIC 9, US 9.1). Le backend
    * rejoue la séquence coup par coup et rejette (422) toute ligne illégale.
    * @param {{name: string, color: 'white'|'black', moves: string[]}} line
@@ -190,6 +210,7 @@ const ApiClient = (() => {
     baseUrl, url, analyzeGame, getGame, getGames, updateGameStatus,
     getNextTacticalProblem, submitTacticalAttempt, getTacticsStats,
     createOpeningLine, getOpeningLines, getDueOpeningLines, reviewOpeningLine, deleteOpeningLine,
+    getNextEndgameProblem, submitEndgameAttempt,
     getStatsSummary, getStatsHistory, isConfigured,
   };
 })();

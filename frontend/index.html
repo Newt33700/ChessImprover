@@ -330,6 +330,19 @@
           </div>
         </div>
 
+        <div class="db-card" id="card-endgame-trainer">
+          <div class="db-card-head">
+            <div class="db-card-heading">
+              <h2 class="db-card-title">TECHNIQUE DE MAT</h2>
+              <p class="db-card-sub">Roi+Dame, Roi+Tour, Roi+2 Tours</p>
+            </div>
+          </div>
+          <div class="db-card-body" id="db-body-endgame-trainer">
+            <p class="empty-state">Entraînez les mats de finale essentiels, ajustés à votre niveau.</p>
+            <button class="btn btn--accent btn--full btn--sm" onclick="window.app?._showEndgameTrainer()">Entraîneur de Finales →</button>
+          </div>
+        </div>
+
       </div><!-- /.dash-col (right) -->
 
       <!-- Recent games (hidden, kept for compat) -->
@@ -667,6 +680,28 @@
       <div class="db-card-body">
         <h3 class="ot-section-title">Mon répertoire</h3>
         <div id="ot-lines-list"><p class="empty-state">Aucune ligne pour l'instant.</p></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── ENTRAÎNEUR DE FINALES ESSENTIELLES (EPIC 10, plein écran, body.endgame-trainer-active) ── -->
+  <div class="tactics-col" id="endgame-trainer-col">
+    <div class="tactics-topbar">
+      <button class="btn-icon" aria-label="Retour" onclick="window.app?._hideEndgameTrainer()">←</button>
+      <h2 class="tactics-title">Technique de Mat</h2>
+      <div class="tactics-elo-badge" id="endgame-elo-badge">Elo — </div>
+    </div>
+
+    <div class="tactics-themes" id="endgame-themes">
+      <button class="tactics-theme-btn active" data-theme="">Aléatoire</button>
+      <button class="tactics-theme-btn" data-theme="queen_mate">Roi+Dame</button>
+      <button class="tactics-theme-btn" data-theme="rook_mate">Roi+Tour</button>
+      <button class="tactics-theme-btn" data-theme="two_rooks_mate">Roi+2 Tours</button>
+    </div>
+
+    <div class="db-card tactics-problem-card">
+      <div class="db-card-body" id="endgame-problem-body">
+        <p class="empty-state">Connectez-vous pour accéder à l'entraîneur de finales.</p>
       </div>
     </div>
   </div>
