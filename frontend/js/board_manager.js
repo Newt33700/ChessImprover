@@ -60,8 +60,7 @@ class BoardManager {
       onDragStart: (src, piece) => this._onDragStart(src, piece),
       onDrop: (src, tgt) => this._onDrop(src, tgt),
       onSnapEnd: () => this._onSnapEnd(),
-      pieceTheme:
-        "https://lichess1.org/assets/piece/cburnett/{piece}.svg",
+      pieceTheme: "assets/images/pieces/{piece}.svg",
     };
     this.board = Chessboard(this.containerId, config);
     window.addEventListener("resize", () => this.board.resize());

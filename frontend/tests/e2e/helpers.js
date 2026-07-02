@@ -1,16 +1,17 @@
 /**
  * Utilitaires partagés par les tests E2E Playwright (fixtures/config).
  *
- * Le stub CDN (`fixtures/stub_chess.js`) est actif par défaut, partout
- * (local ET CI) : ces tests exercent le vrai backend (API, base in-memory,
- * validation serveur) et le vrai code applicatif (`app.js`, `api_client.js`)
- * bout-en-bout, mais remplacent délibérément `chess.js`/`chessboard.js` —
+ * Le stub (`fixtures/stub_chess.js`) est actif par défaut, partout (local ET
+ * CI) : ces tests exercent le vrai backend (API, base in-memory, validation
+ * serveur) et le vrai code applicatif (`app.js`, `api_client.js`)
+ * bout-en-bout, mais remplacent délibérément `chess.js`/`chessboard.js`/
+ * `jQuery`/`Chart.js` (vendorisés localement depuis EPIC 13, `assets/js/`) —
  * les tests pilotent les handlers de coup directement
  * (`window.app._onTacticsDrop(...)`) avec des cases fixes, ce qui exige que
  * `Chess.move()` renvoie toujours le SAN attendu plutôt que de valider une
  * vraie position (voir le stub). Tester le rendu réel de ces librairies
- * tierces n'est pas l'objectif ; `E2E_STUB_CDN=0` reste possible pour un
- * test manuel avec les vraies librairies, mais nécessite d'adapter les
+ * n'est pas l'objectif ; `E2E_STUB_CDN=0` reste possible pour un test manuel
+ * avec les vraies librairies vendorisées, mais nécessite d'adapter les
  * scénarios (cases from/to réellement légales).
  */
 
@@ -21,23 +22,22 @@ const STUB_CHESS = fs.readFileSync(path.join(__dirname, "fixtures", "stub_chess.
 const SHOULD_STUB_CDN = process.env.E2E_STUB_CDN !== "0";
 const API_BASE = process.env.E2E_API_BASE || "http://localhost:8006";
 
+// Bibliothèques vendorisées (EPIC 13) dont les globals (Chess/$/jQuery/
+// Chessboard/Chart, tous définis dans le stub) doivent être remplacées.
+const STUBBED_ASSET_PATHS = [
+  "**/assets/js/chess-0.10.3.js",
+  "**/assets/js/chessboard-1.0.0.min.js",
+  "**/assets/js/jquery-3.7.1.min.js",
+  "**/assets/js/chart-4.4.0.umd.js",
+];
+
 async function installCdnStubsIfNeeded(page) {
   if (!SHOULD_STUB_CDN) return;
-  await page.route("**://cdnjs.cloudflare.com/**", (route) => {
-    if (route.request().url().endsWith(".css")) {
-      return route.fulfill({ status: 200, contentType: "text/css", body: "" });
-    }
-    return route.fulfill({ status: 200, contentType: "application/javascript", body: STUB_CHESS });
-  });
-  await page.route("**://cdn.jsdelivr.net/**", (route) =>
-    route.fulfill({ status: 200, contentType: "application/javascript", body: "" })
-  );
-  await page.route("**://fonts.googleapis.com/**", (route) =>
-    route.fulfill({ status: 200, contentType: "text/css", body: "" })
-  );
-  await page.route("**raw.githubusercontent.com/**", (route) =>
-    route.fulfill({ status: 200, contentType: "text/plain", body: "" })
-  );
+  for (const pattern of STUBBED_ASSET_PATHS) {
+    await page.route(pattern, (route) =>
+      route.fulfill({ status: 200, contentType: "application/javascript", body: STUB_CHESS })
+    );
+  }
 }
 
 /** Redirige `js/config.js` + le fallback `Auth` vers le backend E2E local. */

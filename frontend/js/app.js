@@ -523,7 +523,7 @@ class ChessImproverApp {
   }
 
   _buildOpeningBook() {
-    const base = "https://raw.githubusercontent.com/lichess-org/chess-openings/master/";
+    const base = "assets/data/openings/";
     const book = new Set();
     return Promise.all(["a", "b", "c", "d", "e"].map(async (f) => {
       try {
@@ -1715,7 +1715,7 @@ class ChessImproverApp {
       draggable: true,
       position: problem.fen,
       orientation,
-      pieceTheme: "https://lichess1.org/assets/piece/cburnett/{piece}.svg",
+      pieceTheme: "assets/images/pieces/{piece}.svg",
       onDragStart: (src, piece) => this._onTacticsDragStart(src, piece),
       onDrop: (src, tgt) => this._onTacticsDrop(src, tgt),
       onSnapEnd: () => this._tacticsBoard.position(this._tacticsChess.fen()),
@@ -1887,7 +1887,7 @@ class ChessImproverApp {
       draggable: true,
       position: "start",
       orientation: line.color,
-      pieceTheme: "https://lichess1.org/assets/piece/cburnett/{piece}.svg",
+      pieceTheme: "assets/images/pieces/{piece}.svg",
       onDragStart: (src, piece) => this._onOtDragStart(src, piece),
       onDrop: (src, tgt) => this._onOtDrop(src, tgt),
       onSnapEnd: () => this._otBoard.position(this._otChess.fen()),
@@ -2009,7 +2009,7 @@ class ChessImproverApp {
       draggable: true,
       position: problem.fen,
       orientation,
-      pieceTheme: "https://lichess1.org/assets/piece/cburnett/{piece}.svg",
+      pieceTheme: "assets/images/pieces/{piece}.svg",
       onDragStart: (src, piece) => this._onEndgameDragStart(src, piece),
       onDrop: (src, tgt) => this._onEndgameDrop(src, tgt),
       onSnapEnd: () => this._endgameBoard.position(this._endgameChess.fen()),
