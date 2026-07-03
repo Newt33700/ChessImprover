@@ -1991,7 +1991,7 @@ Corrigé lors de l'audit : cf. §3 (échappement XSS `app.js`, base API `auth.js
 - **Pool de connexions PostgreSQL** : `PgRepository` ouvre une connexion par appel (simple et correct, documenté dans son docstring). Sous charge réelle, `psycopg_pool.ConnectionPool` réduirait fortement la latence — nécessite d'ajouter la dépendance et un vrai banc d'essai avec base.
 - ~~**`JWT_SECRET` par défaut = avertissement, pas d'arrêt**~~ → **✅ traité (PR de suite de l'audit)** : le démarrage échoue désormais (`RuntimeError`) hors debug si le secret n'a pas été changé (cf. §4.4).
 - **N+1 sur `/stats/summary` et `/stats/cognitive-load`** : une requête `get_moves_for_game` par partie analysée. Négligeable in-memory, mais en PostgreSQL une jointure unique (`game_moves JOIN games ON ... WHERE user_id = ...`) serait préférable dès que le volume de parties croît.
-- ~~**`backend/mutants/`**~~ → **✅ traité (PR de suite de l'audit)** : artefacts mutmut supprimés du dépôt et ajoutés au `.gitignore` (`backend/mutants/`, `.mutmut-cache`) — mutmut les régénère à l'exécution. Le symlink hérité `backend/src → app/domain` (ancien layout, plus référencé nulle part) reste présent : sa suppression est triviale mais volontairement laissée pour un nettoyage explicite.
+- ~~**`backend/mutants/`**~~ → **✅ traité (PR de suite de l'audit)** : artefacts mutmut supprimés du dépôt et ajoutés au `.gitignore` (`backend/mutants/`, `.mutmut-cache`) — mutmut les régénère à l'exécution. Le symlink hérité `backend/src → app/domain` (ancien layout, plus référencé nulle part) a également été supprimé.
 
 ---
 
