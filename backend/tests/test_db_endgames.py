@@ -83,5 +83,8 @@ class TestGetNextEndgameProblem:
         problem = db_client.get_next_endgame_problem(1000, category="queen_mate")
         assert problem["category"] == "queen_mate"
 
-    def test_unknown_category_returns_none(self):
-        assert db_client.get_next_endgame_problem(1000, category="does-not-exist") is None
+    def test_unknown_category_widens_to_full_pool(self):
+        # EPIC 22 (US 22.2) : élargissement du pool plutôt que None/404.
+        problem = db_client.get_next_endgame_problem(1000, category="does-not-exist")
+        assert problem is not None
+        assert problem["category"] in {"queen_mate", "rook_mate", "two_rooks_mate"}

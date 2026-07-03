@@ -378,8 +378,16 @@ del _seed, _pid
 
 def get_tactical_problem(problem_id: str) -> Optional[Dict[str, Any]]:
     repo = _pg()
-    if repo is not None:  # pragma: no cover - nécessite DATABASE_URL
-        return repo.get_tactical_problem(problem_id)
+    if repo is not None:
+        # EPIC 22 (US 22.2) : le dépôt Postgres peut être incomplet (méthode
+        # jamais migrée, cf. README §10.6) ou la table vide — on retombe sur
+        # le seed in-memory plutôt que de faire crasher la route en 500.
+        try:
+            problem = repo.get_tactical_problem(problem_id)
+        except Exception:  # pragma: no cover - dépend de l'état du déploiement
+            problem = None
+        if problem is not None:  # pragma: no cover - nécessite DATABASE_URL
+            return problem
     return _tactical_problems.get(problem_id)
 
 
@@ -390,13 +398,25 @@ def get_next_tactical_problem(
 
     ``category`` (US 8.2) filtre le jeu de problèmes avant sélection ;
     ``None`` (par défaut) considère toutes les catégories.
+
+    EPIC 22 (US 22.2) — Fallback anti-« Impossible de charger » : si le dépôt
+    Postgres échoue (méthode non migrée, table vide, erreur SQL), on sert le
+    set de problèmes par défaut in-memory ; et si le filtre de catégorie vide
+    le pool, on élargit à toutes les catégories plutôt que de renvoyer None
+    (donc 404 côté route, qui figeait l'interface).
     """
     repo = _pg()
-    if repo is not None:  # pragma: no cover - nécessite DATABASE_URL
-        return repo.get_next_tactical_problem(tactical_elo, category)
+    if repo is not None:
+        try:
+            problem = repo.get_next_tactical_problem(tactical_elo, category)
+        except Exception:  # pragma: no cover - dépend de l'état du déploiement
+            problem = None
+        if problem is not None:  # pragma: no cover - nécessite DATABASE_URL
+            return problem
     pool = list(_tactical_problems.values())
     if category is not None:
-        pool = [p for p in pool if p["category"] == category]
+        filtered = [p for p in pool if p["category"] == category]
+        pool = filtered or pool  # élargissement : jamais de pool vide
     return select_nearest_problem(pool, tactical_elo)
 
 
@@ -440,11 +460,14 @@ def get_next_endgame_problem(
     """EPIC 10 — Position la plus proche de l'Elo « finales » du joueur.
 
     Réutilise directement `select_nearest_problem` (US 8.1) — même logique
-    de sélection adaptative, aucune duplication.
+    de sélection adaptative, aucune duplication. Comme pour les tactiques
+    (US 22.2), un filtre de catégorie qui vide le pool est élargi à toutes
+    les catégories plutôt que de renvoyer None (404 → interface figée).
     """
     pool = list(_endgame_problems.values())
     if category is not None:
-        pool = [p for p in pool if p["category"] == category]
+        filtered = [p for p in pool if p["category"] == category]
+        pool = filtered or pool
     return select_nearest_problem(pool, endgame_elo)
 
 
@@ -614,16 +637,26 @@ def get_next_tactical_problem_for_categories(
     vers plusieurs thèmes tactiques (ex. `missed_mate` -> mate_in_1 +
     mate_in_2). Réutilise directement `select_nearest_problem` (US 8.1),
     aucune duplication de la logique de sélection adaptative.
+
+    EPIC 22 (US 22.2) : même fallback anti-404 que `get_next_tactical_problem`
+    — un dépôt Postgres défaillant ou vide retombe sur le seed in-memory, et
+    un pool vide est élargi à toutes les catégories.
     """
     repo = _pg()
-    if repo is not None:  # pragma: no cover - nécessite DATABASE_URL, cf. gap §10.6
+    if repo is not None:
         pool = []
-        for cat in categories:
-            problem = repo.get_next_tactical_problem(tactical_elo, cat)
-            if problem is not None:
-                pool.append(problem)
-        return select_nearest_problem(pool, tactical_elo) if pool else None
+        try:
+            for cat in categories:
+                problem = repo.get_next_tactical_problem(tactical_elo, cat)
+                if problem is not None:
+                    pool.append(problem)
+        except Exception:  # pragma: no cover - dépend de l'état du déploiement
+            pool = []
+        if pool:  # pragma: no cover - nécessite DATABASE_URL, cf. gap §10.6
+            return select_nearest_problem(pool, tactical_elo)
     pool = [p for p in _tactical_problems.values() if p["category"] in categories]
+    if not pool:
+        pool = list(_tactical_problems.values())  # élargissement (US 22.2)
     return select_nearest_problem(pool, tactical_elo)
 
 

@@ -14,6 +14,13 @@ const Auth = (() => {
       if (window.CI_API_URL != null) return window.CI_API_URL;
       if (window.API_BASE != null) return window.API_BASE;
     }
+    // US 22.3 : même surcharge que ApiClient (`localStorage['apiBase']`) —
+    // Auth et ApiClient doivent TOUJOURS parler au même backend, sinon le
+    // JWT émis par l'un est invalide pour l'autre (faux « déconnecté »).
+    try {
+      const stored = (typeof localStorage !== "undefined") && localStorage.getItem("apiBase");
+      if (stored) return stored;
+    } catch { /* localStorage indisponible */ }
     return "http://localhost:8000";
   }
   const TOKEN_KEY = "ci_jwt";
