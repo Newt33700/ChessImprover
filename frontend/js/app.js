@@ -379,6 +379,7 @@ class ChessImproverApp {
           AdvancedStats.renderDeepDive(document.getElementById("adv-deepdive"), this._advSummary, this._advCadence);
         }
         this._loadProgressChart();
+        this._loadEloCurve(); // EPIC 24 : la courbe Elo suit la cadence choisie
       });
     });
     document.querySelectorAll("#adv-period .adv-period-btn").forEach((btn) => {
@@ -1953,6 +1954,10 @@ class ChessImproverApp {
       this._progressChart.destroy();
       this._progressChart = null;
     }
+    if (this._eloChart) {
+      this._eloChart.destroy();
+      this._eloChart = null;
+    }
   }
 
   // ─── Coach Tactique Adaptatif (EPIC 8 — US 8.1/8.2) ──────────────
@@ -2808,6 +2813,35 @@ class ChessImproverApp {
     );
   }
 
+  /**
+   * EPIC 24 — Charge et affiche la courbe d'Elo Chess.com réelle pour la
+   * cadence (onglets BULLET/BLITZ/RAPIDE) et la période (7/30/90 j)
+   * sélectionnées. États vides explicites : pseudo non lié / aucune partie.
+   */
+  async _loadEloCurve() {
+    if (!window.AdvancedStats) return;
+    const wrap = document.getElementById("adv-elo-wrap");
+    if (!wrap) return;
+
+    const days = parseInt(this._advPeriod, 10) || 30;
+    if (this._eloChart) { this._eloChart.destroy(); this._eloChart = null; }
+    wrap.innerHTML = '<p class="empty-state">Chargement…</p>';
+
+    const curve = await AdvancedStats.fetchEloCurve(this._advCadence, days);
+    if (!curve) {
+      wrap.innerHTML = '<p class="empty-state">Courbe indisponible — liez votre pseudo Chess.com via Profil pour voir votre Elo réel.</p>';
+      return;
+    }
+    if (!curve.points?.length) {
+      wrap.innerHTML = `<p class="empty-state">Aucune partie ${this._advCadence} jouée sur les ${days} derniers jours.</p>`;
+      return;
+    }
+    wrap.innerHTML = '<canvas id="adv-elo-canvas"></canvas>';
+    this._eloChart = AdvancedStats.renderEloCurve(
+      document.getElementById("adv-elo-canvas"), curve.points
+    );
+  }
+
   async _loadAdvStats() {
     if (!window.AdvancedStats) return;
     // Détruire les graphes existants avant re-rendu (évite les fuites Chart.js).
@@ -2816,6 +2850,7 @@ class ChessImproverApp {
     }
     this._advSummary = await AdvancedStats.fetchSummary(this._advPeriod);
     await this._loadProgressChart();
+    this._loadEloCurve(); // EPIC 24 : indépendant du résumé AdvancedStats
 
     // EPIC 19 (US 19.1/19.2) + EPIC 20 (US 20.1) : indépendants du résumé
     // AdvancedStats (routes/agrégations distinctes), donc jamais bloqués par

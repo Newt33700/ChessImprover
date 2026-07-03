@@ -23,12 +23,14 @@ from app.config import settings
 from app.domain.analysis_pipeline import analyze_pgn, build_client_engine, compute_pgn_hash
 from app.domain.cognitive_load import build_decision_fluidity_report, build_time_allocation_report
 from app.domain.error_profile import ERROR_TYPES, detect_error_occurrences, update_frequency_score
-from app.domain import game_sync
+from app.domain import elo_curve, game_sync
 from app.domain.game_salvage import find_defeat_pivot, reconstruct_position_before_move
 from app.domain.models import (
     AnalyzeAccepted,
     AnalyzeAcceptedItem,
     AnalyzeGamesRequest,
+    EloCurvePoint,
+    EloCurveResponse,
     GamesSyncResult,
     GameStatus,
     GameStatusUpdate,
@@ -386,6 +388,49 @@ async def stats_history(
             for row in filtered
         ],
     }
+
+
+@router.get("/stats/elo-curve", response_model=EloCurveResponse)
+async def stats_elo_curve(
+    cadence: str = Query("blitz", description="bullet | blitz | rapid | daily"),
+    days: int = Query(30, ge=1, le=365),
+    user_id: str = Depends(get_current_user_id),
+) -> EloCurveResponse:
+    """EPIC 24 — Courbe d'Elo Chess.com RÉELLE pour une cadence.
+
+    Reconstruite depuis les archives mensuelles (chaque partie porte le rating
+    du joueur après la partie) : un point par jour joué (dernier rating du
+    jour) sur la fenêtre demandée. Nécessite un pseudo Chess.com lié au
+    profil (US 6.3) — 422 explicite sinon, 502 générique si Chess.com est
+    injoignable (mêmes politiques que ``/games/sync``).
+    """
+    if cadence not in elo_curve.ELO_CURVE_CADENCES:
+        raise HTTPException(status_code=422, detail=f"cadence inconnue : {cadence!r}")
+    user = db_client.find_user_by_id(user_id)
+    chess_username = (user or {}).get("chess_username")
+    if not chess_username:
+        raise HTTPException(
+            status_code=422,
+            detail="Aucun pseudo Chess.com lié au profil — renseignez-le via Profil.",
+        )
+
+    now = datetime.now(timezone.utc)
+    client = _get_chess_com_client()
+    try:
+        raw_games = await client.get_games_for_months(
+            chess_username, elo_curve.months_covering(now, days)
+        )
+    except Exception:
+        raise HTTPException(
+            status_code=502, detail="Chess.com est indisponible pour le moment."
+        )
+
+    points = elo_curve.build_elo_curve(raw_games, chess_username, cadence, days, now)
+    return EloCurveResponse(
+        cadence=cadence,
+        days=days,
+        points=[EloCurvePoint(**p) for p in points],
+    )
 
 
 @router.get("/stats/cognitive-load")

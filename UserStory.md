@@ -971,3 +971,36 @@ En tant qu'équipe, nous voulons que chaque modification de `supabase/migrations
 - Tests : `api_client.test.js` (3 nouveaux TUs : POST + compteurs, en-tête `Authorization`, rejet non-ok).
 
 **Validation EPIC 23 :** backend 826/826 pytest (32 nouveaux), frontend 327/327 Jest (3 nouveaux), couverture ≥ 80 % maintenue.
+
+## EPIC 24 : Courbe d'Elo Chess.com Réelle (par cadence, sur 7/30/90 jours)
+
+**Contexte :** demande PO (juillet 2026) — « récupérer les courbes des Elos sur toutes les cadences sur Chess.com pour afficher la courbe sur 7, 30, 90 jours en fonction de la cadence sélectionnée ».
+
+**En tant qu'** utilisateur, **je veux** voir l'évolution de mon classement Chess.com réel par cadence (bullet/blitz/rapide) sur la période de mon choix (7/30/90 jours), **afin de** suivre ma progression réelle à côté des Elos virtuels calculés par l'application.
+
+### US 24.1 : Endpoint backend `GET /api/v1/stats/elo-curve`
+
+**Critères d'Acceptation (DoD) :**
+- JWT requis ; pseudo Chess.com lu depuis le profil (422 explicite s'il n'est pas lié).
+- `cadence` ∈ {bullet, blitz, rapid, daily} (422 sinon), `days` ∈ [1..365] (défaut 30).
+- Un point par jour joué : rating de la DERNIÈRE partie du jour, ordre chronologique.
+- 502 générique (sans fuite interne) si Chess.com est injoignable.
+
+**Statut :** ✅ Implémenté :
+- **Note d'architecture** : l'API publique Chess.com n'expose pas d'historique de rating — la courbe est reconstruite depuis les archives mensuelles (chaque partie archivée porte le rating du joueur après la partie et son `end_time`). `domain/elo_curve.py` (module pur) : `months_covering` (mois calendaires couvrant la fenêtre, ≤ 4 pour 90 jours, passage d'année géré) et `build_elo_curve` (filtre `time_class`, fenêtre temporelle, rating lu du bon côté insensiblement à la casse, entrées inexploitables ignorées).
+- `ChessComClient.get_games_for_months` : concatène plusieurs mois d'archives, tolère les mois sans archive (404), propage les autres erreurs.
+- Tests : `test_elo_curve.py` (12 TUs purs) + `test_elo_curve_api.py` (8 tests d'intégration, client mocké, zéro réseau).
+
+### US 24.2 : Carte « ELO CHESS.COM » dans les Statistiques Avancées
+
+**Critères d'Acceptation (DoD) :**
+- La courbe suit la cadence sélectionnée (onglets BULLET/BLITZ/RAPIDE existants) ET la période (boutons 7j/30j/90j existants) — tout changement recharge la courbe.
+- États vides explicites : pseudo Chess.com non lié / aucune partie sur la période.
+- Jamais de données simulées pour un classement réel.
+
+**Statut :** ✅ Implémenté :
+- `ApiClient.getEloCurve(cadence, days)` ; `AdvancedStats.fetchEloCurve` (null en échec — pas de MOCK, contrairement aux autres cartes), `buildEloCurveData` (fonction pure testée), `renderEloCurve` (Chart.js line, vert produit).
+- `app.js:_loadEloCurve()` câblé dans `_loadAdvStats()` et sur le clic des onglets de cadence (la période recharge déjà tout) ; graphe détruit proprement à chaque rechargement et à la fermeture de la vue.
+- Tests : `advanced_stats.test.js` (7 nouveaux TUs) + `api_client.test.js` (3 nouveaux TUs).
+
+**Validation EPIC 24 :** backend 846/846 pytest (20 nouveaux), frontend 337/337 Jest (10 nouveaux), couverture ≥ 80 % maintenue.
