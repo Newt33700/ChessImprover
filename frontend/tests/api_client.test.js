@@ -125,6 +125,29 @@ describe("updateGameStatus (US 7.3)", () => {
   });
 });
 
+describe("getEloCurve (EPIC 24 — courbe Elo Chess.com)", () => {
+  test("GET /api/v1/stats/elo-curve avec cadence et days en query", async () => {
+    global.fetch = jest.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ cadence: "rapid", days: 90, points: [{ date: "2026-07-01", rating: 1200 }] }),
+    });
+    const out = await ApiClient.getEloCurve("rapid", 90);
+    expect(global.fetch.mock.calls[0][0]).toBe("/api/v1/stats/elo-curve?cadence=rapid&days=90");
+    expect(out.points).toHaveLength(1);
+  });
+
+  test("valeurs par défaut : blitz / 30 jours", async () => {
+    global.fetch = jest.fn().mockResolvedValue({ ok: true, json: async () => ({ points: [] }) });
+    await ApiClient.getEloCurve();
+    expect(global.fetch.mock.calls[0][0]).toBe("/api/v1/stats/elo-curve?cadence=blitz&days=30");
+  });
+
+  test("rejette sur HTTP non-ok (422 pseudo non lié)", async () => {
+    global.fetch = jest.fn().mockResolvedValue({ ok: false, status: 422 });
+    await expect(ApiClient.getEloCurve("blitz", 7)).rejects.toThrow("HTTP 422");
+  });
+});
+
 describe("syncGames (EPIC 23 — sync à la connexion)", () => {
   test("POST /api/v1/games/sync et renvoie les compteurs", async () => {
     global.fetch = jest.fn().mockResolvedValue({

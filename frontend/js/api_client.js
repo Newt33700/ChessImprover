@@ -245,6 +245,17 @@ const ApiClient = (() => {
     );
   }
 
+  /**
+   * EPIC 24 — Courbe d'Elo Chess.com RÉELLE pour une cadence (un point par
+   * jour joué, dernier rating du jour), reconstruite par le backend depuis
+   * les archives mensuelles. 422 si aucun pseudo Chess.com n'est lié.
+   */
+  async function getEloCurve(cadence = "blitz", days = 30) {
+    return _json(
+      await fetch(url("/api/v1/stats/elo-curve", { cadence, days }), { headers: _authHeaders() })
+    );
+  }
+
   /** Démarre un sprint tactique (EPIC 12, US 11.1) — chrono fixé côté serveur. */
   async function startSprint() {
     const res = await fetch(url("/api/v1/sprints/start"), {
@@ -321,7 +332,7 @@ const ApiClient = (() => {
     getNextEndgameProblem, submitEndgameAttempt,
     getErrorProfile, getCustomTacticalProblem,
     startSprint, submitSprintAttempt, finishSprint, getGhostReplay,
-    getStatsSummary, getStatsHistory, isConfigured,
+    getStatsSummary, getStatsHistory, getEloCurve, isConfigured,
     getCognitiveLoad, getFlashcards, getDueFlashcards, reviewFlashcard,
   };
 })();

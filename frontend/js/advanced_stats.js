@@ -136,6 +136,74 @@ const AdvancedStats = (() => {
     }
   }
 
+  /**
+   * EPIC 24 — Courbe d'Elo Chess.com réelle pour une cadence/période.
+   * Renvoie `{cadence, days, points}` ou `null` si la courbe est indisponible
+   * (API non configurée, pseudo Chess.com non lié → 422, Chess.com down →
+   * 502, réseau). Pas de données de démonstration : une courbe d'Elo réelle
+   * ne se simule pas.
+   */
+  async function fetchEloCurve(cadence = "blitz", days = 30, base) {
+    if (base == null && typeof ApiClient !== "undefined" && ApiClient.isConfigured()) {
+      try {
+        return await ApiClient.getEloCurve(cadence, days);
+      } catch {
+        return null;
+      }
+    }
+    const apiBase =
+      base != null
+        ? base
+        : (typeof window !== "undefined" && window.STATS_API_BASE) || "";
+    try {
+      const res = await fetch(`${apiBase}/api/v1/stats/elo-curve?cadence=${cadence}&days=${days}`);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      return await res.json();
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Labels + valeurs prêts pour Chart.js depuis les points de la courbe
+   * d'Elo (EPIC 24). Fonction pure, testable sans Chart.js ni DOM.
+   * @param {Array<{date:string, rating:number}>} points
+   * @returns {{labels:string[], data:number[]}}
+   */
+  function buildEloCurveData(points) {
+    const list = Array.isArray(points) ? points : [];
+    return {
+      labels: list.map((p) => formatShortDate(p.date)),
+      data: list.map((p) => p.rating),
+    };
+  }
+
+  /** Trace la courbe d'Elo Chess.com (EPIC 24). `null` si canvas/Chart absent. */
+  function renderEloCurve(canvas, points) {
+    if (!canvas || typeof Chart === "undefined") return null;
+    const { labels, data } = buildEloCurveData(points);
+    return new Chart(canvas, {
+      type: "line",
+      data: {
+        labels,
+        datasets: [{
+          label: "Elo Chess.com",
+          data,
+          borderColor: "#81b64c",
+          backgroundColor: "rgba(129,182,76,0.12)",
+          tension: 0.3,
+          pointRadius: 2,
+          fill: true,
+        }],
+      },
+      options: {
+        responsive: true, maintainAspectRatio: false,
+        plugins: { legend: { display: false } },
+        scales: { y: { beginAtZero: false }, x: { grid: { display: false } } },
+      },
+    });
+  }
+
   // ── Logique pure ─────────────────────────────────────────────────
 
   /**
@@ -564,6 +632,9 @@ const AdvancedStats = (() => {
     CATEGORY_TITLES,
     fetchSummary,
     fetchHistory,
+    fetchEloCurve,
+    buildEloCurveData,
+    renderEloCurve,
     isEmpty,
     categoryDetailHtml,
     tacticSuccessGaugeHtml,

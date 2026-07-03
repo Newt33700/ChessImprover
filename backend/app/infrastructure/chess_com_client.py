@@ -65,6 +65,24 @@ class ChessComClient:
         data = resp.json()
         return data.get("games", [])
 
+    async def get_games_for_months(
+        self, username: str, months: List[tuple]
+    ) -> List[Dict[str, Any]]:
+        """EPIC 24 — Parties de plusieurs mois ``(année, mois)``, concaténées.
+
+        Un mois sans archive (404 : le joueur n'a pas joué ce mois-là) est
+        silencieusement ignoré — seul cas d'erreur toléré, les autres statuts
+        remontent à l'appelant comme partout ailleurs dans ce client.
+        """
+        games: List[Dict[str, Any]] = []
+        for year, month in months:
+            try:
+                games.extend(await self.get_games_for_month(username, year, month))
+            except httpx.HTTPStatusError as exc:
+                if exc.response.status_code != 404:
+                    raise
+        return games
+
     async def get_latest_games(
         self, username: str, limit: int = 10
     ) -> List[Dict[str, Any]]:

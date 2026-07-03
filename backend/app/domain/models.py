@@ -272,6 +272,19 @@ class GameStatusUpdate(BaseModel):
     is_reviewed: bool = Field(..., description="Vrai si la partie a déjà été étudiée")
 
 
+class EloCurvePoint(BaseModel):
+    """EPIC 24 — Un point de la courbe d'Elo Chess.com (dernier rating du jour)."""
+    date: str
+    rating: int
+
+
+class EloCurveResponse(BaseModel):
+    """EPIC 24 — Réponse de GET /api/v1/stats/elo-curve."""
+    cadence: str
+    days: int
+    points: List[EloCurvePoint] = Field(default_factory=list)
+
+
 class GamesSyncResult(BaseModel):
     """EPIC 23 — Réponse 202 de POST /api/v1/games/sync (sync à la connexion).
 

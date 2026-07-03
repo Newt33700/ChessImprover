@@ -310,3 +310,62 @@ describe("fetchHistory", () => {
     expect(out).toBe(AS.MOCK_HISTORY);
   });
 });
+
+// ── Courbe d'Elo Chess.com (EPIC 24) ───────────────────────────────
+
+describe("buildEloCurveData (EPIC 24)", () => {
+  test("transforme les points en labels courts + valeurs", () => {
+    const points = [
+      { date: "2026-06-28", rating: 1100 },
+      { date: "2026-07-01", rating: 1150 },
+    ];
+    expect(AS.buildEloCurveData(points)).toEqual({
+      labels: ["28/06", "01/07"],
+      data: [1100, 1150],
+    });
+  });
+
+  test("entrées vides ou invalides → structures vides", () => {
+    expect(AS.buildEloCurveData([])).toEqual({ labels: [], data: [] });
+    expect(AS.buildEloCurveData(null)).toEqual({ labels: [], data: [] });
+    expect(AS.buildEloCurveData(undefined)).toEqual({ labels: [], data: [] });
+  });
+});
+
+describe("fetchEloCurve (EPIC 24)", () => {
+  afterEach(() => { delete global.fetch; });
+
+  test("renvoie la courbe backend quand la requête réussit", async () => {
+    const curve = { cadence: "blitz", days: 30, points: [{ date: "2026-07-01", rating: 1200 }] };
+    global.fetch = jest.fn().mockResolvedValue({ ok: true, json: async () => curve });
+    const out = await AS.fetchEloCurve("blitz", 30, "http://api.test");
+    expect(out).toEqual(curve);
+    expect(global.fetch).toHaveBeenCalledWith("http://api.test/api/v1/stats/elo-curve?cadence=blitz&days=30");
+  });
+
+  test("renvoie null si HTTP non-ok (422 pseudo non lié, 502 Chess.com down)", async () => {
+    global.fetch = jest.fn().mockResolvedValue({ ok: false, status: 422 });
+    expect(await AS.fetchEloCurve("blitz", 7, "http://api.test")).toBeNull();
+  });
+
+  test("renvoie null si le réseau échoue — jamais de données simulées", async () => {
+    global.fetch = jest.fn().mockRejectedValue(new Error("network"));
+    expect(await AS.fetchEloCurve("rapid", 90, "http://api.test")).toBeNull();
+  });
+});
+
+describe("renderEloCurve (EPIC 24)", () => {
+  test("null sans canvas", () => {
+    expect(AS.renderEloCurve(null, [])).toBeNull();
+  });
+
+  test("construit un Chart line avec les points fournis", () => {
+    const canvas = { getContext: () => ({}) };
+    const points = [{ date: "2026-07-01", rating: 1200 }];
+    AS.renderEloCurve(canvas, points);
+    const cfg = global.Chart.mock.calls[global.Chart.mock.calls.length - 1][1];
+    expect(cfg.type).toBe("line");
+    expect(cfg.data.datasets[0].data).toEqual([1200]);
+    expect(cfg.data.labels).toEqual(["01/07"]);
+  });
+});
