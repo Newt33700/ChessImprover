@@ -272,6 +272,23 @@ class GameStatusUpdate(BaseModel):
     is_reviewed: bool = Field(..., description="Vrai si la partie a déjà été étudiée")
 
 
+class GamesSyncResult(BaseModel):
+    """EPIC 23 — Réponse 202 de POST /api/v1/games/sync (sync à la connexion).
+
+    ``fetched``  : parties récupérées depuis Chess.com ;
+    ``queued``   : nouvelles analyses lancées en tâche de fond (≤ plafond) ;
+    ``skipped``  : parties déjà connues (hash PGN, US 7.2) ;
+    ``deferred`` : nouvelles parties au-delà du plafond, différées à la
+                   prochaine sync ;
+    ``requeued`` : analyses orphelines (``processing`` trop ancien) relancées.
+    """
+    fetched: int = 0
+    queued: int = 0
+    skipped: int = 0
+    deferred: int = 0
+    requeued: int = 0
+
+
 # ---------------------------------------------------------------------------
 # Coaching Tactique Adaptatif (US 8.1, EPIC 8)
 # ---------------------------------------------------------------------------

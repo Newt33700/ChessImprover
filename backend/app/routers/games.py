@@ -23,11 +23,13 @@ from app.config import settings
 from app.domain.analysis_pipeline import analyze_pgn, build_client_engine, compute_pgn_hash
 from app.domain.cognitive_load import build_decision_fluidity_report, build_time_allocation_report
 from app.domain.error_profile import ERROR_TYPES, detect_error_occurrences, update_frequency_score
+from app.domain import game_sync
 from app.domain.game_salvage import find_defeat_pivot, reconstruct_position_before_move
 from app.domain.models import (
     AnalyzeAccepted,
     AnalyzeAcceptedItem,
     AnalyzeGamesRequest,
+    GamesSyncResult,
     GameStatus,
     GameStatusUpdate,
 )
@@ -189,6 +191,93 @@ async def analyze_games(
         accepted.append(AnalyzeAcceptedItem(game_id=gid))
 
     return AnalyzeAccepted(accepted=accepted)
+
+
+def _get_chess_com_client():
+    """Client Chess.com : réutilise l'instance du lifespan (``app.main``) si
+    l'application tourne, sinon en crée une éphémère (tests d'app minimale).
+    Import paresseux pour éviter le cycle main ⇄ routers."""
+    from app import main as app_main
+    from app.infrastructure.chess_com_client import ChessComClient
+
+    return app_main.chess_com_client or ChessComClient()
+
+
+@router.post("/games/sync", status_code=202, response_model=GamesSyncResult)
+async def sync_games(
+    background: BackgroundTasks, user_id: str = Depends(get_current_user_id),
+) -> GamesSyncResult:
+    """EPIC 23 — Synchronisation à la connexion : ratisse les dernières parties
+    Chess.com de l'utilisateur et lance leur analyse en tâche de fond.
+
+    Répond immédiatement en 202 (les analyses tournent en arrière-plan et
+    mettent à jour tous les KPI en cascade via ``run_analysis``). Idempotent :
+    les parties déjà connues sont écartées par leur hash PGN (US 7.2), donc
+    appeler la route à chaque connexion est sans risque.
+    """
+    user = db_client.find_user_by_id(user_id)
+    chess_username = (user or {}).get("chess_username")
+    if not chess_username:
+        raise HTTPException(
+            status_code=422,
+            detail="Aucun pseudo Chess.com lié au profil — renseignez-le via Profil.",
+        )
+
+    client = _get_chess_com_client()
+    try:
+        raw_games = await client.get_latest_games(
+            chess_username, limit=game_sync.FETCH_LAST_GAMES
+        )
+    except Exception:
+        # Chess.com injoignable : pas de sync ce coup-ci, sans fuite du détail
+        # interne (même politique que routes /games/{username} de app.main).
+        raise HTTPException(
+            status_code=502, detail="Chess.com est indisponible pour le moment."
+        )
+
+    result = GamesSyncResult(fetched=len(raw_games))
+    queued_ids: set = set()
+
+    for candidate in game_sync.extract_sync_candidates(raw_games, chess_username):
+        pgn_hash = compute_pgn_hash(candidate["pgn"])
+        if db_client.find_game_by_pgn_hash(user_id, pgn_hash) is not None:
+            result.skipped += 1
+            continue
+        if result.queued >= game_sync.MAX_ANALYSES_PER_SYNC:
+            # Plafond CPU (instance Render modeste) : différé à la prochaine
+            # sync — le hash PGN retrouvera ces parties comme « nouvelles ».
+            result.deferred += 1
+            continue
+        game = db_client.create_game(
+            pgn=candidate["pgn"],
+            user_id=user_id,
+            time_control=candidate["time_control"],
+            user_color=candidate["user_color"],
+            status=GameStatus.PROCESSING.value,
+            pgn_hash=pgn_hash,
+        )
+        background.add_task(
+            run_analysis, game["id"], candidate["pgn"], None,
+            user_id, candidate["user_color"], candidate["time_control"],
+        )
+        queued_ids.add(game["id"])
+        result.queued += 1
+
+    # Re-enfilage des analyses orphelines : une partie restée en `processing`
+    # au-delà du seuil (instance endormie/redémarrée en plein travail) est
+    # relancée — coups purgés d'abord pour ne jamais les dupliquer.
+    now = datetime.now(timezone.utc)
+    for game in db_client.get_games_for_user(user_id):
+        if game["id"] in queued_ids or not game_sync.is_stale_processing(game, now):
+            continue
+        db_client.clear_moves(game["id"])
+        background.add_task(
+            run_analysis, game["id"], game["pgn"], None,
+            user_id, game.get("user_color", "white"), game.get("time_control"),
+        )
+        result.requeued += 1
+
+    return result
 
 
 @router.get("/games")

@@ -90,6 +90,20 @@ const ApiClient = (() => {
     return _json(res);
   }
 
+  /**
+   * EPIC 23 — Synchronisation à la connexion : le backend ratisse les
+   * dernières parties Chess.com du profil lié et lance leurs analyses en
+   * tâche de fond (répond immédiatement en 202). Idempotent (hash PGN).
+   * @returns {Promise<{fetched:number,queued:number,skipped:number,deferred:number,requeued:number}>}
+   */
+  async function syncGames() {
+    const res = await fetch(url("/api/v1/games/sync"), {
+      method: "POST",
+      headers: _authHeaders(),
+    });
+    return _json(res);
+  }
+
   /** EPIC 15 (US 15.2) — Position exacte au pivot de défaite (US 15.1), pour rejouer en Sandbox. */
   async function salvageGame(gameId) {
     const res = await fetch(url(`/api/v1/games/${gameId}/salvage`), {
@@ -301,7 +315,7 @@ const ApiClient = (() => {
   }
 
   return {
-    baseUrl, url, analyzeGame, getGame, getGames, updateGameStatus, salvageGame,
+    baseUrl, url, analyzeGame, getGame, getGames, updateGameStatus, salvageGame, syncGames,
     getNextTacticalProblem, submitTacticalAttempt, getTacticsStats,
     createOpeningLine, getOpeningLines, getDueOpeningLines, reviewOpeningLine, deleteOpeningLine,
     getNextEndgameProblem, submitEndgameAttempt,

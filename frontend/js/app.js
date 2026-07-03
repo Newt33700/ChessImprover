@@ -1291,12 +1291,74 @@ class ChessImproverApp {
     this._renderModulePlaceholders();
     this._applyServerTheme(user);
     this._loadServerGames();
+    this._startBackgroundSync(); // EPIC 23 : analyse de fond des parties récentes
     // Auto-charger les parties Chess.com si un username est mémorisé
     if (this.username && !this.recentGames.length) {
       const input = document.getElementById("username-input");
       if (input) input.value = this.username;
       this._connectUser(this.username);
     }
+  }
+
+  // ─── EPIC 23 : Sync des parties + KPI en tâche de fond à la connexion ──
+
+  /**
+   * Déclenche la synchronisation Chess.com côté serveur (best-effort) : le
+   * backend ratisse les 10 dernières parties, écarte les connues (hash PGN)
+   * et lance jusqu'à 5 analyses en tâche de fond — chacune met à jour tous
+   * les KPI (progression Elo, profil d'erreurs, flashcards, pivot).
+   * Aucune erreur ne remonte à l'utilisateur : la sync est un bonus silencieux.
+   */
+  async _startBackgroundSync() {
+    if (this._syncPolling) return; // une seule sync/poll à la fois
+    if (!window.ApiClient || !ApiClient.isConfigured() || !window.Auth?.isLoggedIn()) return;
+    let result;
+    try {
+      result = await ApiClient.syncGames();
+    } catch {
+      return; // 422 (pas de pseudo lié), 502 (Chess.com down)… : silencieux
+    }
+    const inFlight = (result?.queued || 0) + (result?.requeued || 0);
+    if (!inFlight) return;
+    this._renderSyncIndicator(inFlight);
+    this._syncPollCount = 0;
+    this._syncPolling = setInterval(() => this._pollSyncStatus(), 15000);
+  }
+
+  /** Compte les analyses encore en cours et met à jour/termine l'indicateur. */
+  async _pollSyncStatus() {
+    this._syncPollCount = (this._syncPollCount || 0) + 1;
+    if (this._syncPollCount > 40) { this._stopSyncPolling(); return; } // ~10 min max
+    let games = [];
+    try {
+      games = (await ApiClient.getGames())?.games || [];
+    } catch {
+      return; // erreur passagère : on retentera au prochain tick
+    }
+    const processing = games.filter((g) => g.status === "processing").length;
+    if (processing > 0) {
+      this._renderSyncIndicator(processing);
+      return;
+    }
+    this._stopSyncPolling();
+    this.serverGames = games;
+    this._toast("✓ Analyses terminées — vos statistiques sont à jour", "success");
+    // Rafraîchir les vues serveur ouvertes (Stats Avancées + Cimetière).
+    if (document.body.classList.contains("advstats-active")) this._loadAdvStats();
+  }
+
+  _stopSyncPolling() {
+    if (this._syncPolling) { clearInterval(this._syncPolling); this._syncPolling = null; }
+    this._renderSyncIndicator(0);
+  }
+
+  /** Badge discret du header — jamais un toast par partie (règle US 22.1). */
+  _renderSyncIndicator(count) {
+    const el = document.getElementById("sync-indicator");
+    if (!el) return;
+    if (!count) { el.hidden = true; el.textContent = ""; return; }
+    el.textContent = `🔄 ${count} analyse${count > 1 ? "s" : ""} en cours`;
+    el.hidden = false;
   }
 
   /**
@@ -1320,6 +1382,7 @@ class ChessImproverApp {
 
   _onAuthLogout() {
     window.Auth?.logout();
+    this._stopSyncPolling(); // EPIC 23 : plus de polling sans session
     this._renderAuthState();
     this._renderModulePlaceholders();
     this._toast("Déconnecté", "info");
