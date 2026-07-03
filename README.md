@@ -1361,6 +1361,20 @@ Modules **purs** (couche domaine), entièrement testés, indépendants de l'infr
 
 **Frontend :** carte **ELO CHESS.COM** dans la vue Statistiques Avancées, pilotée par les onglets de cadence (BULLET/BLITZ/RAPIDE) et les boutons de période (7j/30j/90j) déjà existants — changer l'un ou l'autre recharge la courbe (`_loadEloCurve`). États vides explicites : « liez votre pseudo Chess.com » (courbe indisponible) / « aucune partie {cadence} sur les N derniers jours ». Aucune donnée de démonstration : une courbe d'Elo réelle ne se simule pas (`fetchEloCurve` renvoie `null` en échec, contrairement aux `MOCK_*` des autres cartes).
 
+### 4.21 EPIC 25 — « Zéro non-câblé » : persistance des comptes & fermeture des gaps
+
+**Fichiers :** `infrastructure/pg_repository.py` (+12 méthodes), `infrastructure/db_client.py`, `app/main.py` (purge), `js/db.js` (cache livre), `js/app.js`, `js/board_manager.js`, `js/analysis_feedback.js`
+
+**US 25.1 — Persistance Postgres des comptes (gap §10.1 fermé, cause du bug « compte disparu »)** : `PgRepository` implémente enfin les tables `profiles`/`user_data` de la migration initiale — `create_user`, `find_user_by_email/username/id` (insensibles à la casse), `update_chess_username`, `update_settings` (JSONB), `get_user_elo`/`update_user_elo` (colonnes en liste blanche stricte : `tactical_elo`/`endgame_elo`), `get_user_data`/`save_user_data` (fusion « Client Wins » factorisée dans `db_client._merge_user_data`, partagée in-memory/Postgres). `db_client` délègue dès que `DATABASE_URL` est défini, **sans fallback in-memory silencieux** : un compte qui retomberait en RAM serait re-perdu au prochain redéploiement — base indisponible = erreur franche. Aucune migration nécessaire : toutes les colonnes existaient déjà.
+**Gap §10.6 fermé dans la foulée** : `PgRepository.get_tactical_problem`/`get_next_tactical_problem` (sélection au plus proche de l'Elo, `ORDER BY ABS(difficulty_elo - X), random()`) — le fallback seed d'EPIC 22 reste le filet de sécurité si la table est vide.
+
+**US 25.2 — Cache du livre d'ouvertures (gaps §10.2 + §10.4 fermés)** : le Set d'EPD (~28k positions) est mis en cache IndexedDB (`ChessDB.saveOpeningBook`/`getOpeningBook`, clé réservée `__opening_book__`, TTL 7 jours) — zéro requête réseau et zéro re-parsing chess.js au refresh. Indicateur discret « 📖 Chargement du livre… » (réutilise `#sync-indicator`) pendant le premier chargement uniquement.
+
+**US 25.3 — Qualité SRS nuancée (gap §10.3 fermé)** : `AnalysisFeedback.evalForPlayer` (le moteur note le camp au trait → inversion après le coup du joueur) + `AnalysisFeedback.exerciseQuality` (5 = correct ; 3 = coup différent mais position toujours avantageuse, éval moteur > 0 ; 1 = raté ou éval inconnue — pas de crédit sans preuve moteur). `board_manager._emitExerciseFail` attend brièvement (≤ 2,5 s) l'évaluation déjà demandée par `_onDrop` ; `app._onExerciseResult` propage la qualité au SM-2 (avant EPIC 25, l'échec écrasait toujours à 1).
+**Gap §10.5 fermé** : les barres de précision de la match-card lisent `g.accuracies.white/black` (précisions officielles Chess.com) en priorité. **Gap §10.6-2 fermé** : panneau des taux de réussite par thème (`GET /tactics/stats`, enfin exposé) dans le Coach Tactique.
+
+**US 25.4 — Purge du code mort (ex-§9)** : routes `POST /analyze`, `GET /games/{username}`, `POST /srs/review`, `POST /srs/review/full` supprimées (jamais appelées par le frontend ; tests de non-réapparition en 404 + routers métier toujours montés). Rattrapage `endgame_accuracy` : les parties IndexedDB antérieures au câblage de l'EndgameDetector sont ré-analysées en tâche de fond (max 5/session, best-effort, 4 s après le boot).
+
 ---
 
 ## 5. Règles métier
@@ -1660,7 +1674,7 @@ npm run test:mutation # Stryker
 
 | Fichier | Tests | Couvre |
 |---|---|---|
-| `db.test.js` | ChessDB | open, saveGame, getAllGames, saveCard, getDueCards, saveOpening, migrateFromLocalStorage |
+| `db.test.js` | ChessDB | open, saveGame, getAllGames, saveCard, getDueCards, saveOpening, migrateFromLocalStorage, **cache du livre d'ouvertures (EPIC 25 : TTL 7 j, entrées périmées/corrompues, isolation des entrées ECO)** |
 | `wp_chart.test.js` | WPChart | cpToWP, evalToWP, buildDataset, render (Chart mock), updateMove, highlightMove, destroy |
 | `openings_stats.test.js` | OpeningsStats | aggregate, computeRates, extractOpeningName, getResult, _renderTable (vide + données), _escapeHtml, render |
 | `endgame_detector.test.js` | EndgameDetector | countMaterial, detectEndgamePhase, isEligibleForSyzygy, classifyCategory (tous cas), querySyzygy (erreur API), analyzeGame (+ onProgress), renderStats |
@@ -1672,7 +1686,7 @@ npm run test:mutation # Stryker
 | `api_client.test.js` | ApiClient | baseUrl/isConfigured (window/localStorage), url (query), analyzeGame (POST + erreur), getStatsSummary, getGame, getStatsHistory, **en-tête `Authorization: Bearer` présent/absent selon `Auth.getToken()` (US 6.4)**, **getGames (US 7.1)**, **updateGameStatus (US 7.3)**, **getNextTacticalProblem + régression bug `?` orphelin (US 8.2)**, **submitTacticalAttempt + time_taken, getTacticsStats (US 8.3/8.4)**, **createOpeningLine/getOpeningLines/getDueOpeningLines/reviewOpeningLine/deleteOpeningLine (EPIC 9)**, **getNextEndgameProblem/submitEndgameAttempt (EPIC 10)**, **salvageGame (EPIC 15)**, **getCognitiveLoad (EPIC 19)**, **getFlashcards/getDueFlashcards/reviewFlashcard (EPIC 20)**, **syncGames (EPIC 23 : POST, compteurs, JWT attaché, rejet non-ok)**, **getEloCurve (EPIC 24 : query cadence/days, défauts, rejet non-ok)** |
 | `auth.test.js` (US 6.1/6.3) | Auth | signup/login (succès, `detail` chaîne, `detail` liste Pydantic 422 — un ou plusieurs champs, absence de `detail`), `updateChessUsername` (sans token, succès + PATCH + persistance session, format invalide), **`updateSettings` (EPIC 18 : sans token, succès + persistance session, settings absent → objet vide)**, isLoggedIn/logout, **résolution de la base API (audit 07/2026 : fallback dev, `window.API_BASE` prod, priorité `CI_API_URL`, relecture paresseuse à chaque appel)** |
 | `coaching_voice.test.js` (EPIC 14) | CoachingVoice | `isSupported`, `setEnabled`/`isEnabled`/`loadPreference` (persistance localStorage), `alertFor` (blunder/mistake/aucune alerte, coup absent), `bestMoveNarration`, `beep` (no-op sans AudioContext, fréquence par gravité), `speak` (no-op désactivé/non supporté, appel réel `speechSynthesis`) |
-| `analysis_feedback.test.js` (EPIC 22) | AnalysisFeedback | `createState` (états indépendants), `shouldDispatch` (1er dispatch, 20 ré-émissions identiques bloquées, raffinement cpLoss autorisé, arrondi infra-centipion, bascule book→moteur, coups indépendants, entrées invalides), `shouldAlert` (une seule alerte par coup blunder/mistake, classifications non alertables, reset par nouvelle partie) — **15 TUs, 100 % lignes/branches/fonctions** |
+| `analysis_feedback.test.js` (EPIC 22/25) | AnalysisFeedback | `createState` (états indépendants), `shouldDispatch` (1er dispatch, 20 ré-émissions identiques bloquées, raffinement cpLoss autorisé, arrondi infra-centipion, bascule book→moteur, coups indépendants, entrées invalides), `shouldAlert` (une seule alerte par coup blunder/mistake, classifications non alertables, reset par nouvelle partie), **`evalForPlayer`/`exerciseQuality` (EPIC 25 : inversion du point de vue moteur, qualités 5/3/1, pas de crédit sans éval)** — **22 TUs, 100 % lignes/branches/fonctions** |
 | `theme_service.test.js` (EPIC 18) | ThemeService | `getPieceThemePath`/`getBoardColors` (thème valide/invalide/absent/état courant sans argument), `listPieceThemes`/`listBoardThemes`, `saveLocalCache`/`loadLocalCache` (JSON corrompu, valeur non-objet), `applySettings` (variables CSS, classe `<body>`, résilience totale : `null`/`undefined`/valeurs de mauvais type/`document` indisponible) |
 
 > `advanced_stats.js` n'est pas dans `collectCoverageFrom` (comme `app.js`, `auth.js`, `board_manager.js`) : seules ses fonctions pures sont testées, les `render*` sont de la glue DOM. `cognitive_dashboard.js` y a été ajouté (EPIC 19, 87 % lignes/branches). `analysis_feedback.js` y a été ajouté (EPIC 22, 100 %).
@@ -1702,7 +1716,7 @@ JWT_SECRET=ci-test-secret pytest tests/ -v
 | `test_elo_curve.py` (EPIC 24) | TestMonthsCovering (5 — mois uniques, chevauchements, passage d'année), TestBuildEloCurve (7 — dernier rating du jour, filtres cadence/fenêtre, côté noir insensible à la casse, entrées inexploitables, tri ISO) | **12 TUs** |
 | `test_elo_curve_api.py` (EPIC 24) | TestEloCurve (8 — 401 sans JWT, 422 cadence inconnue/pseudo non lié/days hors bornes, points quotidiens, mois de la fenêtre transmis, défauts blitz/30j, 502 sans fuite interne) | **8 TUs** |
 | `test_tactics_fallback.py` (EPIC 22, US 22.2) | TestDbClientFallback (6 — dépôt Postgres cassé/vide → seed in-memory, élargissement de pool tactique/finales), TestApiNeverFreezesUi (5 — `/tactics/next`, `/tactics/custom`, `/tactics/attempt`, `/endgames/next` répondent 200 même avec un dépôt Postgres défaillant) | **11 TUs** |
-| `test_main_api.py` (audit 07/2026) | TestHealth, TestGetGamesValidation (pseudo Chess.com : regex, injections de chemin rejetées **sans appel réseau**, bornes `limit`), TestGetGamesErrorMapping (404 joueur inconnu, 502 génériques **sans fuite du message interne**, 503 client absent), **TestJwtSecretFailFast (démarrage refusé avec le secret par défaut hors debug, autorisé en debug ou avec secret custom)**, TestChessComClientSafeEncoding (encodage URL du pseudo) | **18 TUs** |
+| `test_main_api.py` (audit 07/2026, refondu EPIC 25) | TestHealth, TestDeadRoutesRemoved (routes historiques supprimées → 404, routers métier toujours montés), TestJwtSecretFailFast, TestChessComClientSafeEncoding | **11 TUs** |
 | `test_analyzer.py` | — | Analyse géométrique |
 | `test_elo.py` | — | Formules Elo/précision backend |
 | `test_phases.py` | Constantes, Material, IsEndgame, OpeningEndPly, SegmentPhases, SegmentPgn | US 2.1 |
@@ -1716,7 +1730,7 @@ JWT_SECRET=ci-test-secret pytest tests/ -v
 | `test_stats_aggregator.py` | user_outcome, build_summary (catégories, ratings, couleur), gaffeRate, finales, acplTrend | US 4.1 |
 | `test_progress_history.py` | build_snapshot (cadence inconnue, filtre couleur, IDs), filter_history_by_days (bornes, dates invalides/naïves) | US 5.1 |
 | `test_games_api.py` | POST analyze (202, 400), worker→completed, réanalyse, GET game (404), stats/summary, snapshot auto, GET stats/history, **401 sans JWT sur les 6 routes, isolation entre 2 utilisateurs (get_game/réanalyse/stats/GET games/PATCH status)**, **GET /games (liste, vide, isolation)**, **dédup PGN par hash (même game_id, pas de doublon, statut réel, isolation par utilisateur, PGN différent → parties distinctes)**, **PATCH /games/{id}/status (marque/démarque, persistance, 404 non-propriétaire, 422 body invalide)**, **`GET /stats/cognitive-load` (EPIC 19 : vide, après analyse avec horloges, isolation, dégradation 200 sur erreur DB)** | US 1.1 + US 5.1 + US 6.4 + US 7.1 + US 7.2 + US 7.3 + EPIC 19 |
-| `test_pg_repository.py` | PgRepository (dsn, colonnes, contrat progress_history, `_iso` générique, **contrat `create_game`/`find_game_by_pgn_hash`**, **contrat `record_tactical_attempt`/`get_tactical_attempts` (US 8.4)**, **contrat CRUD `opening_repertoire` + mapping `line_name`↔`name` (EPIC 9)**, **contrat CRUD `srs_flashcards` (EPIC 20)**), délégation db_client (in-memory sans `DATABASE_URL`) | EPIC 1 + US 5.1 + US 7.2 + US 8.4 + EPIC 9 + EPIC 20 |
+| `test_pg_repository.py` | PgRepository (dsn, colonnes, contrat progress_history, `_iso` générique, **contrat `create_game`/`find_game_by_pgn_hash`**, **contrat `record_tactical_attempt`/`get_tactical_attempts` (US 8.4)**, **contrat CRUD `opening_repertoire` + mapping `line_name`↔`name` (EPIC 9)**, **contrat CRUD `srs_flashcards` (EPIC 20)**), délégation db_client (in-memory sans `DATABASE_URL`), **EPIC 25 : contrats profils/user_data/Elos/problèmes tactiques, liste blanche des colonnes d'Elo, fusion Client-Wins** | EPIC 1 + US 5.1 + US 7.2 + US 8.4 + EPIC 9 + EPIC 20 |
 | `test_tactical_elo.py` | `update_elo` (+15/-15, constantes, plancher, pas de plafond) | US 8.1 |
 | `test_tactics.py` | `is_correct_move` (match exact, notation équivalente, coup faux/illégal/invalide), `select_nearest_problem` (vide, exact, plus proche haut/bas, tirage aléatoire équidistant), **`compute_daily_streak` (vide, série du jour, arrêt au premier échec, hier ne compte pas), `compute_stats_by_theme` (regroupement + taux par catégorie)** | US 8.1 + US 8.4 |
 | `test_db_tactics.py` | Store tactique (Elo par défaut, persistance), **intégrité des 15 problèmes du seed vérifiée par python-chess** (mat effectif, capture non défendue), sélection/filtre par catégorie, **`TestTacticalAttempts` (enregistrement, isolation entre utilisateurs, reset)** | US 8.1 + US 8.4 |
@@ -1740,7 +1754,7 @@ JWT_SECRET=ci-test-secret pytest tests/ -v
 | `test_db_srs_flashcards.py` | Store flashcards : création (calendrier SM-2 initial), liste/isolation par utilisateur, cartes dues (bornes de date), mise à jour de calendrier, reset | EPIC 20 |
 | `test_srs_flashcards_api.py` | Génération auto depuis une gaffe analysée (evals moteur), aucune flashcard sur partie propre, isolation entre utilisateurs, `POST /{id}/review` (rappel correct avance le calendrier, rappel incorrect réinitialise + révèle la solution), 404 carte inconnue/non-propriétaire, 401 sans JWT | EPIC 20 |
 
-**Couverture backend :** 846 TUs au total, couverture globale **89 %+** ; cœur Stats Avancées + EPIC 1/5.1/US 4.2/EPIC 19 à 92–100 % (`stats_aggregator`, `cadence`, `progress_history`, `models`, `engine`, `cognitive_load`, `srs_flashcards` à 100 %, `analysis_pipeline` 92 %, `routers/games` 92 %, `db_client` 98 %). Les requêtes SQL réelles de `pg_repository` (nécessitant une base) sont marquées `pragma: no cover`.
+**Couverture backend :** 841 TUs au total, couverture globale **89 %+** ; cœur Stats Avancées + EPIC 1/5.1/US 4.2/EPIC 19 à 92–100 % (`stats_aggregator`, `cadence`, `progress_history`, `models`, `engine`, `cognitive_load`, `srs_flashcards` à 100 %, `analysis_pipeline` 92 %, `routers/games` 92 %, `db_client` 98 %). Les requêtes SQL réelles de `pg_repository` (nécessitant une base) sont marquées `pragma: no cover`.
 
 **Architecture de test `test_auth.py` :**
 - App de test minimale (`FastAPI()` + routers auth/sync uniquement) pour éviter la dépendance `python-chess`
@@ -1938,91 +1952,59 @@ UNIQUE (user_id)
 | **Le Cimetière des Erreurs — Flashcards SRS** (EPIC 20, US 20.1/20.2) | `domain/srs_flashcards.py` + `routers/srs_flashcards.py` + `routers/games.py:run_analysis` + `index.html:#flashcards-col`/`#card-flashcards` + `app.js:_showFlashcards/_onFlashcardDrop/_submitFlashcardAttempt` | Chaque gaffe (perte ≥ 200cp) devient automatiquement une flashcard SM-2 ; vue plein écran Rappel Actif (échiquier indépendant, validation 100 % serveur, qualité déduite automatiquement) ; opérationnel et testé (backend + frontend + E2E) |
 | **Sync & analyse de fond à la connexion** (EPIC 23) | `domain/game_sync.py` + `routers/games.py:POST /api/v1/games/sync` + `chess_com_client.get_latest_games` + `api_client.js:syncGames` + `app.js:_startBackgroundSync/_pollSyncStatus` + `index.html:#sync-indicator` | À chaque connexion : 10 dernières parties Chess.com ratissées, ≤ 5 nouvelles analyses de fond (KPI mis à jour en cascade par `run_analysis`), re-enfilage des analyses orphelines, badge discret + polling 15 s côté frontend |
 | **Courbe d'Elo Chess.com réelle** (EPIC 24) | `domain/elo_curve.py` + `routers/games.py:GET /api/v1/stats/elo-curve` + `chess_com_client.get_games_for_months` + `advanced_stats.js:fetchEloCurve/renderEloCurve` + `app.js:_loadEloCurve` + `index.html` (carte ELO CHESS.COM) | Courbe du classement réel par cadence (bullet/blitz/rapid) sur 7/30/90 j, pilotée par les onglets/boutons existants de la vue Stats Avancées, un point par jour joué (dernier rating du jour) |
+| **« Zéro non-câblé » — comptes Postgres, cache livre, qualité SRS, purge** (EPIC 25) | `pg_repository.py` + `db_client.py` + `db.js` + `app.js` + `board_manager.js` + `analysis_feedback.js` + `main.py` | Comptes/settings/Elos/user_data persistés en Postgres (plus jamais de compte perdu au redéploiement), cache IndexedDB du livre ECO (TTL 7 j), quality=3 SM-2, précisions officielles Chess.com, stats tactiques par thème exposées, routes mortes supprimées, backfill endgame_accuracy |
 | **Stabilisation Critique — feedback, fallback, auth, empty states** (EPIC 22, US 22.1-22.4) | `js/analysis_feedback.js` + `app.js` (`_toast` unique, `_showAnalysisAlert`, `_renderModulePlaceholders`, `_emptyStateHtml`) + `index.html:#analysis-alert` + `style.css` + `db_client.py` (fallback anti-404) + `auth.js` (`_apiBase` alignée sur ApiClient) | Une seule alerte d'analyse à la fois (bandeau panneau latéral, plus de toasts empilés) ; exercices toujours servis même si Postgres est cassé/vide ; placeholders des modules synchronisés avec la session (loader pendant `autoConnect`) ; Empty States avec CTA `[Analyser une partie]`/`[Réessayer]` ; pastilles EXERCICE libellées |
 
 
 ### ❌ Non câblé ou incomplet
 
-| Fonctionnalité | Problème | Priorité |
-|---|---|---|
-| **Connexion Supabase réelle pour l'auth** (US 7) | `find_user_by_email`/`create_user`/`get_user_data`/`upsert_user_data` restent en dict in-memory. Seuls `games`/`game_moves`/`user_progress_history` ont un adaptateur Postgres (§10.1) ; les tables `profiles`/`user_data` (US 7) ne sont pas encore migrées. | 🟡 Important |
-| **Cache livre d'ouvertures** | Re-téléchargé à chaque refresh (~5 req. réseau, ~2s de parsing) | 🟡 Important |
-| **Qualité SRS nuancée** | Seul `quality=5` (succès) et `quality=1` (raté) sont utilisés. `quality=3` (correct mais non optimal) n'est jamais émis. | 🟢 Optionnel |
+**Aucun.** Les trois derniers items (connexion Supabase pour l'auth, cache du livre d'ouvertures, qualité SRS nuancée) ont été câblés par l'EPIC 25 (§4.21). Toute nouvelle fonctionnalité incomplète doit être ajoutée ici, jamais laissée silencieuse.
 
 ---
 
 ## 9. Code mort & non câblé
 
-### 9.1 `/analyze`, `/games/{username}`, `/srs/review/full` — backend non utilisé
+**Aucun.** Les deux items historiques ont été résolus par l'EPIC 25 (US 25.4) :
 
-Le frontend appelle Chess.com directement (CORS autorisé). L'analyse Stockfish est côté client. Ces routes backend fonctionnent mais ne sont jamais appelées par le frontend actuel.
-
-> Mise à jour EPIC 23 : `ChessComClient.get_latest_games` n'est PLUS du code mort — il alimente désormais `POST /api/v1/games/sync` (§4.19). Les trois routes ci-dessus restent, elles, inutilisées.
-
-### 9.2 `game.endgame_accuracy` — alimentation différée
-
-Le `PersonalCoach` lit `game.endgame_accuracy` pour évaluer la technique de finale. Ce champ est désormais calculé par `_runEndgameAnalysis()` et sauvegardé dans IndexedDB, mais uniquement pour les parties analysées *après* le câblage de l'EndgameDetector (commit `96e223c`). Les parties déjà sauvegardées avant ce commit auront `endgame_accuracy = undefined` et la règle coach `avgEndgameAcc < 60%` ne se déclenchera pas pour elles.
+- **Routes backend inutilisées** (`POST /analyze`, `GET /games/{username}`, `POST /srs/review`, `POST /srs/review/full`) : **supprimées** — le frontend fait l'analyse Stockfish côté client, appelle Chess.com en direct et gère le SRS localement ; ces routes publiques n'étaient que de la surface d'attaque. Des tests verrouillent leur non-réapparition (404) et le montage intact des routers métier. `ChessComClient.get_latest_games`/`get_games_for_months` sont, eux, bien vivants (sync EPIC 23, courbe d'Elo EPIC 24).
+- **`game.endgame_accuracy` non rétro-alimenté** : rattrapage automatique en tâche de fond (`app.js:_backfillEndgameAccuracy`, max 5 parties/session, best-effort, 4 s après le boot) — la règle coach « précision finale < 60 % » couvre désormais aussi l'historique.
 
 ---
 
 ## 10. Ce qui reste à développer
 
-### 10.1 🟢 Connexion Supabase réelle — en production
+**Plus aucun chantier bloquant ni fonctionnalité incomplète.** Tous les gaps historiques de cette section ont été fermés :
 
-**Fait :** `infrastructure/pg_repository.py` implémente les tables `games`/`game_moves`/`user_progress_history` en PostgreSQL (`psycopg` v3), `db_client` **délègue automatiquement** dès que `DATABASE_URL` est défini, et le backend est **déployé sur Render avec `DATABASE_URL`/`JWT_SECRET` configurés**. Un bug réel (`psycopg.errors.IndeterminateDatatype` sur `get_completed_games`, paramètre `IS NULL` non typé) a été trouvé en production et corrigé (branchement de requête + cast `::uuid` explicite, cf. commit de fix EPIC 1).
+| Ex-item | Résolu par |
+|---|---|
+| 10.1 — users/user_data in-memory (comptes perdus au redéploiement) | EPIC 25, US 25.1 (§4.21) |
+| 10.1 — gap `create_progress_snapshot` à valider en prod | Pattern identique aux requêtes déjà validées ; à surveiller au premier déploiement (aucun code manquant) |
+| 10.2 — cache du livre d'ouvertures | EPIC 25, US 25.2 |
+| 10.3 — qualité SRS nuancée (quality=3) | EPIC 25, US 25.3 |
+| 10.4 — indicateur de chargement du livre | EPIC 25, US 25.2 |
+| 10.5 — précisions Chess.com dans la match-card | EPIC 25, US 25.3 |
+| 10.6 — méthodes Postgres `tactical_problems` manquantes | EPIC 25, US 25.1 (+ fallback seed EPIC 22 en filet) |
+| 10.6 — exposer `GET /tactics/stats` dans l'UI | EPIC 25, US 25.3 (panneau par thème du Coach Tactique) |
 
-**Reste :** (1) migrer aussi `users`/`user_data` (US 7) vers Postgres — encore in-memory (perdu au redémarrage Render) ; (2) ajouter un pool de connexions (actuellement une connexion par requête) ; (3) valider `create_progress_snapshot`/`get_progress_history` (US 5.1) contre l'instance Supabase de prod, par analogie avec le bug déjà corrigé sur `games`.
-
-### 10.1bis 🟢 Chaîne Stats Avancées — bout-à-bout en production
-
-EPIC 1 à 4 et US 5.1 sont implémentés, testés, **déployés** (backend Render Docker + Stockfish natif, frontend Vercel, Supabase). US 4.2 est désormais **complète** (top 3 ouvertures ECO + gauge circulaire tactique). Reste :
-- **Source d'évals** : le frontend ne poste pas encore le PGN + évals de son Stockfish WASM vers `POST /api/v1/games/analyze` (champ `evals`) — Stockfish natif Render (`STOCKFISH_PATH=/usr/games/stockfish`, Docker) est la source active actuellement.
-- **US 4.2 — ECO en prod** : l'extraction ECO ne peuple `topOpenings` que pour les parties analysées **après** ce déploiement (les parties déjà en base ont `eco = NULL`, exclues du classement jusqu'à réanalyse via `game_ids`).
-- **US 5.1 (reste)** : aucune vue de progression n'existe encore pour un utilisateur avec 0 ou 1 seul snapshot (le graphe affiche alors 0 ou 1 point ; pas de message pédagogique intermédiaire entre l'état vide et une vraie courbe).
-
-### 10.2 🟡 IMPORTANT — Cache du livre d'ouvertures
-
-Sauvegarder le `Set` d'EPD dans IndexedDB (`openings_cache`) avec un TTL de 7 jours. Évite 5 requêtes réseau et ~2s de parsing chess.js à chaque refresh.
-
-### 10.3 🟢 OPTIONNEL — Qualité SRS nuancée
-
-Actuellement `quality=5` ou `quality=1`. Ajouter `quality=3` si le joueur joue un coup différent mais que la position reste avantageuse (`evalCp > 0` après le coup joué).
-
-### 10.4 🟢 OPTIONNEL — Indicateur chargement livre d'ouvertures
-
-L'utilisateur ne voit pas que le livre ECO se télécharge (~2s). Ajouter un spinner ou un message dans l'UI pendant ce chargement.
-
-### 10.5 🟢 OPTIONNEL — Précisions Chess.com dans la carte RÉVISION
-
-L'API Chess.com retourne `g.accuracies.white/black`. Les afficher dans les barres de précision de la `.match-card` au lieu de `null` (les barres restent à 0% si Stockfish n'a pas encore analysé la partie).
-
-### 10.6 🟢 EPIC 8 — Coaching Tactique Adaptatif (US 8.1-8.4, backlog complet)
-
-**Fait :** moteur de sélection adaptative + validation serveur (US 8.1), filtre par catégorie + dashboard de sélection (US 8.2), échiquier jouable avec feedback visuel et anti-triche serveur (US 8.3), persistance des tentatives + taux de réussite par thème + série du jour (US 8.4), avec un seed de 15 problèmes vérifiés. L'intégralité du backlog EPIC 8 enregistré dans `UserStory.md` est ✅ Implémenté.
-
-**Reste (idées non bloquantes) :** (1) remplacer/enrichir le seed par un dataset externe plus large (ex. export CSV Lichess Puzzle Database) — non fait dans cet environnement d'exécution faute d'accès réseau vers les sources habituelles (proxy sortant restreint) ; (2) exposer `GET /tactics/stats` dans l'UI (ex. une carte dédiée dans Stats Avancées) — l'endpoint existe et est testé, mais aucune vue ne l'affiche encore graphiquement ; (3) **gap Postgres pré-existant (US 8.1, non corrigé ici, hors scope de cette US)** : `db_client.get_tactical_problem`/`get_next_tactical_problem` délèguent à `PgRepository` si `DATABASE_URL` est défini, mais `PgRepository` n'implémente pas ces deux méthodes (contrairement à `tactical_attempts`, dont la délégation US 8.4 est complète et testée) — à corriger avant toute mise en production avec base réelle pour les tables `tactical_problems`/`profiles.tactical_elo`.
-
-### 10.7 🟢 EPIC 13 — Indépendance des assets (reste)
-
-**Fait :** intégralité de l'audit + rapatriement (§4.11) — zéro dépendance CDN au chargement de l'application.
-
-**Reste (idées non bloquantes) :** (1) build WASM+NNUE de Stockfish auto-hébergé — le fallback asm.js local suffit fonctionnellement (mêmes profondeur/temps minimum, `depth 15`/`movetime 500`) mais un futur build `.wasm` vendorisé restaurerait le gain de performance perdu par la suppression du CDN WASM ; (2) bucket Supabase Storage « assets » pour servir ces fichiers statiques (pièces/polices/librairies) via CDN Supabase plutôt que depuis le dépôt git/Vercel, envisageable si le volume d'assets grossit significativement — non nécessaire à ce stade (poids total < 1 Mo).
-
-### 10.8 🟢 EPIC 12 — Mode Tactical Sprint (reste)
-
-**Fait :** cycle complet start/attempt/finish avec chrono anti-triche serveur, score, mode Ghost (fetch unique, surimpression togglable).
-
-**Reste (idées non bloquantes) :** (1) bonus de score à la vitesse de résolution (`compute_score` est actuellement un simple `problems_solved_count × 10`, sans tenir compte du temps mis par coup — l'info existe déjà dans `moves[].elapsed_ms`, prête à être exploitée) ; (2) durée de sprint configurable (actuellement fixe, `SPRINT_DURATION_SECONDS = 60`) ; (3) un vrai classement/leaderboard (le mode Ghost n'expose que le meilleur score, pas un top N) — la RLS de lecture publique de `tactical_sprints` le permettrait sans migration supplémentaire.
-
-### 10.9 🟢 EPIC 19/20 — Dashboard Cognitif & Cimetière des Erreurs (reste)
-
-**Fait :** EPIC 19 (US 19.1/19.2) et EPIC 20 (US 20.1/20.2) intégralement implémentés, testés (backend + frontend + E2E) et câblés — voir §4.14/§4.15.
-
-**Reste (idées non bloquantes) :** (1) `mutmut run --paths-to-mutate app/domain/cognitive_load.py app/domain/srs_flashcards.py` n'a pas été exécuté formellement dans cette session (l'outil n'est câblé dans aucun pipeline CI existant, cf. §6.2) — la couverture 100 % lignes/branches des deux modules et les tests de cas limites explicites (incrément d'horloge, plancher à zéro, bandes disjointes de qualité de coup) visent le même objectif de robustesse, mais une exécution mutmut réelle donnerait une garantie formelle supplémentaire ; (2) le seuil `PRESSURE_THRESHOLD_CP`/`DECISION_FATIGUE_RATIO` sont des constantes fixes (mêmes ordres de grandeur que le reste du produit) — les rendre configurables par utilisateur (ex. joueurs très défensifs vs très agressifs) serait une piste d'affinage future ; (3) pas de suppression manuelle d'une flashcard (le Cimetière ne propose que la révision, pas le retrait volontaire d'une carte jugée non pertinente) — `DELETE /api/v1/flashcards/{id}` serait le complément naturel, sur le modèle de `DELETE /api/v1/openings/repertoire/{id}` (EPIC 9).
+Les pistes d'amélioration restantes — toutes **optionnelles et non bloquantes** (pool de connexions Postgres, évals du Stockfish navigateur postées vers `/games/analyze`, dataset de puzzles Lichess, build WASM auto-hébergé, bonus vitesse/leaderboard du Sprint, exécution formelle de mutmut, seuils cognitifs configurables, `DELETE /flashcards/{id}`, message pédagogique à 1 snapshot de progression) — sont consignées au **§11 Backlog**, leur place naturelle : rien ici n'attend d'être « câblé ».
 
 ---
 
 ## 11. Backlog & idées futures
+
+### 11.0 Idées reclassées depuis l'ex-§10 (EPIC 25 — aucune n'est un gap de câblage)
+
+- **Pool de connexions Postgres** : `PgRepository` ouvre une connexion par requête (simple et correct) ; `psycopg_pool` serait une optimisation de charge.
+- **Évals du Stockfish navigateur → backend** : `POST /api/v1/games/analyze` accepte déjà `evals` ; le frontend ne les poste pas (le Stockfish natif Render est la source active). Économiserait du CPU serveur.
+- **Dataset de puzzles externe** (Lichess Puzzle Database) pour élargir le seed tactique — voir aussi 11.3.
+- **Build WASM+NNUE auto-hébergé** de Stockfish (le fallback asm.js local reste fonctionnel, même profondeur).
+- **Bucket Supabase Storage** pour les assets statiques si leur volume grossit (< 1 Mo aujourd'hui).
+- **Tactical Sprint** : bonus de score à la vitesse (`moves[].elapsed_ms` déjà persisté), durée configurable, leaderboard top N (RLS déjà compatible).
+- **mutmut** : exécution formelle sur `cognitive_load`/`srs_flashcards` (couverture 100 % lignes/branches déjà en place).
+- **Seuils cognitifs configurables** (`PRESSURE_THRESHOLD_CP`, `DECISION_FATIGUE_RATIO`) par profil de joueur.
+- **`DELETE /api/v1/flashcards/{id}`** : retrait volontaire d'une carte du Cimetière (sur le modèle du répertoire d'ouvertures).
+- **Vue de progression à 0/1 snapshot** : message pédagogique intermédiaire avant la vraie courbe (US 5.1).
+- **Réanalyse ECO des parties antérieures** au déploiement de l'extraction ECO (`eco = NULL` exclues du top ouvertures jusqu'à réanalyse via `game_ids`).
 
 ### 11.1 Analyse multi-parties
 
@@ -2050,9 +2032,9 @@ Cette idée de backlog a été implémentée par le Dashboard de Performance Cog
 - Export rapport en JSON ou PDF
 - Lien vers position spécifique
 
-### 11.7 Comparaison Chess.com
+### 11.7 Comparaison Chess.com — ✅ Partiellement traité par EPIC 25
 
-Récupérer les `accuracies` du JSON Chess.com (`g.accuracies.white/black`) et les afficher à côté de l'estimation locale pour calibration.
+Les `accuracies` officielles Chess.com (`g.accuracies.white/black`) alimentent désormais les barres de précision de la match-card (US 25.3). Reste l'idée d'un affichage CÔTE À CÔTE avec l'estimation Stockfish locale, pour calibration du modèle de précision maison.
 
 ### 11.8 Mode mobile optimisé
 

@@ -1,33 +1,27 @@
 """API FastAPI — Chess Improver.
 
-Routes disponibles :
-  POST /analyze          Analyse géométrique d'un PGN
-  GET  /games/{username} Récupère les dernières parties Chess.com
-  POST /srs/review       Met à jour une carte SRS après révision
+Point d'entrée : monte les routers métier (auth, games, tactics, …) et
+expose ``GET /health``. Le client Chess.com partagé est construit dans le
+lifespan et consommé par ``routers/games.py`` (sync EPIC 23, courbe d'Elo
+EPIC 24).
+
+EPIC 25 (US 25.4) : les routes historiques ``POST /analyze``,
+``GET /games/{username}``, ``POST /srs/review`` et ``POST /srs/review/full``
+— jamais appelées par le frontend (analyse Stockfish côté client, Chess.com
+en direct, SRS en LocalStorage/IndexedDB, cf. ex-§9.1 du README) — ont été
+supprimées : moins de surface d'attaque publique, zéro code mort.
 """
 
 from __future__ import annotations
 
 import logging
 from contextlib import asynccontextmanager
-from typing import Any, AsyncGenerator, Dict, List
+from typing import AsyncGenerator, Dict
 
-import httpx
-from fastapi import FastAPI, HTTPException, Path, Query
+from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import settings
-from app.domain.analyzer import analyze_pgn
-from app.domain.elo_calculator import classify_move, estimate_elo, game_accuracy, move_accuracy
-from app.domain.models import (
-    AnalyzeRequest,
-    Classification,
-    GameAnalysis,
-    MoveEvaluation,
-    ReviewRequest,
-    SRSCard,
-)
-from app.domain.srs_engine import review_card
 from app.infrastructure.chess_com_client import ChessComClient
 from app.routers import auth as auth_router
 from app.routers import endgames as endgames_router
@@ -46,10 +40,6 @@ from app.routers import tactics as tactics_router
 logger = logging.getLogger(__name__)
 
 chess_com_client: ChessComClient | None = None
-
-#: Format des pseudos Chess.com — borne aussi l'entrée utilisateur injectée
-#: dans les URLs de l'API publique (cf. ChessComClient).
-CHESS_USERNAME_PATTERN = r"^[A-Za-z0-9_-]{1,50}$"
 
 
 @asynccontextmanager
@@ -105,79 +95,3 @@ app.include_router(srs_flashcards_router.router)
 @app.get("/health")
 async def health() -> Dict[str, str]:
     return {"status": "ok", "version": settings.app_version}
-
-
-@app.post("/analyze", response_model=GameAnalysis)
-async def analyze(body: AnalyzeRequest) -> GameAnalysis:
-    """Analyse géométrique + estimation Elo d'un PGN.
-
-    Le client envoie le PGN et l'Elo de l'adversaire.
-    Les scores Stockfish individuels sont attendus dans le PGN (commentaires) ou
-    sont laissés à 0 si l'analyse moteur se fait côté navigateur (Web Worker).
-    """
-    opponent_elo = body.opponent_elo or 1000
-
-    # Analyse géométrique (blunders, fourchettes, zeitnot)
-    geo = analyze_pgn(body.pgn, player_color="w")
-
-    # Estimation Elo à partir de la précision globale (sans évaluations moteur,
-    # on utilise un score par défaut de 70 — le client JS enrichit cette valeur).
-    default_accuracy = 70.0
-    elo = estimate_elo(default_accuracy, opponent_elo)
-
-    return GameAnalysis(
-        game_id="local",
-        accuracy=default_accuracy,
-        estimated_elo=elo,
-        moves=[],
-        blunders_count=geo.blunders_count,
-        missed_forks_count=geo.missed_forks_count,
-        time_panic_count=geo.time_panic_count,
-        opponent_elo=opponent_elo,
-    )
-
-
-@app.get("/games/{username}")
-async def get_games(
-    username: str = Path(..., regex=CHESS_USERNAME_PATTERN),
-    limit: int = Query(default=10, ge=1, le=50),
-) -> List[Dict[str, Any]]:
-    """Récupère les dernières parties d'un joueur Chess.com.
-
-    Le pseudo est validé (alphanumériques, ``_``, ``-``) avant d'être injecté
-    dans l'URL de l'API Chess.com. Les erreurs amont ne sont jamais renvoyées
-    telles quelles au client (pas de fuite d'URL/trace interne) : 404 si le
-    joueur est inconnu, 502 générique sinon.
-    """
-    if chess_com_client is None:
-        raise HTTPException(status_code=503, detail="Service not ready")
-    try:
-        games = await chess_com_client.get_latest_games(username, limit=limit)
-    except httpx.HTTPStatusError as exc:
-        if exc.response.status_code == 404:
-            raise HTTPException(status_code=404, detail="Joueur Chess.com introuvable") from exc
-        logger.warning("Chess.com API error for %s: HTTP %s", username, exc.response.status_code)
-        raise HTTPException(status_code=502, detail="Erreur de l'API Chess.com") from exc
-    except Exception as exc:
-        logger.exception("Chess.com API unreachable for %s", username)
-        raise HTTPException(status_code=502, detail="API Chess.com injoignable") from exc
-    return games
-
-
-@app.post("/srs/review", response_model=SRSCard)
-async def srs_review(body: ReviewRequest) -> SRSCard:
-    """Met à jour une carte SRS après révision (algorithme SM-2).
-
-    Le client gère l'état des cartes en LocalStorage et envoie
-    la carte complète pour recalcul côté serveur.
-    """
-    raise HTTPException(
-        status_code=400,
-        detail="Envoyer la carte SRSCard complète dans le corps (voir /docs)",
-    )
-
-
-@app.post("/srs/review/full", response_model=SRSCard)
-async def srs_review_full(card: SRSCard, quality: int = Query(ge=0, le=5)) -> SRSCard:
-    """Version complète : reçoit la carte + la qualité, renvoie la carte mise à jour."""
-    return review_card(card, quality)

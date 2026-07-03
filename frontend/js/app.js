@@ -593,10 +593,25 @@ class ChessImproverApp {
     this._runEndgameAnalysis(analysis);
   }
 
-  _buildOpeningBook() {
+  /**
+   * Construit le Set d'EPD du livre d'ouvertures. US 25.2 (EPIC 25) : le
+   * résultat est mis en cache IndexedDB (TTL 7 jours) — au refresh suivant,
+   * zéro requête réseau et zéro re-parsing chess.js (~2s économisées). Un
+   * indicateur discret (ex-gap §10.4) est affiché pendant le premier
+   * chargement uniquement.
+   */
+  async _buildOpeningBook() {
+    // 1. Cache IndexedDB d'abord (instantané)
+    if (window.ChessDB) {
+      const cached = await ChessDB.getOpeningBook().catch(() => null);
+      if (cached) return new Set(cached);
+    }
+
+    // 2. Premier chargement (ou cache périmé) : fetch + parse, avec indicateur
+    this._setBookLoadingIndicator(true);
     const base = "assets/data/openings/";
     const book = new Set();
-    return Promise.all(["a", "b", "c", "d", "e"].map(async (f) => {
+    await Promise.all(["a", "b", "c", "d", "e"].map(async (f) => {
       try {
         const r = await fetch(`${base}${f}.tsv`);
         if (!r.ok) return;
@@ -612,7 +627,29 @@ class ChessImproverApp {
           }
         }
       } catch { /* réseau indisponible, livre réduit */ }
-    })).then(() => book);
+    }));
+    this._setBookLoadingIndicator(false);
+
+    if (window.ChessDB && book.size) {
+      ChessDB.saveOpeningBook([...book]).catch(() => {});
+    }
+    return book;
+  }
+
+  /** Indicateur discret du chargement du livre ECO (réutilise #sync-indicator
+   * s'il est libre — jamais un toast, règle US 22.1). */
+  _setBookLoadingIndicator(on) {
+    const el = document.getElementById("sync-indicator");
+    if (!el) return;
+    if (on && el.hidden) {
+      el.textContent = "📖 Chargement du livre d'ouvertures…";
+      el.hidden = false;
+      this._bookIndicatorOwned = true;
+    } else if (!on && this._bookIndicatorOwned) {
+      el.hidden = true;
+      el.textContent = "";
+      this._bookIndicatorOwned = false;
+    }
   }
 
   async _detectBookDepth(moves) {
@@ -829,9 +866,14 @@ class ChessImproverApp {
       if (this._currentCard) {
         SRS.saveCard(SRS.review(this._currentCard, q));
       }
+    } else if (q >= 3) {
+      // US 25.3 (EPIC 25) : coup différent de la solution mais position
+      // toujours avantageuse — SM-2 avance (q=3), sans le crédit XP du succès.
+      this._toast(`👌 Pas la solution (${solution}), mais votre coup reste bon !`, "info");
+      if (this._currentCard) SRS.saveCard(SRS.review(this._currentCard, q));
     } else {
       this._toast(`❌ Raté. La solution était ${solution}`, "error");
-      if (this._currentCard) SRS.saveCard(SRS.review(this._currentCard, 1));
+      if (this._currentCard) SRS.saveCard(SRS.review(this._currentCard, q));
     }
   }
 
@@ -1017,6 +1059,34 @@ class ChessImproverApp {
     if (boardLayout)  boardLayout.hidden  = true;
     if (endgamePanel) endgamePanel.hidden = false;
     this._setModePill("Finales");
+  }
+
+  /**
+   * EPIC 25 (US 25.4, ex-gap §9.2) — Rattrapage des parties sauvegardées
+   * AVANT le câblage de l'EndgameDetector : celles sans `endgame_accuracy`
+   * sont ré-analysées en tâche de fond (max 5 par session, une à la fois,
+   * best-effort) pour que la règle coach « précision finale < 60 % » couvre
+   * aussi l'historique. Idempotent : une partie traitée est re-sauvegardée
+   * avec sa valeur (ou sans finale détectée, avec `endgame_accuracy: null`
+   * explicite pour ne plus jamais être re-tentée).
+   */
+  async _backfillEndgameAccuracy() {
+    if (!window.ChessDB || !window.EndgameDetector) return;
+    let games = [];
+    try { games = await ChessDB.getAllGames(); } catch { return; }
+    const pending = games
+      .filter((g) => g.endgame_accuracy === undefined && Array.isArray(g.moves) && g.moves.length)
+      .slice(0, 5);
+    for (const game of pending) {
+      try {
+        const results = await EndgameDetector.analyzeGame(game.moves, game.user_color === "black" ? "b" : "w");
+        game.endgame_accuracy = results.endgameAvgAccuracy ?? null;
+        if (results.syzygyBlunders?.length) game.syzygy_blunders = results.syzygyBlunders.length;
+      } catch {
+        break; // Syzygy indisponible : on réessaiera à une prochaine session
+      }
+      await ChessDB.saveGame(game).catch(() => {});
+    }
   }
 
   async _runEndgameAnalysis(analysis) {
@@ -1495,8 +1565,13 @@ class ChessImproverApp {
 
     const myName  = me?.username  || (myColor === "white" ? "Blancs" : "Noirs");
     const oppName = opp?.username || (myColor === "white" ? "Noirs"  : "Blancs");
-    const myAcc   = me?.accuracy  ?? null;
-    const oppAcc  = opp?.accuracy ?? null;
+    // US 25.5 (EPIC 25, ex-gap §10.5) : l'API Chess.com expose les précisions
+    // officielles au niveau partie (`g.accuracies.white/black`) — utilisées
+    // en priorité, les barres ne restent plus à 0 % avant l'analyse Stockfish.
+    const accs    = last.accuracies || {};
+    const round1  = (v) => (typeof v === "number" ? Math.round(v * 10) / 10 : null);
+    const myAcc   = me?.accuracy  ?? round1(myColor === "white" ? accs.white : accs.black);
+    const oppAcc  = opp?.accuracy ?? round1(myColor === "white" ? accs.black : accs.white);
 
     // Set match card fields
     const el = (id) => document.getElementById(id);
@@ -2002,16 +2077,35 @@ class ChessImproverApp {
     this._loadTacticalProblem(null, this._recurringErrorType);
   }
 
-  /** Initialise le badge Série (🔥) à l'ouverture du Coach Tactique (US 8.4). */
+  /** Initialise le badge Série (🔥) à l'ouverture du Coach Tactique (US 8.4)
+   * et le panneau des taux de réussite par thème (US 25.3, ex-gap §10.6-2). */
   async _loadTacticsStreak() {
     const streakBadge = document.getElementById("tactics-streak-badge");
     if (!streakBadge || !window.ApiClient || !ApiClient.isConfigured() || !window.Auth?.isLoggedIn()) return;
     try {
       const stats = await ApiClient.getTacticsStats();
       streakBadge.textContent = `🔥 ${stats.streak}`;
+      this._renderTacticsStatsPanel(stats.by_theme || []);
     } catch {
       /* badge laissé à sa valeur par défaut si l'appel échoue */
     }
+  }
+
+  /** US 25.3 — Taux de réussite par thème (GET /tactics/stats, enfin exposé). */
+  _renderTacticsStatsPanel(byTheme) {
+    const panel = document.getElementById("tactics-stats-panel");
+    if (!panel) return;
+    if (!byTheme.length) { panel.hidden = true; return; }
+    const labels = { mate_in_1: "Mat en 1", mate_in_2: "Mat en 2", hanging_piece: "Pièces non protégées" };
+    panel.innerHTML = byTheme.map((t) => {
+      const pct = Math.round(t.success_rate * 100);
+      return `<div class="tactics-stat-row">
+        <span class="tactics-stat-label">${labels[t.category] || t.category}</span>
+        <div class="tactics-stat-track"><div class="tactics-stat-fill" style="width:${pct}%"></div></div>
+        <span class="tactics-stat-value">${pct}% <small>(${t.successes}/${t.attempts})</small></span>
+      </div>`;
+    }).join("");
+    panel.hidden = false;
   }
 
   _hideTactics() {
@@ -2965,6 +3059,10 @@ document.addEventListener("DOMContentLoaded", async () => {
     await ChessDB.migrateFromLocalStorage();
   }
   window.app = new ChessImproverApp();
+
+  // EPIC 25 (US 25.4) : rattrapage différé des parties sans endgame_accuracy
+  // — lancé après le boot pour ne jamais retarder le premier rendu.
+  setTimeout(() => window.app._backfillEndgameAccuracy(), 4000);
 
   // US 7 : restaurer la session auth si un token existe.
   // US 22.3 : tant que /auth/me n'a pas répondu, les modules protégés

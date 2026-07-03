@@ -434,3 +434,164 @@ class PgRepository:
             row = cur.fetchone()
             conn.commit()
             return self._iso(dict(row)) if row else None
+
+    # -- EPIC 25 : profils utilisateurs & user_data (US 7, gap §10.1 fermé) ----
+    #
+    # Les comptes vivaient jusqu'ici en mémoire (perdus à chaque redéploiement
+    # Render). Ces méthodes branchent enfin les tables `profiles`/`user_data`
+    # de la migration initiale (init_auth.sql) — mêmes structures de dict que
+    # le store in-memory de db_client, pour une délégation transparente.
+
+    @staticmethod
+    def _user_row(row: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:  # pragma: no cover
+        """Normalise une ligne `profiles` vers le dict user du produit :
+        UUID → str, settings JSONB absent → {}, dates → ISO."""
+        if row is None:
+            return None
+        user = dict(row)
+        user["id"] = str(user["id"])
+        user["settings"] = user.get("settings") or {}
+        return PgRepository._iso(user)
+
+    def create_user(
+        self, email: str, username: str, password_hash: str
+    ) -> Dict[str, Any]:  # pragma: no cover - nécessite une base réelle
+        sql = (
+            "INSERT INTO profiles (email, username, password_hash) "
+            "VALUES (%s, %s, %s) RETURNING *"
+        )
+        with self._connect() as conn, conn.cursor() as cur:
+            cur.execute(sql, (email, username, password_hash))
+            row = dict(cur.fetchone())
+            conn.commit()
+        return self._user_row(row)
+
+    def find_user_by_email(self, email: str) -> Optional[Dict[str, Any]]:  # pragma: no cover
+        with self._connect() as conn, conn.cursor() as cur:
+            cur.execute("SELECT * FROM profiles WHERE LOWER(email) = LOWER(%s)", (email,))
+            row = cur.fetchone()
+        return self._user_row(dict(row) if row else None)
+
+    def find_user_by_username(self, username: str) -> Optional[Dict[str, Any]]:  # pragma: no cover
+        with self._connect() as conn, conn.cursor() as cur:
+            cur.execute("SELECT * FROM profiles WHERE LOWER(username) = LOWER(%s)", (username,))
+            row = cur.fetchone()
+        return self._user_row(dict(row) if row else None)
+
+    def find_user_by_id(self, user_id: str) -> Optional[Dict[str, Any]]:  # pragma: no cover
+        with self._connect() as conn, conn.cursor() as cur:
+            cur.execute("SELECT * FROM profiles WHERE id = %s::uuid", (user_id,))
+            row = cur.fetchone()
+        return self._user_row(dict(row) if row else None)
+
+    def update_chess_username(
+        self, user_id: str, chess_username: Optional[str]
+    ) -> Optional[Dict[str, Any]]:  # pragma: no cover - nécessite une base réelle
+        sql = "UPDATE profiles SET chess_username = %s WHERE id = %s::uuid RETURNING *"
+        with self._connect() as conn, conn.cursor() as cur:
+            cur.execute(sql, (chess_username or None, user_id))
+            row = cur.fetchone()
+            conn.commit()
+        return self._user_row(dict(row) if row else None)
+
+    def update_settings(
+        self, user_id: str, settings: Dict[str, Any]
+    ) -> Optional[Dict[str, Any]]:  # pragma: no cover - nécessite une base réelle
+        import json
+
+        sql = "UPDATE profiles SET settings = %s::jsonb WHERE id = %s::uuid RETURNING *"
+        with self._connect() as conn, conn.cursor() as cur:
+            cur.execute(sql, (json.dumps(dict(settings or {})), user_id))
+            row = cur.fetchone()
+            conn.commit()
+        return self._user_row(dict(row) if row else None)
+
+    def get_user_elo(self, user_id: str, column: str) -> Optional[int]:  # pragma: no cover
+        """Elo tactique ou finales du profil. ``column`` est validé contre une
+        liste blanche (nom de colonne non paramétrable en SQL)."""
+        if column not in ("tactical_elo", "endgame_elo"):
+            raise ValueError(f"Colonne d'Elo inconnue : {column!r}")
+        with self._connect() as conn, conn.cursor() as cur:
+            cur.execute(f"SELECT {column} FROM profiles WHERE id = %s::uuid", (user_id,))
+            row = cur.fetchone()
+        return row[column] if row else None
+
+    def update_user_elo(
+        self, user_id: str, column: str, new_elo: int
+    ) -> Optional[Dict[str, Any]]:  # pragma: no cover - nécessite une base réelle
+        if column not in ("tactical_elo", "endgame_elo"):
+            raise ValueError(f"Colonne d'Elo inconnue : {column!r}")
+        sql = f"UPDATE profiles SET {column} = %s WHERE id = %s::uuid RETURNING *"
+        with self._connect() as conn, conn.cursor() as cur:
+            cur.execute(sql, (new_elo, user_id))
+            row = cur.fetchone()
+            conn.commit()
+        return self._user_row(dict(row) if row else None)
+
+    def get_user_data(self, user_id: str) -> Dict[str, Any]:  # pragma: no cover
+        with self._connect() as conn, conn.cursor() as cur:
+            cur.execute(
+                "SELECT games, srs_cards FROM user_data WHERE user_id = %s::uuid", (user_id,)
+            )
+            row = cur.fetchone()
+        if row is None:
+            return {"games": [], "srs_cards": []}
+        return {"games": row["games"] or [], "srs_cards": row["srs_cards"] or []}
+
+    def save_user_data(
+        self, user_id: str, games: List[Any], srs_cards: List[Any]
+    ) -> Dict[str, Any]:  # pragma: no cover - nécessite une base réelle
+        """Écrit l'état FUSIONNÉ (la fusion « client wins » est faite par
+        db_client._merge_user_data, partagée avec le store in-memory)."""
+        import json
+
+        sql = (
+            "INSERT INTO user_data (user_id, games, srs_cards) "
+            "VALUES (%s::uuid, %s::jsonb, %s::jsonb) "
+            "ON CONFLICT (user_id) DO UPDATE "
+            "SET games = EXCLUDED.games, srs_cards = EXCLUDED.srs_cards "
+            "RETURNING games, srs_cards"
+        )
+        with self._connect() as conn, conn.cursor() as cur:
+            cur.execute(sql, (user_id, json.dumps(games), json.dumps(srs_cards)))
+            row = dict(cur.fetchone())
+            conn.commit()
+        return {"games": row["games"] or [], "srs_cards": row["srs_cards"] or []}
+
+    # -- EPIC 25 : problèmes tactiques (gap US 8.1 / §10.6 fermé) --------------
+
+    def get_tactical_problem(self, problem_id: str) -> Optional[Dict[str, Any]]:  # pragma: no cover
+        with self._connect() as conn, conn.cursor() as cur:
+            cur.execute("SELECT * FROM tactical_problems WHERE id = %s::uuid", (problem_id,))
+            row = cur.fetchone()
+        if row is None:
+            return None
+        row = dict(row)
+        row["id"] = str(row["id"])
+        return self._iso(row)
+
+    def get_next_tactical_problem(
+        self, tactical_elo: int, category: Optional[str] = None
+    ) -> Optional[Dict[str, Any]]:  # pragma: no cover - nécessite une base réelle
+        """Problème le plus proche de l'Elo demandé (US 8.1) — tirage aléatoire
+        parmi les équidistants, comme `domain.tactics.select_nearest_problem`."""
+        if category is not None:
+            sql = (
+                "SELECT * FROM tactical_problems WHERE category = %s "
+                "ORDER BY ABS(difficulty_elo - %s), random() LIMIT 1"
+            )
+            params = (category, tactical_elo)
+        else:
+            sql = (
+                "SELECT * FROM tactical_problems "
+                "ORDER BY ABS(difficulty_elo - %s), random() LIMIT 1"
+            )
+            params = (tactical_elo,)
+        with self._connect() as conn, conn.cursor() as cur:
+            cur.execute(sql, params)
+            row = cur.fetchone()
+        if row is None:
+            return None
+        row = dict(row)
+        row["id"] = str(row["id"])
+        return self._iso(row)

@@ -2035,6 +2035,39 @@ body.flashcards-active #flashcards-col { display: block; }
   gap: var(--space-md);
   margin-bottom: var(--space-md);
 }
+
+/* US 25.3 (EPIC 25) — taux de réussite par thème dans le Coach Tactique */
+.tactics-stats-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: var(--space-md);
+  padding: var(--space-sm) var(--space-md);
+  background: var(--bg-700);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+}
+.tactics-stat-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  font-size: 0.78rem;
+}
+.tactics-stat-label { flex: 0 0 150px; color: var(--text-secondary); }
+.tactics-stat-track {
+  flex: 1;
+  height: 5px;
+  background: var(--bg-500);
+  border-radius: 3px;
+  overflow: hidden;
+}
+.tactics-stat-fill {
+  height: 100%;
+  background: var(--green);
+  border-radius: 3px;
+}
+.tactics-stat-value { flex: 0 0 84px; text-align: right; color: var(--text-primary); }
+.tactics-stat-value small { color: var(--text-muted); }
 .tactics-title {
   font-size: 1.35rem;
   font-weight: 800;

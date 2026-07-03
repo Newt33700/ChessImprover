@@ -128,3 +128,58 @@ test("migrateFromLocalStorage() ne migre pas deux fois", async () => {
   const games = await ChessDB.getAllGames();
   expect(games.length).toBe(0);
 });
+
+// ── Livre d'ouvertures complet (EPIC 25, US 25.2) ──────────────────
+
+describe("Opening book cache (TTL 7 jours)", () => {
+  beforeEach(() => ChessDB._reset());
+
+  test("getOpeningBook renvoie null si aucun cache", async () => {
+    await ChessDB.open();
+    expect(await ChessDB.getOpeningBook()).toBeNull();
+  });
+
+  test("saveOpeningBook puis getOpeningBook restitue les EPD", async () => {
+    await ChessDB.open();
+    await ChessDB.saveOpeningBook(["epd1", "epd2"]);
+    expect(await ChessDB.getOpeningBook()).toEqual(["epd1", "epd2"]);
+  });
+
+  test("saveOpeningBook ignore les listes vides/invalides", async () => {
+    await ChessDB.open();
+    expect(await ChessDB.saveOpeningBook([])).toBeNull();
+    expect(await ChessDB.saveOpeningBook(null)).toBeNull();
+    expect(await ChessDB.getOpeningBook()).toBeNull();
+  });
+
+  test("une entrée périmée (TTL dépassé) est considérée absente", async () => {
+    await ChessDB.open();
+    await ChessDB._put("openings_cache", {
+      epd: "__opening_book__",
+      epds: ["vieux"],
+      savedAt: Date.now() - ChessDB.OPENING_BOOK_TTL_MS - 1000,
+    });
+    expect(await ChessDB.getOpeningBook()).toBeNull();
+  });
+
+  test("isOpeningBookFresh : cas limites", () => {
+    const now = 1000000;
+    const fresh = { epds: ["x"], savedAt: now - 1 };
+    const stale = { epds: ["x"], savedAt: now - ChessDB.OPENING_BOOK_TTL_MS - 1 };
+    expect(ChessDB.isOpeningBookFresh(fresh, now)).toBe(true);
+    expect(ChessDB.isOpeningBookFresh(stale, now)).toBe(false);
+    expect(ChessDB.isOpeningBookFresh(null, now)).toBe(false);
+    expect(ChessDB.isOpeningBookFresh({ epds: [], savedAt: now }, now)).toBe(false);
+    expect(ChessDB.isOpeningBookFresh({ epds: ["x"] }, now)).toBe(false);
+    expect(ChessDB.isOpeningBookFresh({ epds: "pas-un-tableau", savedAt: now }, now)).toBe(false);
+  });
+
+  test("le cache du livre ne pollue pas les entrées ECO individuelles", async () => {
+    await ChessDB.open();
+    await ChessDB.saveOpening("epd-individuelle", { name: "Sicilienne" });
+    await ChessDB.saveOpeningBook(["a", "b"]);
+    const single = await ChessDB.getOpening("epd-individuelle");
+    expect(single.name).toBe("Sicilienne");
+    expect(await ChessDB.getOpeningBook()).toEqual(["a", "b"]);
+  });
+});

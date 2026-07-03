@@ -2,16 +2,15 @@
 
 Couvre :
   - GET /health
-  - GET /games/{username} : validation du pseudo (injection d'URL), mapping
-    des erreurs amont sans fuite de détails internes (str(exc)).
+  - Fail-fast JWT_SECRET (démarrage refusé avec le secret par défaut hors debug)
   - ChessComClient._safe : encodage du pseudo dans les URLs Chess.com.
+  - EPIC 25 (US 25.4) : non-régression de la SUPPRESSION des routes mortes
+    (`/analyze`, `/games/{username}`, `/srs/review`, `/srs/review/full`) —
+    elles ne doivent plus jamais réapparaître (surface d'attaque publique).
 """
 
 from __future__ import annotations
 
-from typing import Any, Dict, List
-
-import httpx
 import pytest
 from fastapi.testclient import TestClient
 
@@ -21,32 +20,6 @@ from app.infrastructure.chess_com_client import ChessComClient
 client = TestClient(main_module.app)
 
 
-class _StubChessComClient:
-    """Doublure du client Chess.com : renvoie des parties ou lève une erreur."""
-
-    def __init__(self, games: List[Dict[str, Any]] | None = None, exc: Exception | None = None):
-        self._games = games or []
-        self._exc = exc
-
-    async def get_latest_games(self, username: str, limit: int = 10):
-        if self._exc is not None:
-            raise self._exc
-        return self._games[:limit]
-
-
-@pytest.fixture
-def stub_client(monkeypatch):
-    def _install(stub: _StubChessComClient) -> None:
-        monkeypatch.setattr(main_module, "chess_com_client", stub)
-    return _install
-
-
-def _http_status_error(status_code: int) -> httpx.HTTPStatusError:
-    request = httpx.Request("GET", "https://api.chess.com/pub/player/x/games/archives")
-    response = httpx.Response(status_code, request=request)
-    return httpx.HTTPStatusError("boom interne", request=request, response=response)
-
-
 class TestHealth:
     def test_health_ok(self):
         r = client.get("/health")
@@ -54,76 +27,27 @@ class TestHealth:
         assert r.json()["status"] == "ok"
 
 
-class TestGetGamesValidation:
-    """Le pseudo est borné à ``[A-Za-z0-9_-]{1,50}`` avant tout appel réseau."""
+class TestDeadRoutesRemoved:
+    """EPIC 25 (US 25.4) — les routes historiques jamais appelées par le
+    frontend ont été retirées : 404 attendu, définitivement."""
 
-    def test_valid_username_returns_games(self, stub_client):
-        stub_client(_StubChessComClient(games=[{"url": "g1"}, {"url": "g2"}]))
-        r = client.get("/games/Magnus_Carlsen-1")
-        assert r.status_code == 200
-        assert len(r.json()) == 2
+    def test_analyze_removed(self):
+        assert client.post("/analyze", json={"pgn": "1. e4"}).status_code == 404
 
-    def test_limit_is_applied(self, stub_client):
-        stub_client(_StubChessComClient(games=[{"url": f"g{i}"} for i in range(10)]))
-        r = client.get("/games/hikaru", params={"limit": 3})
-        assert r.status_code == 200
-        assert len(r.json()) == 3
+    def test_games_by_username_removed(self):
+        assert client.get("/games/hikaru").status_code == 404
 
-    @pytest.mark.parametrize(
-        "username",
-        [
-            "a/b",            # segment de chemin supplémentaire
-            "..",             # traversée
-            "user name",      # espace
-            "a" * 51,         # trop long
-            "p%2Fq",          # encodage détourné
-            "<script>",       # balise
-        ],
-    )
-    def test_invalid_username_rejected_without_network_call(self, username, stub_client):
-        called = []
+    def test_srs_review_removed(self):
+        assert client.post("/srs/review", json={}).status_code == 404
+        assert client.post("/srs/review/full", json={}).status_code == 404
 
-        class _Spy(_StubChessComClient):
-            async def get_latest_games(self, username: str, limit: int = 10):
-                called.append(username)
-                return []
-
-        stub_client(_Spy())
-        r = client.get(f"/games/{username}")
-        assert r.status_code in (404, 422)
-        assert called == []
-
-    def test_limit_out_of_bounds_rejected(self, stub_client):
-        stub_client(_StubChessComClient())
-        assert client.get("/games/hikaru", params={"limit": 0}).status_code == 422
-        assert client.get("/games/hikaru", params={"limit": 51}).status_code == 422
-
-
-class TestGetGamesErrorMapping:
-    """Les erreurs amont ne fuient jamais leur message interne au client."""
-
-    def test_upstream_404_maps_to_404(self, stub_client):
-        stub_client(_StubChessComClient(exc=_http_status_error(404)))
-        r = client.get("/games/inconnu")
-        assert r.status_code == 404
-        assert "introuvable" in r.json()["detail"]
-
-    def test_upstream_500_maps_to_502_without_leaking_details(self, stub_client):
-        stub_client(_StubChessComClient(exc=_http_status_error(500)))
-        r = client.get("/games/hikaru")
-        assert r.status_code == 502
-        assert "boom interne" not in r.json()["detail"]
-
-    def test_network_error_maps_to_502_without_leaking_details(self, stub_client):
-        stub_client(_StubChessComClient(exc=RuntimeError("dsn=postgres://secret@host")))
-        r = client.get("/games/hikaru")
-        assert r.status_code == 502
-        assert "secret" not in r.json()["detail"]
-
-    def test_client_not_ready_returns_503(self, monkeypatch):
-        monkeypatch.setattr(main_module, "chess_com_client", None)
-        r = client.get("/games/hikaru")
-        assert r.status_code == 503
+    def test_business_routers_still_mounted(self):
+        # La purge ne doit pas avoir débranché les routers métier.
+        paths = {route.path for route in main_module.app.routes}
+        assert "/api/v1/games/analyze" in paths
+        assert "/api/v1/games/sync" in paths
+        assert "/api/v1/tactics/next" in paths
+        assert "/auth/login" in paths
 
 
 class TestJwtSecretFailFast:

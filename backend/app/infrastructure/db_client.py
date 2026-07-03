@@ -52,7 +52,16 @@ def _pg():
     return _pg_repo
 
 
+# EPIC 25 (gap §10.1 fermé) : les comptes délèguent à Postgres dès que
+# DATABASE_URL est configuré — SANS fallback in-memory silencieux : un compte
+# qui retomberait en RAM serait re-perdu au prochain redéploiement (le bug
+# exact que cette US corrige). Base indisponible = erreur franche (500).
+
+
 def find_user_by_email(email: str) -> Optional[Dict[str, Any]]:
+    repo = _pg()
+    if repo is not None:  # pragma: no cover - nécessite DATABASE_URL
+        return repo.find_user_by_email(email)
     for user in _users.values():
         if user["email"].lower() == email.lower():
             return user
@@ -60,6 +69,9 @@ def find_user_by_email(email: str) -> Optional[Dict[str, Any]]:
 
 
 def find_user_by_username(username: str) -> Optional[Dict[str, Any]]:
+    repo = _pg()
+    if repo is not None:  # pragma: no cover - nécessite DATABASE_URL
+        return repo.find_user_by_username(username)
     for user in _users.values():
         if user["username"].lower() == username.lower():
             return user
@@ -67,11 +79,17 @@ def find_user_by_username(username: str) -> Optional[Dict[str, Any]]:
 
 
 def find_user_by_id(user_id: str) -> Optional[Dict[str, Any]]:
+    repo = _pg()
+    if repo is not None:  # pragma: no cover - nécessite DATABASE_URL
+        return repo.find_user_by_id(user_id)
     return _users.get(user_id)
 
 
 def update_chess_username(user_id: str, chess_username: Optional[str]) -> Optional[Dict[str, Any]]:
     """US 6.3 — Met à jour (ou délie si None/vide) le pseudo Chess.com du profil."""
+    repo = _pg()
+    if repo is not None:  # pragma: no cover - nécessite DATABASE_URL
+        return repo.update_chess_username(user_id, chess_username)
     user = _users.get(user_id)
     if user is None:
         return None
@@ -80,12 +98,11 @@ def update_chess_username(user_id: str, chess_username: Optional[str]) -> Option
 
 
 def update_settings(user_id: str, settings: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-    """EPIC 18 (US 18.2/18.3) — Remplace les préférences de personnalisation du profil.
-
-    Comme ``update_chess_username``, reste 100% in-memory même si
-    ``DATABASE_URL`` est configuré (les tables ``profiles``/``users`` ne sont
-    pas encore migrées vers Postgres, gap documenté au README §10.1).
-    """
+    """EPIC 18 (US 18.2/18.3) — Remplace les préférences de personnalisation du
+    profil. Persisté en Postgres (`profiles.settings` JSONB) depuis EPIC 25."""
+    repo = _pg()
+    if repo is not None:  # pragma: no cover - nécessite DATABASE_URL
+        return repo.update_settings(user_id, settings)
     user = _users.get(user_id)
     if user is None:
         return None
@@ -94,6 +111,9 @@ def update_settings(user_id: str, settings: Dict[str, Any]) -> Optional[Dict[str
 
 
 def create_user(email: str, username: str, password_hash: str) -> Dict[str, Any]:
+    repo = _pg()
+    if repo is not None:  # pragma: no cover - nécessite DATABASE_URL
+        return repo.create_user(email, username, password_hash)
     user_id = str(uuid.uuid4())
     user = {
         "id": user_id,
@@ -112,6 +132,10 @@ def create_user(email: str, username: str, password_hash: str) -> Dict[str, Any]
 
 def get_tactical_elo(user_id: str) -> int:
     """US 8.1 — Elo tactique de l'utilisateur (1000 par défaut)."""
+    repo = _pg()
+    if repo is not None:  # pragma: no cover - nécessite DATABASE_URL
+        elo = repo.get_user_elo(user_id, "tactical_elo")
+        return elo if elo is not None else DEFAULT_TACTICAL_ELO
     user = _users.get(user_id)
     if user is None:
         return DEFAULT_TACTICAL_ELO
@@ -119,6 +143,9 @@ def get_tactical_elo(user_id: str) -> int:
 
 
 def update_tactical_elo(user_id: str, new_elo: int) -> Optional[Dict[str, Any]]:
+    repo = _pg()
+    if repo is not None:  # pragma: no cover - nécessite DATABASE_URL
+        return repo.update_user_elo(user_id, "tactical_elo", new_elo)
     user = _users.get(user_id)
     if user is None:
         return None
@@ -128,6 +155,10 @@ def update_tactical_elo(user_id: str, new_elo: int) -> Optional[Dict[str, Any]]:
 
 def get_endgame_elo(user_id: str) -> int:
     """EPIC 10 — Elo « finales » de l'utilisateur (1000 par défaut, distinct de l'Elo tactique)."""
+    repo = _pg()
+    if repo is not None:  # pragma: no cover - nécessite DATABASE_URL
+        elo = repo.get_user_elo(user_id, "endgame_elo")
+        return elo if elo is not None else DEFAULT_TACTICAL_ELO
     user = _users.get(user_id)
     if user is None:
         return DEFAULT_TACTICAL_ELO
@@ -135,6 +166,9 @@ def get_endgame_elo(user_id: str) -> int:
 
 
 def update_endgame_elo(user_id: str, new_elo: int) -> Optional[Dict[str, Any]]:
+    repo = _pg()
+    if repo is not None:  # pragma: no cover - nécessite DATABASE_URL
+        return repo.update_user_elo(user_id, "endgame_elo", new_elo)
     user = _users.get(user_id)
     if user is None:
         return None
@@ -143,18 +177,21 @@ def update_endgame_elo(user_id: str, new_elo: int) -> Optional[Dict[str, Any]]:
 
 
 def get_user_data(user_id: str) -> Dict[str, Any]:
+    repo = _pg()
+    if repo is not None:  # pragma: no cover - nécessite DATABASE_URL
+        return repo.get_user_data(user_id)
     return _user_data.get(user_id, {"games": [], "srs_cards": []})
 
 
-def upsert_user_data(user_id: str, games: List[Any], srs_cards: List[Any]) -> Dict[str, Any]:
-    """Client Wins: merge by game_id/card_id, client data overwrites server data."""
-    existing = _user_data.get(user_id, {"games": [], "srs_cards": []})
-
-    # Index existing data by id
+def _merge_user_data(
+    existing: Dict[str, Any], games: List[Any], srs_cards: List[Any]
+) -> Dict[str, Any]:
+    """Fusion « Client Wins » (US 7) : indexée par game_id/card_id, la donnée
+    client écrase la donnée serveur. Partagée entre le store in-memory et la
+    délégation Postgres (EPIC 25) — une seule implémentation de la règle."""
     games_map: Dict[str, Any] = {g["game_id"]: g for g in existing["games"] if "game_id" in g}
     cards_map: Dict[str, Any] = {c["id"]: c for c in existing["srs_cards"] if "id" in c}
 
-    # Client wins: overwrite with client data
     for g in games:
         if "game_id" in g:
             games_map[g["game_id"]] = g
@@ -162,10 +199,21 @@ def upsert_user_data(user_id: str, games: List[Any], srs_cards: List[Any]) -> Di
         if "id" in c:
             cards_map[c["id"]] = c
 
-    merged = {
+    return {
         "games": sorted(games_map.values(), key=lambda x: x.get("date", ""), reverse=True),
         "srs_cards": list(cards_map.values()),
     }
+
+
+def upsert_user_data(user_id: str, games: List[Any], srs_cards: List[Any]) -> Dict[str, Any]:
+    """Client Wins: merge by game_id/card_id, client data overwrites server data."""
+    repo = _pg()
+    if repo is not None:  # pragma: no cover - nécessite DATABASE_URL
+        merged = _merge_user_data(repo.get_user_data(user_id), games, srs_cards)
+        return repo.save_user_data(user_id, merged["games"], merged["srs_cards"])
+    merged = _merge_user_data(
+        _user_data.get(user_id, {"games": [], "srs_cards": []}), games, srs_cards
+    )
     _user_data[user_id] = merged
     return merged
 
