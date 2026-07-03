@@ -60,10 +60,30 @@ class BoardManager {
       onDragStart: (src, piece) => this._onDragStart(src, piece),
       onDrop: (src, tgt) => this._onDrop(src, tgt),
       onSnapEnd: () => this._onSnapEnd(),
-      pieceTheme: "assets/images/pieces/{piece}.svg",
+      pieceTheme: window.ThemeService
+        ? ThemeService.getPieceThemePath()
+        : "assets/images/pieces/{piece}.svg",
     };
     this.board = Chessboard(this.containerId, config);
     window.addEventListener("resize", () => this.board.resize());
+  }
+
+  /**
+   * EPIC 18 (US 18.3) — Reconstruit l'échiquier en place (même position,
+   * même orientation) avec le thème de pièces actuellement sélectionné.
+   * chessboard.js 1.0.0 ne supporte pas de changer `pieceTheme` après
+   * construction — la seule option fiable est de détruire puis recréer le
+   * widget, ce qui reste immédiat (pas de re-fetch réseau, SVG déjà en cache
+   * navigateur).
+   */
+  refreshTheme() {
+    if (!this.board) return;
+    const fen = this.board.fen();
+    const wasFlipped = this.flipped;
+    this.board.destroy();
+    this._initBoard();
+    this.board.position(fen, false);
+    if (wasFlipped) this.board.flip();
   }
 
   _initWorker() {

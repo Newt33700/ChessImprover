@@ -93,11 +93,13 @@ ChessImprover/
 ├── frontend/
 │   ├── index.html                      # SPA — dashboard grille 2 cartes/colonne + page Review plein écran, PGN modal overlay, logo SVG
 │   ├── css/style.css                   # Thème sombre, variables CSS, responsive
-│   ├── serve.py                        # Serveur HTTP dev (python3 serve.py)
+│   ├── serve.py                        # Serveur HTTP dev (python3 serve.py) — bloque si assets pièces manquants (EPIC 18)
 │   ├── package.json                    # Jest, fake-indexeddb, Stryker config
+│   ├── scripts/
+│   │   └── validate_assets.py          # EPIC 18 (US 18.1) : bloque le lancement si un SVG de pièce est manquant
 │   ├── js/
 │   │   ├── app.js                      # Logique principale (~1450 lignes) — point d'entrée
-│   │   ├── board_manager.js            # Échiquier, Worker Stockfish, modes Review/Ghost/Exercice
+│   │   ├── board_manager.js            # Échiquier, Worker Stockfish, modes Review/Ghost/Exercice/Sandbox
 │   │   ├── engine_worker_wasm.js       # Web Worker UCI : asm.js local (EPIC 13, plus de CDN WASM)
 │   │   ├── stockfish.js                # Stockfish.js v10 asm.js (fallback local)
 │   │   ├── db.js                       # IndexedDB wrapper (US 0) — tables: games/srs_cards/openings_cache
@@ -109,13 +111,16 @@ ChessImprover/
 │   │   ├── advanced_stats.js           # Stats Avancées : matrice + deep-dive (US 4.1/4.2)
 │   │   ├── cognitive_dashboard.js      # EPIC 19 : temps de réflexion par phase + fluidité de décision (US 19.1/19.2)
 │   │   ├── coaching_voice.js           # EPIC 14 : alertes tactiques + synthèse vocale (Web Speech API)
+│   │   ├── theme_service.js            # EPIC 18 : thème pièces/plateau (chemins SVG, couleurs, résilience JSONB)
 │   │   ├── api_client.js               # Client HTTP backend (analyze, stats/summary, salvage EPIC 15, cognitive-load/flashcards EPIC 19/20) — EPIC 1
 │   │   └── auth.js                     # Auth JWT frontend (US 7) — chargé dans index.html
 │   ├── assets/                         # Dépendances externes rapatriées localement (EPIC 13, §4.11)
 │   │   ├── js/                         # jquery-3.7.1.min.js, chess-0.10.3.js, chessboard-1.0.0.min.js, chart-4.4.0.umd.js
 │   │   ├── css/                        # chessboard-1.0.0.min.css, fonts.css (Google Fonts vendorisées)
 │   │   ├── fonts/                      # 6 .woff2 (IBM Plex Mono 400/600 + Inter variable, subsets latin/latin-ext)
-│   │   ├── images/pieces/              # 12 SVG cburnett (jeu de pièces, ex-lichess1.org CDN)
+│   │   ├── images/pieces/              # 12 SVG cburnett (ancien emplacement historique, conservé tel quel)
+│   │   ├── pieces/                     # EPIC 18 : jeux de pièces par thème — cburnett/ (copie) + cyber-tactics/ (nouveau, 12 SVG)
+│   │   ├── boards/presets.json         # EPIC 18 : présets de couleurs de plateau (classic/slate/ocean/cyber)
 │   │   └── data/openings/              # a.tsv…e.tsv — référentiel ECO (ex-raw.githubusercontent.com)
 │   └── tests/
 │       ├── setup.js                    # Mocks globaux : IDBFactory, localStorage, Chart, document
@@ -129,6 +134,7 @@ ChessImprover/
 │       ├── advanced_stats.test.js      # Tests AdvancedStats (couleurs, deltas, gauge, détails)
 │       ├── cognitive_dashboard.test.js # EPIC 19 : formatSeconds, insights, fetchReport, render (19 tests)
 │       ├── coaching_voice.test.js      # EPIC 14 : alertFor/bestMoveNarration/beep/speak/préférence localStorage
+│       ├── theme_service.test.js       # EPIC 18 : chemins SVG/couleurs par thème, résilience JSONB invalide
 │       └── api_client.test.js          # Tests ApiClient (base URL, analyze, stats/summary, salvage EPIC 15, cognitive-load/flashcards EPIC 19/20, en-tête Authorization US 6.4)
 │
 ├── backend/
@@ -165,7 +171,7 @@ ChessImprover/
 │       │   └── db_client.py            # Store in-memory + délégation Postgres (EPIC 1 / US 5.1 / US 8.1)
 │       ├── routers/
 │       │   ├── deps.py                 # get_current_user/get_current_user_id (JWT partagé, US 6.4)
-│       │   ├── auth.py                 # POST /auth/signup /auth/login GET+PATCH /auth/me (US 7/6.3)
+│       │   ├── auth.py                 # POST /auth/signup /auth/login GET+PATCH /auth/me (US 7/6.3), PATCH /auth/me/settings (EPIC 18)
 │       │   ├── sync.py                 # POST /sync — stratégie Client Wins (US 7)
 │       │   ├── games.py                # POST /games/analyze, GET /games (US 7.1), POST /games/{id}/salvage (EPIC 15), GET stats/summary, GET stats/history, GET stats/cognitive-load (EPIC 19) (JWT requis, US 6.4)
 │       │   ├── tactics.py              # GET /tactics/next, /tactics/custom (EPIC 11), POST /tactics/attempt (US 8.1)
@@ -173,7 +179,7 @@ ChessImprover/
 │       │   ├── tactical_sprint.py      # EPIC 12 : POST /sprints/start /{id}/attempt /{id}/finish, GET /sprints/ghost
 │       │   └── srs_flashcards.py       # EPIC 20 : GET /flashcards /flashcards/due, POST /flashcards/{id}/review (US 20.1/20.2)
 │       ├── tests/
-│       │   ├── test_auth.py            # 37 TUs auth : hash, JWT, signup, login, me, PATCH me, sync
+│       │   ├── test_auth.py            # 45 TUs auth : hash, JWT, signup, login, me, PATCH me, PATCH me/settings (EPIC 18), sync
 │       │   ├── test_analyzer.py
 │       │   ├── test_elo.py
 │       │   ├── test_phases.py          # US 2.1
@@ -229,6 +235,7 @@ ChessImprover/
 │       ├── 20260702070437_tactical_sprints_epic12.sql # Table tactical_sprints (chrono, moves Ghost, RLS lecture publique) (EPIC 12)
 │       ├── 20260702080000_game_moves_voice_alerts_epic14.sql # Colonnes alert_severity/alert_text/tts_text sur game_moves (EPIC 14)
 │       ├── 20260702090000_games_pivot_epic15.sql # Colonne pivot_move_index sur games (EPIC 15)
+│       ├── 20260702100000_profiles_settings_epic18.sql # Colonne settings (JSONB) sur profiles (EPIC 18)
 │       ├── 20260702120000_game_moves_cognitive_load.sql # Colonnes fen/best_move_san/time_spent_seconds sur game_moves (EPIC 19)
 │       └── 20260702130000_srs_flashcards_epic20.sql # Table srs_flashcards (calendrier SM-2, RLS) (EPIC 20)
 │
@@ -1214,7 +1221,33 @@ Modules **purs** (couche domaine), entièrement testés, indépendants de l'infr
 - Vérifié en intégration réelle (backend local + `curl`) : partie soumise avec une gaffe programmée au 3ᵉ demi-coup → `games.pivot_move_index == 2`, `POST /salvage` renvoie la FEN exacte après « 1. e4 e5 » (position avant la gaffe), `side_to_move: "white"`. Vérifié en navigateur (Playwright + Chromium) : `_startSalvage()` appelle bien `ApiClient.salvageGame` puis `boardMgr.startSandbox(fen, "w")` avec la FEN renvoyée par le backend, et `#btn-salvage` bascule visible/masqué selon `currentGame.serverGameId`.
 - Tests : `backend/tests/test_game_salvage.py` (11 tests : filtre par couleur, seuil exact, PGN invalide, index hors bornes, position de départ/side-to-move), `backend/tests/test_games_api.py` (6 nouveaux tests d'intégration : 200 avec FEN exacte, 401/404/409/404-sans-pivot), `frontend/tests/api_client.test.js` (2 nouveaux tests `salvageGame`).
 
-### 4.16 EPIC 19 — Dashboard de Performance Cognitive (Analyse de la Charge Cognitive)
+### 4.16 EPIC 18 — Système de Personnalisation Visuelle (Theme & Board)
+
+**Fichiers :** `domain/models.py` (`UserSettingsUpdate`, `UserProfile.settings`), `infrastructure/db_client.py` (`update_settings`), `routers/auth.py` (`PATCH /auth/me/settings`), `supabase/migrations/20260702100000_profiles_settings_epic18.sql`, `js/theme_service.js`, `js/board_manager.js` (`refreshTheme`), `js/app.js` (`_openThemeModal`/`_saveThemeSettings`/`_applyServerTheme`), `index.html` (`#theme-modal`, `#btn-open-theme`), `assets/pieces/{cburnett,cyber-tactics}/`, `assets/boards/presets.json`, `scripts/validate_assets.py`, `serve.py`
+
+> **Contexte :** backlog fourni par l'utilisateur (moodboard « Cyber-Tactics » UI Kit + tutoriel CSS glow fourni en exemple). Numérotation EPIC 18 conservée (pas de collision avec les EPIC déjà enregistrés dans ce dépôt).
+
+**US 18.1 — Gestionnaire d'Assets Locaux (Theme Manager) :**
+- `js/theme_service.js` résout le chemin d'un jeu de pièces via `getPieceThemePath(themeName)` → `assets/pieces/{theme}/{piece}.svg` (le `{piece}` reste un template résolu par chessboard.js lui-même, comme l'ancien `pieceTheme` codé en dur avant cet EPIC). Un thème inconnu/de mauvais type retombe **toujours** silencieusement sur `cburnett` (`_sanitizeThemeName`), jamais d'exception.
+- Deux thèmes livrés : `cburnett` (copie exacte de l'ancien `assets/images/pieces/`, qui reste également en place, inchangé, pour ne rien casser d'existant) et **`cyber-tactics`** (nouveau jeu de 12 SVG angulaires générés — traits épais `#2D3748`, remplissage contrasté clair/slate, accents bleu néon `#3867D6` sur les détails distinctifs de chaque pièce).
+- **Effet néon** (US inspirée du tutoriel CSS fourni) : plutôt que de coder la lueur dans le SVG, une classe `body.theme-cyber-tactics` (posée par `ThemeService.applySettings`) cible `.piece-417db` (classe interne de chessboard.js pour les `<img>` de pièces) avec un `filter: drop-shadow(...)` — fonctionne identiquement sur un `<img src="*.svg">` ou un `<svg>` inline, donc applicable sans changer le mode de rendu des pièces de chessboard.js.
+- `scripts/validate_assets.py` (US 18.1, astuce PO) : vérifie que les 12 SVG existent pour chaque thème déclaré ; `serve.py` l'exécute et refuse de démarrer (`sys.exit(1)`) si un fichier manque, pour ne jamais découvrir un 404 de pièce après coup. N'affecte pas la suite E2E Playwright, qui démarre le frontend via `python3 -m http.server` directement (pas `serve.py`).
+
+**US 18.2 — Paramétrage du Plateau (Board Settings) :**
+- Modale `#theme-modal` (bouton `🎨` toujours visible dans l'en-tête, y compris déconnecté) : sélecteur de jeu de pièces + sélecteur de couleurs de plateau (4 présets `ThemeService` : `classic`/`slate`/`ocean`/`cyber`, dupliqués — volontairement, pour rester synchrones à l'exécution sans dépendre d'un fetch réseau — depuis `assets/boards/presets.json`, la référence documentée).
+- Couleurs de plateau appliquées en **variables CSS** (`--board-square-light`/`--board-square-dark`), lues par une règle ajoutée dans `style.css` ciblant les classes chessboard.js `.white-1e1d7`/`.black-3c85d` — chargée après `chessboard-1.0.0.min.css` pour gagner la cascade sans toucher au fichier vendorisé.
+- Persistance serveur : `profiles.settings` (JSONB, colonne unique et **permissive** — `UserSettingsUpdate.settings: Dict[str, Any]`, aucun schéma de clés figé) via `PATCH /auth/me/settings` (JWT requis, restreint au profil de l'utilisateur authentifié, sémantique **remplacement** et non fusion — le frontend envoie toujours l'objet `settings` complet qu'il maintient déjà en mémoire). Modularité explicitement visée par le PO : ajouter un futur réglage (son, animation, taille d'échiquier) ne nécessite ni nouvelle migration ni nouveau endpoint, juste une nouvelle clé dans l'objet.
+
+**US 18.3 — Persistance des préférences (anti-flash) :**
+- Au tout début du constructeur de `ChessImproverApp` (avant `_initBoard()`, qui lit `ThemeService.getPieceThemePath()` à la construction du premier échiquier), `ThemeService.applySettings(ThemeService.loadLocalCache())` applique l'instantané `localStorage` — le thème correct s'affiche dès le premier échiquier rendu, sans attendre la résolution réseau de `Auth.autoConnect()`.
+- Une fois la session serveur résolue (`_onAuthSuccess`, appelé après connexion/inscription **et** après restauration de session silencieuse), `_applyServerTheme(user)` applique les préférences réelles du profil, rafraîchit le cache local, et **reconstruit l'échiquier actuellement affiché** (`BoardManager.refreshTheme()` — chessboard.js 1.0.0 ne permet pas de changer `pieceTheme` après construction, donc `destroy()` + reconstruction à la même position/orientation, sans re-fetch réseau puisque les SVG sont déjà en cache navigateur).
+- **Résilience explicitement exigée par le PO** (« une valeur invalide dans le JSONB ne fait pas planter l'échiquier ») : testée à chaque étage — `getPieceThemePath`/`getBoardColors` avec une valeur non-string/inconnue, `applySettings` avec `settings` `null`/`undefined`/de mauvais type, `loadLocalCache` avec du JSON corrompu en `localStorage`, et même `applySettings` appelé alors que `document.documentElement`/`document.body` sont indisponibles — dans tous les cas, repli silencieux sur les valeurs par défaut, aucune exception.
+
+- Vérifié en intégration réelle (backend local + `curl`) : `settings` vide par défaut à l'inscription, `PATCH /auth/me/settings` remplace et persiste (relu par `GET /auth/me`), 422 si `settings` n'est pas un objet JSON.
+- Vérifié en navigateur (Playwright + Chromium) : bascule vers `cyber-tactics`/`cyber` → pièces réellement chargées depuis `assets/pieces/cyber-tactics/*.svg` avec la lueur néon visible, variables CSS `--board-square-light`/`--board-square-dark` correctement positionnées, thème toujours actif après un rechargement complet de page (cache local anti-flash confirmé). Capture d'écran à l'appui.
+- Tests : `backend/tests/test_auth.py` (classe `TestUpdateSettings`, 8 tests : succès, persistance, remplacement plutôt que fusion, clés arbitraires acceptées, 422 sur valeur non-objet, 401 sans token, isolation entre utilisateurs, défaut `{}` à l'inscription), `frontend/tests/theme_service.test.js` (21 tests : chemins/couleurs par thème incluant repli sur défaut et état courant sans argument, cache local avec JSON corrompu, `applySettings` résilient à toute entrée invalide), `frontend/tests/auth.test.js` (3 nouveaux tests `updateSettings`).
+
+### 4.17 EPIC 19 — Dashboard de Performance Cognitive (Analyse de la Charge Cognitive)
 
 **Fichiers :** `domain/cognitive_load.py`, `domain/cadence.py` (`parse_increment`), `domain/analyzer.py` (`read_mainline_clocks`, rendue publique), `domain/analysis_pipeline.py` (`fen`/`best_move_san`/`time_spent_seconds`), `routers/games.py` (route `/stats/cognitive-load`), `supabase/migrations/20260702120000_game_moves_cognitive_load.sql`, `js/cognitive_dashboard.js`, `js/api_client.js`, `index.html` (carte « CHARGE COGNITIVE »)
 
@@ -1239,7 +1272,7 @@ Modules **purs** (couche domaine), entièrement testés, indépendants de l'infr
 - Vérifié en navigateur (Playwright + Chromium) : `frontend/tests/e2e/cognitive_flashcards.spec.js` — partie avec gaffe + horloges analysée via l'API réelle → insight visible dans la carte Charge Cognitive.
 - Tests : `backend/tests/test_cadence.py` (`parse_increment`, 7 tests), `backend/tests/test_cognitive_load.py` (35 tests), `backend/tests/test_analysis_pipeline.py` (fen/best_move_san/time_spent_seconds), `backend/tests/test_games_api.py::TestStatsCognitiveLoad` (6 tests d'intégration), `frontend/tests/cognitive_dashboard.test.js` (19 tests, 87 % lignes/branches — ajouté à `collectCoverageFrom`).
 
-### 4.17 EPIC 20 — Bibliothèque de Mémoire Tactique (Flashcards SRS auto-générées)
+### 4.18 EPIC 20 — Bibliothèque de Mémoire Tactique (Flashcards SRS auto-générées)
 
 **Fichiers :** `domain/srs_flashcards.py`, `domain/opening_repertoire.py` (`infer_quality`, réutilisée), `domain/tactics.py` (`is_correct_move`, réutilisée), `routers/srs_flashcards.py`, `routers/games.py` (câblage worker), `infrastructure/db_client.py` + `pg_repository.py`, `supabase/migrations/20260702130000_srs_flashcards_epic20.sql`, `js/api_client.js`, `js/app.js` (`#flashcards-col`), `index.html`
 
@@ -1468,7 +1501,23 @@ position de sauvetage = position AVANT que moves[pivot] ne soit joué
                          (rejoue le PGN jusqu'à l'index pivot exclu)
 ```
 
-### 5.19 Charge Cognitive — temps de réflexion, pression, fluidité (EPIC 19)
+### 5.19 Résolution de thème (EPIC 18)
+
+```
+getPieceThemePath(theme?) :
+  theme_demandé = theme si fourni, sinon dernier thème appliqué (état interne), sinon "cburnett"
+  theme_final   = theme_demandé si ∈ {"cburnett","cyber-tactics"}, sinon "cburnett"
+  → "assets/pieces/{theme_final}/{piece}.svg"   ({piece} résolu par chessboard.js)
+
+getBoardColors(theme?) : même logique de repli, thèmes valides {classic,slate,ocean,cyber},
+                          défaut "classic" → {light, dark} (jamais de valeur invalide renvoyée)
+
+applySettings(settings) : ne lève JAMAIS d'exception, quelle que soit la forme de `settings`
+  (null/undefined/non-objet/valeurs de thème de mauvais type) — repli sur les valeurs par
+  défaut à chaque étage plutôt que de propager une erreur jusqu'à l'échiquier.
+```
+
+### 5.20 Charge Cognitive — temps de réflexion, pression, fluidité (EPIC 19)
 
 ```
 temps_de_réflexion(coup) = horloge_avant_même_camp − horloge_après + incrément_cadence
@@ -1483,7 +1532,7 @@ qualité_coup : TOP3 si cpl ≤ 50 cp ; WEAK si cpl ≥ 100 cp ; sinon non class
 fatigue_décisionnelle ⟺ temps_moyen(WEAK) > temps_moyen(TOP3) × 1.3
 ```
 
-### 5.20 Extraction de flashcards depuis les gaffes (EPIC 20, US 20.1)
+### 5.21 Extraction de flashcards depuis les gaffes (EPIC 20, US 20.1)
 
 ```
 gaffe exploitable ⟺ cpl ≥ 200  ET  fen connu  ET  best_move_san connu  ET  best_move_san ≠ move_san
@@ -1528,8 +1577,9 @@ npm run test:mutation # Stryker
 | `advanced_stats.test.js` | AdvancedStats | cellClass, deltas, deepDiveFor, gaugeAngle, matrixRows, `categoryDetailHtml` (tactics/endgames/openings/strategy), `tacticSuccessGaugeHtml` (bornes, clamp, NaN-safe), fetchSummary (fallbacks), `formatShortDate`, `buildProgressDatasets`, `toggleProgressSeries`, `fetchHistory` (fallbacks) |
 | `cognitive_dashboard.test.js` (EPIC 19) | CognitiveDashboard | formatSeconds, buildPhaseChartData, buildInsightMessages (phase dominante, pression, fatigue décisionnelle), fetchReport (fallbacks), renderHTML, render |
 | `api_client.test.js` | ApiClient | baseUrl/isConfigured (window/localStorage), url (query), analyzeGame (POST + erreur), getStatsSummary, getGame, getStatsHistory, **en-tête `Authorization: Bearer` présent/absent selon `Auth.getToken()` (US 6.4)**, **getGames (US 7.1)**, **updateGameStatus (US 7.3)**, **getNextTacticalProblem + régression bug `?` orphelin (US 8.2)**, **submitTacticalAttempt + time_taken, getTacticsStats (US 8.3/8.4)**, **createOpeningLine/getOpeningLines/getDueOpeningLines/reviewOpeningLine/deleteOpeningLine (EPIC 9)**, **getNextEndgameProblem/submitEndgameAttempt (EPIC 10)**, **salvageGame (EPIC 15)**, **getCognitiveLoad (EPIC 19)**, **getFlashcards/getDueFlashcards/reviewFlashcard (EPIC 20)** |
-| `auth.test.js` (US 6.1/6.3) | Auth | signup/login (succès, `detail` chaîne, `detail` liste Pydantic 422 — un ou plusieurs champs, absence de `detail`), `updateChessUsername` (sans token, succès + PATCH + persistance session, format invalide), isLoggedIn/logout |
+| `auth.test.js` (US 6.1/6.3) | Auth | signup/login (succès, `detail` chaîne, `detail` liste Pydantic 422 — un ou plusieurs champs, absence de `detail`), `updateChessUsername` (sans token, succès + PATCH + persistance session, format invalide), **`updateSettings` (EPIC 18 : sans token, succès + persistance session, settings absent → objet vide)**, isLoggedIn/logout |
 | `coaching_voice.test.js` (EPIC 14) | CoachingVoice | `isSupported`, `setEnabled`/`isEnabled`/`loadPreference` (persistance localStorage), `alertFor` (blunder/mistake/aucune alerte, coup absent), `bestMoveNarration`, `beep` (no-op sans AudioContext, fréquence par gravité), `speak` (no-op désactivé/non supporté, appel réel `speechSynthesis`) |
+| `theme_service.test.js` (EPIC 18) | ThemeService | `getPieceThemePath`/`getBoardColors` (thème valide/invalide/absent/état courant sans argument), `listPieceThemes`/`listBoardThemes`, `saveLocalCache`/`loadLocalCache` (JSON corrompu, valeur non-objet), `applySettings` (variables CSS, classe `<body>`, résilience totale : `null`/`undefined`/valeurs de mauvais type/`document` indisponible) |
 
 > `advanced_stats.js` n'est pas dans `collectCoverageFrom` (comme `app.js`, `auth.js`, `board_manager.js`) : seules ses fonctions pures sont testées, les `render*` sont de la glue DOM. `cognitive_dashboard.js` y a été ajouté (EPIC 19, 87 % lignes/branches).
 
@@ -1552,7 +1602,7 @@ JWT_SECRET=ci-test-secret pytest tests/ -v
 
 | Fichier | Classes | TUs |
 |---|---|---|
-| `test_auth.py` | TestPasswordHashing (5), TestJWT (4), TestSignup (4+3 US 6.1+2 US 6.2), TestLogin (4), TestMe (3+1 US 6.2), TestUpdateMe (7, US 6.3), TestSync (4) | **37 TUs** |
+| `test_auth.py` | TestPasswordHashing (5), TestJWT (4), TestSignup (4+3 US 6.1+2 US 6.2), TestLogin (4), TestMe (3+1 US 6.2), TestUpdateMe (7, US 6.3), TestUpdateSettings (8, EPIC 18), TestSync (4) | **45 TUs** |
 | `test_analyzer.py` | — | Analyse géométrique |
 | `test_elo.py` | — | Formules Elo/précision backend |
 | `test_phases.py` | Constantes, Material, IsEndgame, OpeningEndPly, SegmentPhases, SegmentPgn | US 2.1 |
@@ -1590,7 +1640,7 @@ JWT_SECRET=ci-test-secret pytest tests/ -v
 | `test_db_srs_flashcards.py` | Store flashcards : création (calendrier SM-2 initial), liste/isolation par utilisateur, cartes dues (bornes de date), mise à jour de calendrier, reset | EPIC 20 |
 | `test_srs_flashcards_api.py` | Génération auto depuis une gaffe analysée (evals moteur), aucune flashcard sur partie propre, isolation entre utilisateurs, `POST /{id}/review` (rappel correct avance le calendrier, rappel incorrect réinitialise + révèle la solution), 404 carte inconnue/non-propriétaire, 401 sans JWT | EPIC 20 |
 
-**Couverture backend :** 749 TUs au total, couverture globale **89 %+** ; cœur Stats Avancées + EPIC 1/5.1/US 4.2/EPIC 19 à 92–100 % (`stats_aggregator`, `cadence`, `progress_history`, `models`, `engine`, `cognitive_load`, `srs_flashcards` à 100 %, `analysis_pipeline` 92 %, `routers/games` 92 %, `db_client` 98 %). Les requêtes SQL réelles de `pg_repository` (nécessitant une base) sont marquées `pragma: no cover`.
+**Couverture backend :** 757 TUs au total, couverture globale **89 %+** ; cœur Stats Avancées + EPIC 1/5.1/US 4.2/EPIC 19 à 92–100 % (`stats_aggregator`, `cadence`, `progress_history`, `models`, `engine`, `cognitive_load`, `srs_flashcards` à 100 %, `analysis_pipeline` 92 %, `routers/games` 92 %, `db_client` 98 %). Les requêtes SQL réelles de `pg_repository` (nécessitant une base) sont marquées `pragma: no cover`.
 
 **Architecture de test `test_auth.py` :**
 - App de test minimale (`FastAPI()` + routers auth/sync uniquement) pour éviter la dépendance `python-chess`
@@ -1783,6 +1833,7 @@ UNIQUE (user_id)
 | **Mode Tactical Sprint** (EPIC 12, US 11.1/11.2) | `domain/tactical_sprint.py` + `routers/tactical_sprint.py` + `index.html:#sprint-col` + `app.js:_startSprint/_onSprintDrop/_submitSprintAttempt/_endSprint/_renderGhostOverlay` | Carte SPRINT → vue plein écran, sprint 60s chronométré côté serveur (anti-triche), score/compteur en direct, mode Ghost (fetch unique, surimpression togglable), opérationnel et testé |
 | **Coach Vocal — alertes tactiques + TTS** (EPIC 14, US 14.1/14.2) | `domain/coaching_voice.py` + `analysis_pipeline.py` + `js/coaching_voice.js` + `app.js:_onMoveAccuracy` + `index.html:#btn-voice-coach` | Alerte contextuelle (pièce en prise nommée, ou message générique) sur chaque gaffe/erreur du mode Review, signal sonore `AudioContext`, narration du meilleur coup via `speechSynthesis` (opt-in, 100 % local) |
 | **Réparation de Partie — Game-Salvage** (EPIC 15, US 15.1/15.2) | `domain/game_salvage.py` + `routers/games.py:run_analysis`/`POST /games/{id}/salvage` + `board_manager.js` (mode `sandbox`) + `app.js:_startSalvage` + `index.html:#btn-salvage` | Pivot de défaite détecté et persisté (`games.pivot_move_index`) après chaque analyse ; bouton « Sauver la partie » recharge la position juste avant la gaffe et lance un mode Sandbox où le joueur affronte librement le moteur Stockfish déjà embarqué |
+| **Personnalisation Visuelle — Thème & Plateau** (EPIC 18, US 18.1/18.2/18.3) | `js/theme_service.js` + `PATCH /auth/me/settings` + `profiles.settings` (JSONB) + `board_manager.js:refreshTheme` + `index.html:#theme-modal`/`#btn-open-theme` + `assets/pieces/{cburnett,cyber-tactics}/` + `scripts/validate_assets.py` | Jeu de pièces (Cburnett/Cyber-Tactics avec lueur néon) + couleurs de plateau (4 présets) sélectionnables via modale, persistés serveur + cache local anti-flash, résilients à toute valeur invalide ; script bloquant le lancement de `serve.py` si un SVG de pièce manque |
 | **Dashboard de Performance Cognitive** (EPIC 19, US 19.1/19.2) | `domain/cognitive_load.py` + `routers/games.py:/stats/cognitive-load` + `js/cognitive_dashboard.js` + `index.html:#cog-dashboard-container` + `app.js:_loadAdvStats` | Carte CHARGE COGNITIVE de la vue Stats Avancées : temps de réflexion par phase/pression (graphe barre) + fluidité de décision (alerte fatigue décisionnelle), opérationnel et testé (backend + frontend + E2E) |
 | **Le Cimetière des Erreurs — Flashcards SRS** (EPIC 20, US 20.1/20.2) | `domain/srs_flashcards.py` + `routers/srs_flashcards.py` + `routers/games.py:run_analysis` + `index.html:#flashcards-col`/`#card-flashcards` + `app.js:_showFlashcards/_onFlashcardDrop/_submitFlashcardAttempt` | Chaque gaffe (perte ≥ 200cp) devient automatiquement une flashcard SM-2 ; vue plein écran Rappel Actif (échiquier indépendant, validation 100 % serveur, qualité déduite automatiquement) ; opérationnel et testé (backend + frontend + E2E) |
 
@@ -1917,6 +1968,13 @@ Identifier les ouvertures jouées le plus souvent, montrer leurs performances pa
 > - **Difficulté du Sandbox** (EPIC 15) : le moteur répond toujours à profondeur/temps fixes (`depth 15 movetime 500`, identiques à l'analyse) — pas de niveau de difficulté réglable (ex. profondeur réduite pour un adversaire plus faible que le joueur ne l'affrontait en partie réelle).
 > - **Narration TTS enrichie** (EPIC 14) : la synthèse vocale actuelle lit un texte fixe par gravité + le meilleur coup (SAN) ; une narration plus « coach » (expliquer *pourquoi* le coup est mauvais — fourchette, clouage, finale perdue — pas seulement *qu'*il l'est) demanderait de réutiliser la détection de motifs tactiques (`analyzer.find_fork_moves`, EPIC 11) en plus de la pièce en prise déjà couverte.
 > - **Persistance des sessions de Sandbox** : contrairement à `tactical_attempts` (EPIC 8), les coups joués en mode Sandbox (Game-Salvage) ne sont pour l'instant pas journalisés côté serveur — aucune statistique de progrès n'est encore tirée du taux de réussite à « sauver » une position (idée : table dédiée `salvage_attempts`, distincte de `tactical_attempts` qui référence des `tactical_problems` curés plutôt que des positions de parties réelles).
+
+### 11.12 Personnalisation Visuelle — pistes d'approfondissement
+
+> **✅ Implémenté (EPIC 18, §4.16).** **Reste pour aller plus loin :**
+> - **Plus de thèmes** : l'architecture (`PIECE_THEMES`/`BOARD_THEMES` dans `theme_service.js` + `validate_assets.py`) est conçue pour qu'ajouter un thème se limite à déposer un nouveau dossier `assets/pieces/{nom}/` (12 SVG) et une entrée dans ces deux listes — aucun thème additionnel livré ce soir au-delà de `cburnett`/`cyber-tactics`.
+> - **Réglages non visuels** : la colonne `profiles.settings` (JSONB libre) est prête à accueillir des préférences sonores (activer/désactiver les sons de coup), d'animation, ou de taille d'échiquier sans nouvelle migration — non implémentés ce soir, hors du périmètre strict « Theme & Board » de l'US.
+> - **Effet néon configurable** : la lueur `body.theme-cyber-tactics` est actuellement une propriété du thème de pièces (tout ou rien) plutôt qu'un réglage indépendant — un curseur d'intensité ou une désactivation séparée de la lueur serait une évolution naturelle.
 
 ---
 

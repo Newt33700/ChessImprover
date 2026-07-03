@@ -77,6 +77,33 @@
   </div>
 </div>
 
+<!-- ══════════════════ THEME MODAL (EPIC 18) ══════════════════ -->
+<div id="theme-modal" class="auth-overlay" hidden aria-modal="true" role="dialog" aria-label="Thème & Plateau">
+  <div class="auth-card card">
+    <button class="auth-close btn-icon" aria-label="Fermer" onclick="window.app?._closeThemeModal()">✕</button>
+    <h2 class="auth-title">🎨 Thème & Plateau</h2>
+    <form id="theme-form" class="auth-form" onsubmit="window.app?._saveThemeSettings(event)">
+      <div class="form-group">
+        <label class="form-label" for="theme-piece-select">Jeu de pièces</label>
+        <select id="theme-piece-select" class="text-input">
+          <option value="cburnett">Cburnett (classique)</option>
+          <option value="cyber-tactics">Cyber-Tactics</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <label class="form-label" for="theme-board-select">Couleurs du plateau</label>
+        <select id="theme-board-select" class="text-input">
+          <option value="classic">Classique (bois)</option>
+          <option value="slate">Slate (gris/blanc)</option>
+          <option value="ocean">Océan (bleu)</option>
+          <option value="cyber">Cyber (slate/cyan)</option>
+        </select>
+      </div>
+      <button type="submit" class="btn btn--primary btn--full">Appliquer</button>
+    </form>
+  </div>
+</div>
+
 <!-- ══════════════════ PGN MODAL ══════════════════ -->
 <div id="pgn-modal" class="pgn-modal-overlay" hidden aria-modal="true" role="dialog" aria-label="Analyser un PGN">
   <div class="pgn-modal-card card">
@@ -129,6 +156,7 @@
     </div>
   </div>
 
+  <button id="btn-open-theme" class="btn-icon" aria-label="Personnaliser le thème" title="Thème & Plateau" onclick="window.app?._openThemeModal()">🎨</button>
   <div id="current-user"></div>
 </header>
 
@@ -822,6 +850,7 @@
 <script src="assets/js/chessboard-1.0.0.min.js"></script>
 <script src="assets/js/chart-4.4.0.umd.js"></script>
 <script src="js/db.js"></script>
+<script src="js/theme_service.js"></script>
 <script src="js/board_manager.js"></script>
 <script src="js/coaching_voice.js"></script>
 <script src="js/wp_chart.js"></script>

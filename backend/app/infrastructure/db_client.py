@@ -79,6 +79,20 @@ def update_chess_username(user_id: str, chess_username: Optional[str]) -> Option
     return user
 
 
+def update_settings(user_id: str, settings: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """EPIC 18 (US 18.2/18.3) — Remplace les préférences de personnalisation du profil.
+
+    Comme ``update_chess_username``, reste 100% in-memory même si
+    ``DATABASE_URL`` est configuré (les tables ``profiles``/``users`` ne sont
+    pas encore migrées vers Postgres, gap documenté au README §10.1).
+    """
+    user = _users.get(user_id)
+    if user is None:
+        return None
+    user["settings"] = dict(settings or {})
+    return user
+
+
 def create_user(email: str, username: str, password_hash: str) -> Dict[str, Any]:
     user_id = str(uuid.uuid4())
     user = {
@@ -87,6 +101,7 @@ def create_user(email: str, username: str, password_hash: str) -> Dict[str, Any]
         "username": username,
         "password_hash": password_hash,
         "chess_username": None,
+        "settings": {},
         "tactical_elo": DEFAULT_TACTICAL_ELO,
         "endgame_elo": DEFAULT_TACTICAL_ELO,
     }
