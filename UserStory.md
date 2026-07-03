@@ -1004,3 +1004,37 @@ En tant qu'équipe, nous voulons que chaque modification de `supabase/migrations
 - Tests : `advanced_stats.test.js` (7 nouveaux TUs) + `api_client.test.js` (3 nouveaux TUs).
 
 **Validation EPIC 24 :** backend 846/846 pytest (20 nouveaux), frontend 337/337 Jest (10 nouveaux), couverture ≥ 80 % maintenue.
+
+## EPIC 25 : « Zéro Non-Câblé » — Persistance des Comptes & Fermeture de Tous les Gaps
+
+**Contexte :** bug utilisateur réel (compte `fabdek@wanadoo.fr` créé puis impossible à reconnecter) diagnostiqué comme LE gap §10.1 : les comptes vivaient en mémoire du backend, effacés à chaque redéploiement/veille Render — trois merges dans la journée = trois purges. Directive PO : « câble tout, je ne veux plus rien dans la todo/non câblé ».
+
+### US 25.1 : Persistance Postgres des comptes (+ problèmes tactiques)
+
+**Statut :** ✅ Implémenté :
+- `PgRepository` : `create_user`, `find_user_by_email/username/id` (insensibles à la casse), `update_chess_username`, `update_settings` (JSONB), `get_user_elo`/`update_user_elo` (liste blanche stricte `tactical_elo`/`endgame_elo` — le nom de colonne n'est jamais paramétrable), `get_user_data`/`save_user_data`. Fusion « Client Wins » factorisée (`db_client._merge_user_data`), partagée in-memory/Postgres.
+- Délégation `db_client` dès que `DATABASE_URL` est défini, **sans fallback in-memory silencieux** : un compte qui retomberait en RAM serait re-perdu au prochain redéploiement (le bug exact que cette US corrige) — base indisponible = erreur franche.
+- Aucune migration : toutes les colonnes existaient déjà (`init_auth.sql` + migrations EPIC 6/8/10/18) — elles n'avaient jamais été branchées.
+- Gap §10.6 fermé : `PgRepository.get_tactical_problem`/`get_next_tactical_problem` (sélection au plus proche de l'Elo, tirage aléatoire parmi les équidistants) ; le fallback seed d'EPIC 22 reste le filet de sécurité.
+- Tests : contrats de signature + liste blanche + fusion Client-Wins (`test_pg_repository.py`), doublures des tests de fallback EPIC 22 alignées sur le nouveau contrat.
+
+### US 25.2 : Cache IndexedDB du livre d'ouvertures (+ indicateur)
+
+**Statut :** ✅ Implémenté : `ChessDB.saveOpeningBook`/`getOpeningBook`/`isOpeningBookFresh` (clé réservée `__opening_book__`, TTL 7 jours, entrées corrompues/périmées = absentes) ; `_buildOpeningBook` lit le cache d'abord (zéro réseau, zéro re-parsing ~2 s au refresh) et persiste après le premier chargement, avec indicateur discret « 📖 » (ex-gap §10.4, réutilise `#sync-indicator`, jamais de toast). 6 nouveaux TUs Jest.
+
+### US 25.3 : Qualité SRS nuancée + précisions Chess.com + stats tactiques exposées
+
+**Statut :** ✅ Implémenté :
+- quality=3 (ex-gap §10.3) : `AnalysisFeedback.evalForPlayer` (inversion du point de vue moteur après le coup joué) + `exerciseQuality` (5 correct / 3 coup différent mais position avantageuse / 1 raté ou éval inconnue — pas de crédit sans preuve moteur) ; `board_manager._emitExerciseFail` attend ≤ 2,5 s l'éval déjà demandée ; `_onExerciseResult` propage enfin la qualité au SM-2 (l'échec écrasait à 1). 7 nouveaux TUs.
+- Précisions officielles Chess.com dans la match-card (ex-gap §10.5) : `g.accuracies.white/black` prioritaires, les barres ne restent plus à 0 %.
+- `GET /tactics/stats` enfin exposé (ex-gap §10.6-2) : panneau des taux de réussite par thème (barres + n/N) dans le Coach Tactique.
+
+### US 25.4 : Purge du code mort (§9) + rattrapage endgame_accuracy
+
+**Statut :** ✅ Implémenté :
+- Routes `POST /analyze`, `GET /games/{username}`, `POST /srs/review`, `POST /srs/review/full` **supprimées** (jamais appelées par le frontend — surface d'attaque publique en moins). Tests de non-réapparition (404) + vérification que les routers métier restent montés.
+- `_backfillEndgameAccuracy` (ex-§9.2) : les parties IndexedDB antérieures au câblage de l'EndgameDetector sont ré-analysées en tâche de fond (max 5/session, best-effort, idempotent via `endgame_accuracy: null` explicite).
+
+**Documentation :** README §8 « ❌ Non câblé » → **Aucun** ; §9 « Code mort » → **Aucun** ; §10 → table de résolution (tout fermé) ; les pistes réellement optionnelles reclassées en §11.0 Backlog.
+
+**Validation EPIC 25 :** backend 841/841 pytest, frontend 350/350 Jest, couverture ≥ 80 % maintenue.
