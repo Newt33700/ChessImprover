@@ -34,6 +34,20 @@ const ERROR_TYPE_LABELS = {
 // Calibré pour analyse depth-5 (moteur asm.js) : 100cp perte → ~74% précision
 const DECAY = 0.003;
 
+/**
+ * Échappe une valeur avant interpolation dans du HTML (`innerHTML`).
+ * Obligatoire pour toute donnée non maîtrisée : pseudo choisi à l'inscription,
+ * pseudos adverses renvoyés par l'API Chess.com, PGN importé…
+ */
+function escapeHtml(value) {
+  return String(value ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
 // ═══════════════════════════════════════════════════════════════════
 // LocalStorage Store
 // ═══════════════════════════════════════════════════════════════════
@@ -1058,7 +1072,7 @@ class ChessImproverApp {
     if (!el) return;
     const user = window.Auth?.getUser();
     if (user) {
-      el.innerHTML = `<span class="auth-username">${user.username}</span>
+      el.innerHTML = `<span class="auth-username">${escapeHtml(user.username)}</span>
         <button class="btn btn--sm btn--ghost auth-profile-btn">Profil</button>
         <button class="btn btn--sm btn--ghost auth-logout-btn">Déconnexion</button>`;
       el.querySelector(".auth-profile-btn")?.addEventListener("click", () => this._openProfileModal());
@@ -1529,11 +1543,12 @@ class ChessImproverApp {
       const isDraw   = ["agreed","stalemate","repetition","insufficient","50move","timevsinsufficient"].includes(result);
       const cls      = isWin ? "win" : isDraw ? "draw" : "loss";
       const icon     = isWin ? "V"  : isDraw ? "½"   : "L";
-      const oppName  = opp?.username || "Adversaire";
-      const rating   = me?.rating || "?";
+      // Données Chess.com = tierces : tout passe par escapeHtml avant innerHTML.
+      const oppName  = escapeHtml(opp?.username || "Adversaire");
+      const rating   = escapeHtml(me?.rating || "?");
       const ts       = g.end_time ? new Date(g.end_time * 1000).toLocaleDateString("fr-FR") : "";
-      const timeClass = { bullet:"⚡", blitz:"🔥", rapid:"⏱", daily:"📅" }[g.time_class] || g.time_class || "";
-      const pgn      = (g.pgn || "").replace(/"/g, "&quot;");
+      const timeClass = { bullet:"⚡", blitz:"🔥", rapid:"⏱", daily:"📅" }[g.time_class] || escapeHtml(g.time_class || "");
+      const pgn      = escapeHtml(g.pgn || "");
       return `<div class="game-item ${cls}-item" data-pgn="${pgn}">
         <div class="game-result-badge ${cls}">${icon}</div>
         <div class="game-info">
@@ -1542,7 +1557,7 @@ class ChessImproverApp {
         </div>
         <div class="game-right">
           <span class="game-rating">${rating}</span>
-          <span class="game-type">${g.time_class || ""}</span>
+          <span class="game-type">${escapeHtml(g.time_class || "")}</span>
         </div>
       </div>`;
     }).join("");

@@ -645,7 +645,7 @@ PersonalCoach.render(containerId)             // Lit IDB/localStorage et peuple 
 #### Méthodes app.js câblées
 
 ```js
-_renderAuthState()          // Peuple #current-user : chip username + bouton Déconnexion
+_renderAuthState()          // Peuple #current-user : chip username (échappé via escapeHtml) + bouton Déconnexion
 _openAuthModal()            // Retire l'attribut hidden sur #auth-modal
 _closeAuthModal()           // Cache #auth-modal + réinitialise messages d'erreur
 async _submitLogin(event)   // Appelle Auth.login() → _onAuthSuccess() ou affiche l'erreur
@@ -653,6 +653,10 @@ async _submitSignup(event)  // Appelle Auth.signup() → _onAuthSuccess() ou aff
 _onAuthSuccess(user)        // Ferme modal, toast bienvenue, renderAuthState, auto-connect Chess.com
 _onAuthLogout()             // Auth.logout() + renderAuthState()
 ```
+
+#### Échappement HTML (audit sécurité 07/2026)
+
+`app.js` expose un utilitaire `escapeHtml(value)` (échappe `& < > " '`) appliqué à toute donnée non maîtrisée interpolée dans de l'`innerHTML` : pseudo choisi à l'inscription (`_renderAuthState`), pseudos adverses / `time_class` / PGN renvoyés par l'API Chess.com (`_renderGamesList`, y compris l'attribut `data-pgn`, relu intact via `dataset.pgn` qui décode les entités). Sans cela, un pseudo adverse contenant du HTML s'exécutait dans le dashboard (XSS stocké via données tierces).
 
 #### Auto-connect Chess.com depuis profil
 
@@ -683,7 +687,7 @@ Auth.getUser()                          // → {id, email, username, chess_usern
 ```
 
 **Stockage :** `localStorage["ci_jwt"]` (token), `localStorage["ci_user"]` (profil JSON).  
-**URL API :** `window.CI_API_URL || "http://localhost:8000"` (configurable).
+**URL API :** résolue paresseusement à chaque appel : `window.CI_API_URL` (surcharge E2E) → `window.API_BASE` (production, `config.js`) → `http://localhost:8000` (dev). **Audit 07/2026** : auparavant seul `CI_API_URL` était lu (au chargement du module), si bien qu'en production les appels d'auth partaient silencieusement vers `localhost:8000` au lieu du backend Render.
 
 #### Messages d'erreur exploitables (US 6.1)
 
@@ -929,7 +933,7 @@ Carte **PROGRESSION**, première carte de la colonne principale de la vue Stats 
 |---|---|---|---|
 | `/health` | GET | Statut de santé | ✅ Fonctionnel |
 | `/analyze` | POST | Analyse géométrique PGN | ✅ Fonctionnel mais ⚠ non utilisé |
-| `/games/{username}` | GET | Proxy Chess.com | ✅ Fonctionnel mais ⚠ non utilisé |
+| `/games/{username}` | GET | Proxy Chess.com. **Audit sécurité 07/2026** : pseudo validé par regex `[A-Za-z0-9_-]{1,50}` (422 sinon, aucun appel réseau), encodage URL du pseudo dans `ChessComClient` (défense en profondeur), erreurs amont mappées en 404 (joueur inconnu) / 502 générique — le message d'exception interne n'est plus renvoyé au client. | ✅ Fonctionnel mais ⚠ non utilisé |
 | `/srs/review` | POST | Stub (retourne 400) | ⚠ Stub intentionnel |
 | `/srs/review/full` | POST | Recalcul SM-2 côté serveur | ✅ Fonctionnel mais ⚠ non utilisé |
 
@@ -945,6 +949,9 @@ Carte **PROGRESSION**, première carte de la colonne principale de la vue Stats 
 - HMAC-SHA256 via `hmac.new(secret, signing_input, hashlib.sha256)`
 - Signature en base64url sans padding (`=`)
 - `hmac.compare_digest()` pour la comparaison à temps constant (résistance timing attacks)
+- **Audit sécurité 07/2026** : `decode_token` rejette tout header dont `alg != HS256` (anti « alg confusion » / `alg: none`) ; `POST /auth/login` vérifie un hash bcrypt factice quand l'email est inconnu, pour un temps de réponse constant (anti-énumération de comptes) ; au démarrage, `app.main` journalise un avertissement **critique** si `JWT_SECRET` est resté sur sa valeur par défaut hors mode debug.
+
+**Listes blanches de colonnes SQL (audit sécurité 07/2026) :** `db_client.update_game` / `update_sprint` (et leurs pendants `PgRepository`) n'acceptent plus que des noms de champs figés (`GAME_UPDATABLE_FIELDS`, `SPRINT_UPDATABLE_FIELDS`) et lèvent `ValueError` sinon. Les noms de colonnes ne pouvant pas être paramétrés dans une requête SQL, ils étaient interpolés dans le `SET` — une liste fermée est la seule protection contre une injection via un nom de champ si un appelant futur relaie un jour des clés d'origine client.
 
 ### 4.5 Moteur de Statistiques Avancées (EPIC 2 & 3 — cœur algorithmique)
 
@@ -1577,7 +1584,7 @@ npm run test:mutation # Stryker
 | `advanced_stats.test.js` | AdvancedStats | cellClass, deltas, deepDiveFor, gaugeAngle, matrixRows, `categoryDetailHtml` (tactics/endgames/openings/strategy), `tacticSuccessGaugeHtml` (bornes, clamp, NaN-safe), fetchSummary (fallbacks), `formatShortDate`, `buildProgressDatasets`, `toggleProgressSeries`, `fetchHistory` (fallbacks) |
 | `cognitive_dashboard.test.js` (EPIC 19) | CognitiveDashboard | formatSeconds, buildPhaseChartData, buildInsightMessages (phase dominante, pression, fatigue décisionnelle), fetchReport (fallbacks), renderHTML, render |
 | `api_client.test.js` | ApiClient | baseUrl/isConfigured (window/localStorage), url (query), analyzeGame (POST + erreur), getStatsSummary, getGame, getStatsHistory, **en-tête `Authorization: Bearer` présent/absent selon `Auth.getToken()` (US 6.4)**, **getGames (US 7.1)**, **updateGameStatus (US 7.3)**, **getNextTacticalProblem + régression bug `?` orphelin (US 8.2)**, **submitTacticalAttempt + time_taken, getTacticsStats (US 8.3/8.4)**, **createOpeningLine/getOpeningLines/getDueOpeningLines/reviewOpeningLine/deleteOpeningLine (EPIC 9)**, **getNextEndgameProblem/submitEndgameAttempt (EPIC 10)**, **salvageGame (EPIC 15)**, **getCognitiveLoad (EPIC 19)**, **getFlashcards/getDueFlashcards/reviewFlashcard (EPIC 20)** |
-| `auth.test.js` (US 6.1/6.3) | Auth | signup/login (succès, `detail` chaîne, `detail` liste Pydantic 422 — un ou plusieurs champs, absence de `detail`), `updateChessUsername` (sans token, succès + PATCH + persistance session, format invalide), **`updateSettings` (EPIC 18 : sans token, succès + persistance session, settings absent → objet vide)**, isLoggedIn/logout |
+| `auth.test.js` (US 6.1/6.3) | Auth | signup/login (succès, `detail` chaîne, `detail` liste Pydantic 422 — un ou plusieurs champs, absence de `detail`), `updateChessUsername` (sans token, succès + PATCH + persistance session, format invalide), **`updateSettings` (EPIC 18 : sans token, succès + persistance session, settings absent → objet vide)**, isLoggedIn/logout, **résolution de la base API (audit 07/2026 : fallback dev, `window.API_BASE` prod, priorité `CI_API_URL`, relecture paresseuse à chaque appel)** |
 | `coaching_voice.test.js` (EPIC 14) | CoachingVoice | `isSupported`, `setEnabled`/`isEnabled`/`loadPreference` (persistance localStorage), `alertFor` (blunder/mistake/aucune alerte, coup absent), `bestMoveNarration`, `beep` (no-op sans AudioContext, fréquence par gravité), `speak` (no-op désactivé/non supporté, appel réel `speechSynthesis`) |
 | `theme_service.test.js` (EPIC 18) | ThemeService | `getPieceThemePath`/`getBoardColors` (thème valide/invalide/absent/état courant sans argument), `listPieceThemes`/`listBoardThemes`, `saveLocalCache`/`loadLocalCache` (JSON corrompu, valeur non-objet), `applySettings` (variables CSS, classe `<body>`, résilience totale : `null`/`undefined`/valeurs de mauvais type/`document` indisponible) |
 
@@ -1602,7 +1609,8 @@ JWT_SECRET=ci-test-secret pytest tests/ -v
 
 | Fichier | Classes | TUs |
 |---|---|---|
-| `test_auth.py` | TestPasswordHashing (5), TestJWT (4), TestSignup (4+3 US 6.1+2 US 6.2), TestLogin (4), TestMe (3+1 US 6.2), TestUpdateMe (7, US 6.3), TestUpdateSettings (8, EPIC 18), TestSync (4) | **45 TUs** |
+| `test_auth.py` | TestPasswordHashing (5), TestJWT (6 — dont **rejet `alg: none` et header `alg` falsifié**, audit 07/2026), TestSignup (4+3 US 6.1+2 US 6.2), TestLogin (4), TestMe (3+1 US 6.2), TestUpdateMe (7, US 6.3), TestUpdateSettings (8, EPIC 18), TestSync (4) | **47 TUs** |
+| `test_main_api.py` (audit 07/2026) | TestHealth, TestGetGamesValidation (pseudo Chess.com : regex, injections de chemin rejetées **sans appel réseau**, bornes `limit`), TestGetGamesErrorMapping (404 joueur inconnu, 502 génériques **sans fuite du message interne**, 503 client absent), TestChessComClientSafeEncoding (encodage URL du pseudo) | **15 TUs** |
 | `test_analyzer.py` | — | Analyse géométrique |
 | `test_elo.py` | — | Formules Elo/précision backend |
 | `test_phases.py` | Constantes, Material, IsEndgame, OpeningEndPly, SegmentPhases, SegmentPgn | US 2.1 |
@@ -1611,7 +1619,7 @@ JWT_SECRET=ci-test-secret pytest tests/ -v
 | `test_virtual_elo.py` | Anchors, Interpolation, CadenceBonus, AcplToElo | US 3.1 |
 | `test_move_class.py` | ClassifyPosition, TacticOutcome, SuccessRatio, TacticalElo, StrategicElo | US 3.2 |
 | `test_cadence.py` | EstimateSeconds, ClassifyCadence (bornes Bullet/Blitz/Rapide/Daily), **ParseIncrement (EPIC 19)** | EPIC 1 |
-| `test_db_games.py` | create/get/update/completed games, bulk/clear moves, snapshot/history progression, **pgn_hash (stockage, recherche, isolation par utilisateur)** | EPIC 1 + US 5.1 + US 7.2 |
+| `test_db_games.py` | create/get/update/completed games, bulk/clear moves, snapshot/history progression, **pgn_hash (stockage, recherche, isolation par utilisateur)**, **liste blanche `update_game` (rejet de tout champ hors whitelist, audit 07/2026)** | EPIC 1 + US 5.1 + US 7.2 |
 | `test_analysis_pipeline.py` | sans moteur (phases/SAN), avec moteur (CPL, plafond, tactique/stratégie), mat, **`compute_pgn_hash` (déterminisme, format SHA-256)**, **`fen`/`best_move_san`/`time_spent_seconds` (EPIC 19/20, incrément de cadence)** | US 1.2 + US 7.2 + EPIC 19/20 |
 | `test_stats_aggregator.py` | user_outcome, build_summary (catégories, ratings, couleur), gaffeRate, finales, acplTrend | US 4.1 |
 | `test_progress_history.py` | build_snapshot (cadence inconnue, filtre couleur, IDs), filter_history_by_days (bornes, dates invalides/naïves) | US 5.1 |
@@ -1631,7 +1639,7 @@ JWT_SECRET=ci-test-secret pytest tests/ -v
 | `test_db_error_profile.py` | Store profils d'erreur : création/mise à jour (upsert), isolation par utilisateur/type, `get_next_tactical_problem_for_categories` (pool multi-thèmes) | EPIC 11 |
 | `test_error_profile_api.py` | Câblage `run_analysis` → profil mis à jour après analyse (blunder, mat manqué via evals), franchissement du seuil récurrent sur 4 parties, isolation entre utilisateurs, `GET /tactics/custom` (200/422 focus inconnu/401, solution jamais renvoyée) | EPIC 11 |
 | `test_tactical_sprint.py` | `elapsed_seconds`/`is_sprint_active` (fenêtre exacte, bornes), `compute_score` (pur, déterministe), `record_ghost_move` (immutabilité) | EPIC 12 |
-| `test_db_tactical_sprint.py` | Store sprints : création (defaults), mise à jour, **`get_best_sprint` public** (visible entre utilisateurs, ignore les sprints non terminés) | EPIC 12 |
+| `test_db_tactical_sprint.py` | Store sprints : création (defaults), mise à jour, **`get_best_sprint` public** (visible entre utilisateurs, ignore les sprints non terminés), **liste blanche `update_sprint` (audit 07/2026)** | EPIC 12 |
 | `test_tactical_sprint_api.py` | Cycle complet `POST /start` → `POST /{id}/attempt` (succès/échec, score, problème suivant) → `POST /{id}/finish` (idempotent), **expiration côté serveur** (horloge manipulée directement dans le store, sprint clôturé automatiquement), isolation propriétaire (404), `GET /sprints/ghost` (200/401, meilleur score toutes utilisateurs confondus) | EPIC 12 |
 | `test_coaching_voice.py` | `build_move_alert` (silence sans CPL/bon coup, message générique blunder/mistake, pièce en prise nommée par nom+case, pièce adverse ignorée), `attach_move_alert` (ajoute/n'ajoute pas les clés selon le cas) | EPIC 14 |
 | `test_game_salvage.py` | `find_defeat_pivot` (pas de pivot sans données moteur/sous le seuil, premier coup du joueur au-dessus du seuil, gaffes adverses ignorées, seuil exact, couleur noire), `reconstruct_position_before_move` (PGN invalide, index hors bornes, position/side-to-move/move_number à chaque index) | EPIC 15 |
@@ -1640,7 +1648,7 @@ JWT_SECRET=ci-test-secret pytest tests/ -v
 | `test_db_srs_flashcards.py` | Store flashcards : création (calendrier SM-2 initial), liste/isolation par utilisateur, cartes dues (bornes de date), mise à jour de calendrier, reset | EPIC 20 |
 | `test_srs_flashcards_api.py` | Génération auto depuis une gaffe analysée (evals moteur), aucune flashcard sur partie propre, isolation entre utilisateurs, `POST /{id}/review` (rappel correct avance le calendrier, rappel incorrect réinitialise + révèle la solution), 404 carte inconnue/non-propriétaire, 401 sans JWT | EPIC 20 |
 
-**Couverture backend :** 757 TUs au total, couverture globale **89 %+** ; cœur Stats Avancées + EPIC 1/5.1/US 4.2/EPIC 19 à 92–100 % (`stats_aggregator`, `cadence`, `progress_history`, `models`, `engine`, `cognitive_load`, `srs_flashcards` à 100 %, `analysis_pipeline` 92 %, `routers/games` 92 %, `db_client` 98 %). Les requêtes SQL réelles de `pg_repository` (nécessitant une base) sont marquées `pragma: no cover`.
+**Couverture backend :** 780 TUs au total, couverture globale **89 %+** ; cœur Stats Avancées + EPIC 1/5.1/US 4.2/EPIC 19 à 92–100 % (`stats_aggregator`, `cadence`, `progress_history`, `models`, `engine`, `cognitive_load`, `srs_flashcards` à 100 %, `analysis_pipeline` 92 %, `routers/games` 92 %, `db_client` 98 %). Les requêtes SQL réelles de `pg_repository` (nécessitant une base) sont marquées `pragma: no cover`.
 
 **Architecture de test `test_auth.py` :**
 - App de test minimale (`FastAPI()` + routers auth/sync uniquement) pour éviter la dépendance `python-chess`
@@ -1975,6 +1983,15 @@ Identifier les ouvertures jouées le plus souvent, montrer leurs performances pa
 > - **Plus de thèmes** : l'architecture (`PIECE_THEMES`/`BOARD_THEMES` dans `theme_service.js` + `validate_assets.py`) est conçue pour qu'ajouter un thème se limite à déposer un nouveau dossier `assets/pieces/{nom}/` (12 SVG) et une entrée dans ces deux listes — aucun thème additionnel livré ce soir au-delà de `cburnett`/`cyber-tactics`.
 > - **Réglages non visuels** : la colonne `profiles.settings` (JSONB libre) est prête à accueillir des préférences sonores (activer/désactiver les sons de coup), d'animation, ou de taille d'échiquier sans nouvelle migration — non implémentés ce soir, hors du périmètre strict « Theme & Board » de l'US.
 > - **Effet néon configurable** : la lueur `body.theme-cyber-tactics` est actuellement une propriété du thème de pièces (tout ou rien) plutôt qu'un réglage indépendant — un curseur d'intensité ou une désactivation séparée de la lueur serait une évolution naturelle.
+
+### 11.13 Suites de l'audit sécurité/optimisation (07/2026) — non bloquantes
+
+Corrigé lors de l'audit : cf. §3 (échappement XSS `app.js`, base API `auth.js`), §4.3 (validation du pseudo Chess.com + non-fuite d'erreurs), §4.4 (durcissement JWT, anti-énumération login, listes blanches de colonnes SQL). **Reste identifié, volontairement non traité ici :**
+
+- **Pool de connexions PostgreSQL** : `PgRepository` ouvre une connexion par appel (simple et correct, documenté dans son docstring). Sous charge réelle, `psycopg_pool.ConnectionPool` réduirait fortement la latence — nécessite d'ajouter la dépendance et un vrai banc d'essai avec base.
+- **`JWT_SECRET` par défaut = avertissement, pas d'arrêt** : au démarrage hors debug, un log **critique** est émis si le secret n'a pas été changé ; faire échouer le démarrage (fail-fast) serait plus strict mais casserait tout déploiement où la variable manque — décision produit à prendre.
+- **N+1 sur `/stats/summary` et `/stats/cognitive-load`** : une requête `get_moves_for_game` par partie analysée. Négligeable in-memory, mais en PostgreSQL une jointure unique (`game_moves JOIN games ON ... WHERE user_id = ...`) serait préférable dès que le volume de parties croît.
+- **`backend/mutants/`** : artefacts générés par mutmut committés dans le dépôt (copie de `src/` + `tests/` obsolètes) — candidats à un `.gitignore` + suppression, non touchés pendant l'audit pour ne pas interférer avec la config mutation testing.
 
 ---
 

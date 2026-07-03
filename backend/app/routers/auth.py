@@ -18,6 +18,11 @@ from app.routers.deps import get_current_user as _current_user
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
+# Hash bcrypt factice vérifié quand l'email est inconnu : le temps de réponse
+# de /auth/login reste le même qu'avec un email existant, ce qui empêche
+# d'énumérer les comptes en mesurant la latence.
+_DUMMY_PW_HASH = auth_domain.hash_password("timing-equalizer")
+
 
 def _to_profile(user: dict) -> UserProfile:
     return UserProfile(
@@ -42,7 +47,8 @@ def signup(body: UserCreate) -> AuthResponse:
 @router.post("/login", response_model=AuthResponse)
 def login(body: UserLogin) -> AuthResponse:
     user = db_client.find_user_by_email(body.email)
-    if not user or not auth_domain.verify_password(body.password, user["password_hash"]):
+    hashed = user["password_hash"] if user else _DUMMY_PW_HASH
+    if not auth_domain.verify_password(body.password, hashed) or not user:
         raise HTTPException(status_code=401, detail="Identifiants incorrects")
     token = auth_domain.create_token(user["id"], user["email"])
     return AuthResponse(token=token, user=_to_profile(user))

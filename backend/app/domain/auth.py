@@ -74,6 +74,12 @@ def decode_token(token: str) -> Dict[str, Any]:
         if len(parts) != 3:
             raise JWTError("Malformed token")
         header, payload_b64, sig_b64 = parts
+        # Refuse tout algorithme autre que HS256 (attaque « alg confusion » /
+        # "none") : la signature n'est jamais vérifiée avec un alg fourni par
+        # l'attaquant, uniquement avec celui que le serveur émet.
+        header_data = json.loads(_b64url_decode(header))
+        if header_data.get("alg") != "HS256":
+            raise JWTError("Unsupported algorithm")
         signing_input = f"{header}.{payload_b64}"
         secret = settings.jwt_secret.encode()
         expected_sig = hmac.new(secret, signing_input.encode(), hashlib.sha256).digest()

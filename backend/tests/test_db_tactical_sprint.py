@@ -71,3 +71,17 @@ class TestGetBestSprint:
         db_client.update_sprint(sprint["id"], score=40, finished_at=datetime.now(timezone.utc))
         best = db_client.get_best_sprint()
         assert best["user_id"] == "owner"
+
+
+class TestUpdateSprintWhitelist:
+    """Liste blanche de colonnes (audit sécurité) — voir PgRepository.update_sprint."""
+
+    def test_update_sprint_rejects_unknown_field(self):
+        sprint = db_client.create_sprint("u1")
+        with pytest.raises(ValueError):
+            db_client.update_sprint(sprint["id"], **{"score = 0; DROP TABLE users; --": 1})
+
+    def test_update_sprint_rejects_field_outside_whitelist(self):
+        sprint = db_client.create_sprint("u1")
+        with pytest.raises(ValueError):
+            db_client.update_sprint(sprint["id"], user_id="autre")

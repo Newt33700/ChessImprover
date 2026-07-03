@@ -7,6 +7,7 @@ Toutes les méthodes lèvent ``httpx.HTTPStatusError`` si l'API répond >= 400.
 from __future__ import annotations
 
 from typing import Any, Dict, List
+from urllib.parse import quote
 
 import httpx
 
@@ -17,6 +18,12 @@ class ChessComClient:
     """Wraps the Chess.com public API (read-only, no auth required)."""
 
     BASE_URL = "https://api.chess.com/pub"
+
+    @staticmethod
+    def _safe(username: str) -> str:
+        """Encode le pseudo pour l'URL : aucun caractère fourni par le client
+        ne peut introduire un segment de chemin (``/``, ``..``) ou une query."""
+        return quote(username, safe="")
 
     def __init__(self, http_client: httpx.AsyncClient | None = None) -> None:
         self._client = http_client or httpx.AsyncClient(
@@ -30,7 +37,7 @@ class ChessComClient:
 
     async def get_player(self, username: str) -> Dict[str, Any]:
         """Retourne le profil d'un joueur."""
-        url = f"{self.BASE_URL}/player/{username}"
+        url = f"{self.BASE_URL}/player/{self._safe(username)}"
         resp = await self._client.get(url)
         resp.raise_for_status()
         return resp.json()
@@ -41,7 +48,7 @@ class ChessComClient:
 
     async def get_monthly_archives(self, username: str) -> List[str]:
         """Retourne la liste des URLs d'archives mensuelles (du plus récent au plus ancien)."""
-        url = f"{self.BASE_URL}/player/{username}/games/archives"
+        url = f"{self.BASE_URL}/player/{self._safe(username)}/games/archives"
         resp = await self._client.get(url)
         resp.raise_for_status()
         data = resp.json()
@@ -52,7 +59,7 @@ class ChessComClient:
         self, username: str, year: int, month: int
     ) -> List[Dict[str, Any]]:
         """Retourne les parties d'un mois donné (YYYY/MM)."""
-        url = f"{self.BASE_URL}/player/{username}/games/{year:04d}/{month:02d}"
+        url = f"{self.BASE_URL}/player/{self._safe(username)}/games/{year:04d}/{month:02d}"
         resp = await self._client.get(url)
         resp.raise_for_status()
         data = resp.json()
@@ -79,7 +86,7 @@ class ChessComClient:
 
     async def get_player_stats(self, username: str) -> Dict[str, Any]:
         """Retourne les statistiques de rating du joueur."""
-        url = f"{self.BASE_URL}/player/{username}/stats"
+        url = f"{self.BASE_URL}/player/{self._safe(username)}/stats"
         resp = await self._client.get(url)
         resp.raise_for_status()
         return resp.json()

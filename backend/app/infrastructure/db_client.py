@@ -187,8 +187,6 @@ def create_game(
     if repo is not None:  # pragma: no cover - nécessite DATABASE_URL
         return repo.create_game(pgn, user_id, time_control, user_color, status, pgn_hash)
 
-    import datetime as _dt
-
     game_id = str(uuid.uuid4())
     game = {
         "id": game_id,
@@ -200,7 +198,7 @@ def create_game(
         "status": status,
         "pgn_hash": pgn_hash,
         "is_reviewed": False,
-        "created_at": _dt.datetime.now(_dt.timezone.utc).isoformat(),
+        "created_at": datetime.now(timezone.utc).isoformat(),
     }
     _games[game_id] = game
     _game_moves[game_id] = []
@@ -232,8 +230,29 @@ def get_games_for_user(user_id: Optional[str]) -> List[Dict[str, Any]]:
     return [g for g in _games.values() if g.get("user_id") == user_id]
 
 
+# Colonnes modifiables de `games` : tout nom de champ hors de cette liste est
+# rejeté AVANT de descendre vers la couche SQL (les noms de colonnes ne sont
+# pas paramétrables dans une requête — seule une liste blanche protège
+# l'interpolation faite par PgRepository.update_game).
+GAME_UPDATABLE_FIELDS = frozenset(
+    {"status", "result", "eco", "opening_name", "pivot_move_index", "is_reviewed"}
+)
+
+# Idem pour `tactical_sprints` (PgRepository.update_sprint).
+SPRINT_UPDATABLE_FIELDS = frozenset(
+    {"score", "problems_solved_count", "moves", "started_at", "finished_at", "duration_seconds"}
+)
+
+
+def _check_fields(fields: Dict[str, Any], allowed: frozenset) -> None:
+    unknown = set(fields) - allowed
+    if unknown:
+        raise ValueError(f"Champs non modifiables : {sorted(unknown)}")
+
+
 def update_game(game_id: str, **fields: Any) -> Optional[Dict[str, Any]]:
-    """Met à jour des champs arbitraires d'une partie (ex. status, result)."""
+    """Met à jour des champs d'une partie (liste blanche : ``GAME_UPDATABLE_FIELDS``)."""
+    _check_fields(fields, GAME_UPDATABLE_FIELDS)
     repo = _pg()
     if repo is not None:  # pragma: no cover - nécessite DATABASE_URL
         return repo.update_game(game_id, **fields)
@@ -297,8 +316,6 @@ def create_progress_snapshot(
     if repo is not None:  # pragma: no cover - nécessite DATABASE_URL
         return repo.create_progress_snapshot(user_id, game_id, cadence, elos)
 
-    import datetime as _dt
-
     record = {
         "id": len(_progress_history) + 1,
         "user_id": user_id,
@@ -308,7 +325,7 @@ def create_progress_snapshot(
         "elo_tactics": elos["tactics"],
         "elo_strategy": elos["strategy"],
         "elo_endgames": elos["endgames"],
-        "recorded_at": _dt.datetime.now(_dt.timezone.utc).isoformat(),
+        "recorded_at": datetime.now(timezone.utc).isoformat(),
     }
     _progress_history.append(record)
     return record
@@ -645,6 +662,7 @@ def get_sprint(sprint_id: str) -> Optional[Dict[str, Any]]:
 
 
 def update_sprint(sprint_id: str, **fields: Any) -> Optional[Dict[str, Any]]:
+    _check_fields(fields, SPRINT_UPDATABLE_FIELDS)
     repo = _pg()
     if repo is not None:  # pragma: no cover - nécessite DATABASE_URL
         return repo.update_sprint(sprint_id, **fields)

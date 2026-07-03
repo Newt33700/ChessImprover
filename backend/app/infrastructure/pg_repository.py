@@ -84,9 +84,27 @@ class PgRepository:
             row = cur.fetchone()
         return self._iso(dict(row)) if row else None
 
+    # Listes blanches de colonnes : les noms de colonnes ne peuvent pas être
+    # passés en paramètres SQL, ils sont interpolés dans la requête — seule une
+    # liste fermée empêche toute injection via un nom de champ. Doit rester
+    # alignée avec GAME_UPDATABLE_FIELDS / SPRINT_UPDATABLE_FIELDS (db_client).
+    _GAME_COLS = frozenset(
+        {"status", "result", "eco", "opening_name", "pivot_move_index", "is_reviewed"}
+    )
+    _SPRINT_COLS = frozenset(
+        {"score", "problems_solved_count", "moves", "started_at", "finished_at", "duration_seconds"}
+    )
+
+    @staticmethod
+    def _check_cols(fields: Dict[str, Any], allowed: frozenset) -> None:
+        unknown = set(fields) - allowed
+        if unknown:
+            raise ValueError(f"Colonnes non modifiables : {sorted(unknown)}")
+
     def update_game(self, game_id: str, **fields: Any) -> Optional[Dict[str, Any]]:  # pragma: no cover
         if not fields:
             return self.get_game(game_id)
+        self._check_cols(fields, self._GAME_COLS)
         cols = ", ".join(f"{k} = %s" for k in fields)
         params = list(fields.values()) + [game_id]
         with self._connect() as conn, conn.cursor() as cur:
@@ -344,6 +362,7 @@ class PgRepository:
     ) -> Optional[Dict[str, Any]]:  # pragma: no cover - nécessite une base réelle
         from psycopg.types.json import Json
 
+        self._check_cols(fields, self._SPRINT_COLS)
         columns = list(fields.keys())
         values = [Json(v) if k == "moves" else v for k, v in fields.items()]
         set_clause = ", ".join(f"{c} = %s" for c in columns)
