@@ -1327,6 +1327,24 @@ Modules **purs** (couche domaine), entièrement testés, indépendants de l'infr
 - Vérifié en navigateur (Playwright + Chromium) : `frontend/tests/e2e/cognitive_flashcards.spec.js` — gaffe analysée → flashcard visible dans le Cimetière → rappel correct (halo vert) et incorrect (halo rouge, solution révélée) via le vrai backend local. 18/18 tests E2E verts.
 - Tests : `backend/tests/test_srs_flashcards.py` (9 tests), `backend/tests/test_db_srs_flashcards.py` (12 tests), `backend/tests/test_srs_flashcards_api.py` (10 tests d'intégration), `backend/tests/test_pg_repository.py` (contrat de signature), `frontend/tests/api_client.test.js` (4 nouveaux tests).
 
+### 4.19 EPIC 23 — Synchronisation & analyse de fond à la connexion
+
+**Fichiers :** `domain/game_sync.py`, `routers/games.py` (`POST /api/v1/games/sync`), `infrastructure/chess_com_client.py` (`get_latest_games`, ressuscité — était du code mort §9.1), `js/api_client.js` (`syncGames`), `js/app.js` (`_startBackgroundSync`/`_pollSyncStatus`), `index.html` (`#sync-indicator`)
+
+> **Contexte :** demande PO — « lors de la connexion, travailler en tâche de fond à étudier les parties pour mettre à jour les KPI/stats de l'utilisateur ». Décisions PO : ratisser les **10 dernières parties**, plafond de **5 nouvelles analyses par sync**.
+
+**Principe :** la route ne calcule rien elle-même — elle ORCHESTRE l'existant. Chaque partie enfilée passe par `run_analysis` (EPIC 1), qui met déjà à jour tous les KPI en cascade : snapshot de progression Elo (US 5.1), profil d'erreurs comportementales (EPIC 11), flashcards du Cimetière (EPIC 20), pivot de défaite (EPIC 15).
+
+**Route** (JWT requis) :
+
+| Route | Méthode | Comportement |
+|---|---|---|
+| `/api/v1/games/sync` | POST | Sans corps. Lit `chess_username` du profil (422 si non lié). Récupère les 10 dernières parties Chess.com, écarte les connues (hash PGN, US 7.2), enfile jusqu'à 5 nouvelles analyses en tâche de fond, re-enfile les analyses orphelines (`processing` > 10 min, coups purgés d'abord). Répond immédiatement **202** `{fetched, queued, skipped, deferred, requeued}`. 502 générique si Chess.com est injoignable. |
+
+**Domaine pur (`domain/game_sync.py`)** : `FETCH_LAST_GAMES=10`, `MAX_ANALYSES_PER_SYNC=5`, `STALE_PROCESSING_MINUTES=10` ; `detect_user_color` (comparaison insensible à la casse, défaut blanc), `extract_sync_candidates` (filtre les parties sans PGN, préserve l'ordre récent→ancien pour que le plafond privilégie le récent), `is_stale_processing` (tolère `created_at` datetime/ISO, prudent : illisible = pas orphelin).
+
+**Frontend :** `_onAuthSuccess()` appelle `_startBackgroundSync()` (best-effort, silencieux sur 422/502) ; si `queued+requeued > 0`, badge discret `#sync-indicator` dans le header (« 🔄 N analyses en cours », pulsation CSS — pas de toasts, règle US 22.1) + polling `GET /api/v1/games` toutes les 15 s (borné à ~10 min). Quand plus aucune partie n'est `processing` : toast unique de fin, `serverGames` rafraîchi, `_loadAdvStats()` relancé si la vue Stats Avancées est ouverte. Le polling s'arrête à la déconnexion.
+
 ---
 
 ## 5. Règles métier
@@ -1579,6 +1597,18 @@ Un exercice doit TOUJOURS être servi : l'encadré « Impossible de charger un p
 - La sélection par proximité d'Elo (`select_nearest_problem`) est déjà sans plage stricte : le problème le plus proche est servi quel que soit l'écart — l'« élargissement ±200 » du backlog est donc couvert par construction.
 - Les `theme_id`/`focus` inconnus restent rejetés en 422 (erreur d'appel, pas un état vide).
 
+### 5.23 Synchronisation à la connexion (EPIC 23)
+
+```
+fetch      = 10 dernières parties Chess.com (pseudo lié au profil, US 6.3)
+nouvelles  = celles dont le hash PGN est inconnu pour cet utilisateur (US 7.2)
+queued     = min(nouvelles, 5)         # plafond CPU par sync (instance Render modeste)
+deferred   = nouvelles − queued        # différées : re-trouvées à la prochaine sync
+requeued   = parties `processing` depuis ≥ 10 min (instance endormie/redémarrée),
+             coups purgés avant relance pour ne jamais les dupliquer
+```
+La sync est idempotente : appelée à CHAQUE connexion sans risque de double analyse.
+
 ---
 
 ## 6. Tests & Qualité
@@ -1611,7 +1641,7 @@ npm run test:mutation # Stryker
 | `personal_coach.test.js` | PersonalCoach | computeMetrics, diagnose (toutes les 6 branches), renderHTML, _detectResult, _detectUserColor, _extractOpening |
 | `advanced_stats.test.js` | AdvancedStats | cellClass, deltas, deepDiveFor, gaugeAngle, matrixRows, `categoryDetailHtml` (tactics/endgames/openings/strategy), `tacticSuccessGaugeHtml` (bornes, clamp, NaN-safe), fetchSummary (fallbacks), `formatShortDate`, `buildProgressDatasets`, `toggleProgressSeries`, `fetchHistory` (fallbacks) |
 | `cognitive_dashboard.test.js` (EPIC 19) | CognitiveDashboard | formatSeconds, buildPhaseChartData, buildInsightMessages (phase dominante, pression, fatigue décisionnelle), fetchReport (fallbacks), renderHTML, render |
-| `api_client.test.js` | ApiClient | baseUrl/isConfigured (window/localStorage), url (query), analyzeGame (POST + erreur), getStatsSummary, getGame, getStatsHistory, **en-tête `Authorization: Bearer` présent/absent selon `Auth.getToken()` (US 6.4)**, **getGames (US 7.1)**, **updateGameStatus (US 7.3)**, **getNextTacticalProblem + régression bug `?` orphelin (US 8.2)**, **submitTacticalAttempt + time_taken, getTacticsStats (US 8.3/8.4)**, **createOpeningLine/getOpeningLines/getDueOpeningLines/reviewOpeningLine/deleteOpeningLine (EPIC 9)**, **getNextEndgameProblem/submitEndgameAttempt (EPIC 10)**, **salvageGame (EPIC 15)**, **getCognitiveLoad (EPIC 19)**, **getFlashcards/getDueFlashcards/reviewFlashcard (EPIC 20)** |
+| `api_client.test.js` | ApiClient | baseUrl/isConfigured (window/localStorage), url (query), analyzeGame (POST + erreur), getStatsSummary, getGame, getStatsHistory, **en-tête `Authorization: Bearer` présent/absent selon `Auth.getToken()` (US 6.4)**, **getGames (US 7.1)**, **updateGameStatus (US 7.3)**, **getNextTacticalProblem + régression bug `?` orphelin (US 8.2)**, **submitTacticalAttempt + time_taken, getTacticsStats (US 8.3/8.4)**, **createOpeningLine/getOpeningLines/getDueOpeningLines/reviewOpeningLine/deleteOpeningLine (EPIC 9)**, **getNextEndgameProblem/submitEndgameAttempt (EPIC 10)**, **salvageGame (EPIC 15)**, **getCognitiveLoad (EPIC 19)**, **getFlashcards/getDueFlashcards/reviewFlashcard (EPIC 20)**, **syncGames (EPIC 23 : POST, compteurs, JWT attaché, rejet non-ok)** |
 | `auth.test.js` (US 6.1/6.3) | Auth | signup/login (succès, `detail` chaîne, `detail` liste Pydantic 422 — un ou plusieurs champs, absence de `detail`), `updateChessUsername` (sans token, succès + PATCH + persistance session, format invalide), **`updateSettings` (EPIC 18 : sans token, succès + persistance session, settings absent → objet vide)**, isLoggedIn/logout, **résolution de la base API (audit 07/2026 : fallback dev, `window.API_BASE` prod, priorité `CI_API_URL`, relecture paresseuse à chaque appel)** |
 | `coaching_voice.test.js` (EPIC 14) | CoachingVoice | `isSupported`, `setEnabled`/`isEnabled`/`loadPreference` (persistance localStorage), `alertFor` (blunder/mistake/aucune alerte, coup absent), `bestMoveNarration`, `beep` (no-op sans AudioContext, fréquence par gravité), `speak` (no-op désactivé/non supporté, appel réel `speechSynthesis`) |
 | `analysis_feedback.test.js` (EPIC 22) | AnalysisFeedback | `createState` (états indépendants), `shouldDispatch` (1er dispatch, 20 ré-émissions identiques bloquées, raffinement cpLoss autorisé, arrondi infra-centipion, bascule book→moteur, coups indépendants, entrées invalides), `shouldAlert` (une seule alerte par coup blunder/mistake, classifications non alertables, reset par nouvelle partie) — **15 TUs, 100 % lignes/branches/fonctions** |
@@ -1639,6 +1669,8 @@ JWT_SECRET=ci-test-secret pytest tests/ -v
 | Fichier | Classes | TUs |
 |---|---|---|
 | `test_auth.py` | TestPasswordHashing (5), TestJWT (6 — dont **rejet `alg: none` et header `alg` falsifié**, audit 07/2026), TestSignup (4+3 US 6.1+2 US 6.2), TestLogin (4), TestMe (3+1 US 6.2), TestUpdateMe (7, US 6.3), TestUpdateSettings (8, EPIC 18), TestSync (4) | **47 TUs** |
+| `test_game_sync.py` (EPIC 23) | TestContratPo (10/5), TestDetectUserColor (5), TestExtractSyncCandidates (5), TestIsStaleProcessing (8 — bornes du seuil, datetime naïf/aware, valeurs illisibles) | **20 TUs** |
+| `test_games_sync_api.py` (EPIC 23) | TestSyncGames (12 — 401 sans JWT, 422 sans pseudo lié, enfilage + statut `completed` via BackgroundTasks, limit=10 transmis, idempotence, plafond 5 + `deferred`, rattrapage au 2ᵉ sync, couleur noire détectée, 502 sans fuite interne, re-enfilage orphelin, seuil non atteint, parties sans PGN ignorées) | **12 TUs** |
 | `test_tactics_fallback.py` (EPIC 22, US 22.2) | TestDbClientFallback (6 — dépôt Postgres cassé/vide → seed in-memory, élargissement de pool tactique/finales), TestApiNeverFreezesUi (5 — `/tactics/next`, `/tactics/custom`, `/tactics/attempt`, `/endgames/next` répondent 200 même avec un dépôt Postgres défaillant) | **11 TUs** |
 | `test_main_api.py` (audit 07/2026) | TestHealth, TestGetGamesValidation (pseudo Chess.com : regex, injections de chemin rejetées **sans appel réseau**, bornes `limit`), TestGetGamesErrorMapping (404 joueur inconnu, 502 génériques **sans fuite du message interne**, 503 client absent), **TestJwtSecretFailFast (démarrage refusé avec le secret par défaut hors debug, autorisé en debug ou avec secret custom)**, TestChessComClientSafeEncoding (encodage URL du pseudo) | **18 TUs** |
 | `test_analyzer.py` | — | Analyse géométrique |
@@ -1678,7 +1710,7 @@ JWT_SECRET=ci-test-secret pytest tests/ -v
 | `test_db_srs_flashcards.py` | Store flashcards : création (calendrier SM-2 initial), liste/isolation par utilisateur, cartes dues (bornes de date), mise à jour de calendrier, reset | EPIC 20 |
 | `test_srs_flashcards_api.py` | Génération auto depuis une gaffe analysée (evals moteur), aucune flashcard sur partie propre, isolation entre utilisateurs, `POST /{id}/review` (rappel correct avance le calendrier, rappel incorrect réinitialise + révèle la solution), 404 carte inconnue/non-propriétaire, 401 sans JWT | EPIC 20 |
 
-**Couverture backend :** 794 TUs au total, couverture globale **89 %+** ; cœur Stats Avancées + EPIC 1/5.1/US 4.2/EPIC 19 à 92–100 % (`stats_aggregator`, `cadence`, `progress_history`, `models`, `engine`, `cognitive_load`, `srs_flashcards` à 100 %, `analysis_pipeline` 92 %, `routers/games` 92 %, `db_client` 98 %). Les requêtes SQL réelles de `pg_repository` (nécessitant une base) sont marquées `pragma: no cover`.
+**Couverture backend :** 826 TUs au total, couverture globale **89 %+** ; cœur Stats Avancées + EPIC 1/5.1/US 4.2/EPIC 19 à 92–100 % (`stats_aggregator`, `cadence`, `progress_history`, `models`, `engine`, `cognitive_load`, `srs_flashcards` à 100 %, `analysis_pipeline` 92 %, `routers/games` 92 %, `db_client` 98 %). Les requêtes SQL réelles de `pg_repository` (nécessitant une base) sont marquées `pragma: no cover`.
 
 **Architecture de test `test_auth.py` :**
 - App de test minimale (`FastAPI()` + routers auth/sync uniquement) pour éviter la dépendance `python-chess`
@@ -1874,6 +1906,7 @@ UNIQUE (user_id)
 | **Personnalisation Visuelle — Thème & Plateau** (EPIC 18, US 18.1/18.2/18.3) | `js/theme_service.js` + `PATCH /auth/me/settings` + `profiles.settings` (JSONB) + `board_manager.js:refreshTheme` + `index.html:#theme-modal`/`#btn-open-theme` + `assets/pieces/{cburnett,cyber-tactics}/` + `scripts/validate_assets.py` | Jeu de pièces (Cburnett/Cyber-Tactics avec lueur néon) + couleurs de plateau (4 présets) sélectionnables via modale, persistés serveur + cache local anti-flash, résilients à toute valeur invalide ; script bloquant le lancement de `serve.py` si un SVG de pièce manque |
 | **Dashboard de Performance Cognitive** (EPIC 19, US 19.1/19.2) | `domain/cognitive_load.py` + `routers/games.py:/stats/cognitive-load` + `js/cognitive_dashboard.js` + `index.html:#cog-dashboard-container` + `app.js:_loadAdvStats` | Carte CHARGE COGNITIVE de la vue Stats Avancées : temps de réflexion par phase/pression (graphe barre) + fluidité de décision (alerte fatigue décisionnelle), opérationnel et testé (backend + frontend + E2E) |
 | **Le Cimetière des Erreurs — Flashcards SRS** (EPIC 20, US 20.1/20.2) | `domain/srs_flashcards.py` + `routers/srs_flashcards.py` + `routers/games.py:run_analysis` + `index.html:#flashcards-col`/`#card-flashcards` + `app.js:_showFlashcards/_onFlashcardDrop/_submitFlashcardAttempt` | Chaque gaffe (perte ≥ 200cp) devient automatiquement une flashcard SM-2 ; vue plein écran Rappel Actif (échiquier indépendant, validation 100 % serveur, qualité déduite automatiquement) ; opérationnel et testé (backend + frontend + E2E) |
+| **Sync & analyse de fond à la connexion** (EPIC 23) | `domain/game_sync.py` + `routers/games.py:POST /api/v1/games/sync` + `chess_com_client.get_latest_games` + `api_client.js:syncGames` + `app.js:_startBackgroundSync/_pollSyncStatus` + `index.html:#sync-indicator` | À chaque connexion : 10 dernières parties Chess.com ratissées, ≤ 5 nouvelles analyses de fond (KPI mis à jour en cascade par `run_analysis`), re-enfilage des analyses orphelines, badge discret + polling 15 s côté frontend |
 | **Stabilisation Critique — feedback, fallback, auth, empty states** (EPIC 22, US 22.1-22.4) | `js/analysis_feedback.js` + `app.js` (`_toast` unique, `_showAnalysisAlert`, `_renderModulePlaceholders`, `_emptyStateHtml`) + `index.html:#analysis-alert` + `style.css` + `db_client.py` (fallback anti-404) + `auth.js` (`_apiBase` alignée sur ApiClient) | Une seule alerte d'analyse à la fois (bandeau panneau latéral, plus de toasts empilés) ; exercices toujours servis même si Postgres est cassé/vide ; placeholders des modules synchronisés avec la session (loader pendant `autoConnect`) ; Empty States avec CTA `[Analyser une partie]`/`[Réessayer]` ; pastilles EXERCICE libellées |
 
 
@@ -1892,6 +1925,8 @@ UNIQUE (user_id)
 ### 9.1 `/analyze`, `/games/{username}`, `/srs/review/full` — backend non utilisé
 
 Le frontend appelle Chess.com directement (CORS autorisé). L'analyse Stockfish est côté client. Ces routes backend fonctionnent mais ne sont jamais appelées par le frontend actuel.
+
+> Mise à jour EPIC 23 : `ChessComClient.get_latest_games` n'est PLUS du code mort — il alimente désormais `POST /api/v1/games/sync` (§4.19). Les trois routes ci-dessus restent, elles, inutilisées.
 
 ### 9.2 `game.endgame_accuracy` — alimentation différée
 

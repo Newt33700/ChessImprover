@@ -938,3 +938,36 @@ En tant qu'équipe, nous voulons que chaque modification de `supabase/migrations
 - Bloc EXERCICE : pastilles libellées **Réussi** (verte) / **À revoir** (orange) / **Échoué** (grise) avec tooltips `title`, `aria-hidden` retiré ; `flex: 0 0 auto` sur `.exo-board` (mini-plateau plus jamais compressé/distordu).
 
 **Validation EPIC 22 :** suites complètes vertes — backend 794/794 pytest (dont 11 nouveaux), frontend 324/324 Jest (dont 15 nouveaux, `analysis_feedback.js` à 100 % de couverture), seuils de couverture globaux ≥ 80 % respectés.
+
+## EPIC 23 : Synchronisation & Analyse de Fond à la Connexion (KPI toujours à jour)
+
+**Contexte :** demande PO (juillet 2026) — « lors de la connexion, travailler en tâche de fond à étudier les parties pour mettre à jour les KPI/stats de l'utilisateur ». Décisions PO validées : ratisser les **10 dernières parties**, plafond de **5 nouvelles analyses par sync**.
+
+**En tant qu'** utilisateur connecté, **je veux** que mes parties récentes soient automatiquement analysées en arrière-plan dès ma connexion, **afin que** mes KPI (progression Elo, profil d'erreurs, flashcards, stats avancées) soient à jour sans aucune action manuelle.
+
+### US 23.1 : Endpoint de synchronisation backend (`POST /api/v1/games/sync`)
+
+**Critères d'Acceptation (DoD) :**
+- JWT requis ; pseudo Chess.com lu depuis le profil (`chess_username`, US 6.3) — 422 explicite s'il n'est pas lié.
+- Les 10 dernières parties sont récupérées via `ChessComClient.get_latest_games` (code §9.1 ressuscité) ; celles déjà connues sont écartées par hash PGN (US 7.2) → la sync est idempotente, appelable à chaque connexion.
+- Plafond de 5 nouvelles analyses par sync (CPU d'une instance Render modeste) ; l'excédent est compté `deferred` et rattrapé à la sync suivante.
+- Les analyses orphelines (`processing` depuis ≥ 10 min — instance endormie/redémarrée) sont re-enfilées, coups purgés d'abord (jamais de duplication).
+- Réponse immédiate 202 `{fetched, queued, skipped, deferred, requeued}` ; 502 générique (sans fuite interne) si Chess.com est injoignable.
+
+**Statut :** ✅ Implémenté :
+- `domain/game_sync.py` (module pur) : constantes PO (`FETCH_LAST_GAMES=10`, `MAX_ANALYSES_PER_SYNC=5`, `STALE_PROCESSING_MINUTES=10`), `detect_user_color`, `extract_sync_candidates`, `is_stale_processing`.
+- **Aucune duplication** : la route orchestre `run_analysis` (EPIC 1) qui met déjà à jour TOUS les KPI en cascade — snapshot Elo (US 5.1), profil d'erreurs (EPIC 11), flashcards (EPIC 20), pivot de défaite (EPIC 15). Le moteur serveur est le Stockfish natif de l'image Docker (depth 14) : aucune dépendance au navigateur.
+- Tests : `test_game_sync.py` (20 TUs purs, dont bornes du seuil d'orphelinage) + `test_games_sync_api.py` (12 tests d'intégration, client Chess.com mocké, zéro réseau).
+
+### US 23.2 : Déclenchement à la connexion + indicateur + rafraîchissement des KPI
+
+**Critères d'Acceptation (DoD) :**
+- La sync se déclenche automatiquement après login/restauration de session, en best-effort (aucune erreur visible : 422/502 silencieux).
+- Indicateur discret dans le header (pas de toasts empilés — règle US 22.1) tant que des analyses tournent.
+- À la fin : notification unique, données serveur rafraîchies (Stats Avancées relancées si la vue est ouverte).
+
+**Statut :** ✅ Implémenté :
+- `ApiClient.syncGames()` (JWT attaché) ; `app.js:_startBackgroundSync()` appelé depuis `_onAuthSuccess()` ; badge `#sync-indicator` (« 🔄 N analyses en cours », pulsation CSS) ; polling `GET /api/v1/games` toutes les 15 s, borné à ~10 min, stoppé à la déconnexion ; toast unique de fin + refresh `serverGames`/`_loadAdvStats()`.
+- Tests : `api_client.test.js` (3 nouveaux TUs : POST + compteurs, en-tête `Authorization`, rejet non-ok).
+
+**Validation EPIC 23 :** backend 826/826 pytest (32 nouveaux), frontend 327/327 Jest (3 nouveaux), couverture ≥ 80 % maintenue.
