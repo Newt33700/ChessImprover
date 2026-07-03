@@ -125,6 +125,32 @@ describe("updateGameStatus (US 7.3)", () => {
   });
 });
 
+describe("syncGames (EPIC 23 — sync à la connexion)", () => {
+  test("POST /api/v1/games/sync et renvoie les compteurs", async () => {
+    global.fetch = jest.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ fetched: 10, queued: 5, skipped: 2, deferred: 3, requeued: 0 }),
+    });
+    const out = await ApiClient.syncGames();
+    expect(global.fetch.mock.calls[0][0]).toBe("/api/v1/games/sync");
+    expect(global.fetch.mock.calls[0][1].method).toBe("POST");
+    expect(out.queued).toBe(5);
+    expect(out.deferred).toBe(3);
+  });
+
+  test("attache le JWT quand Auth.getToken() renvoie un token", async () => {
+    global.window.Auth = { getToken: () => "jwt-123" };
+    global.fetch = jest.fn().mockResolvedValue({ ok: true, json: async () => ({}) });
+    await ApiClient.syncGames();
+    expect(global.fetch.mock.calls[0][1].headers.Authorization).toBe("Bearer jwt-123");
+  });
+
+  test("rejette sur HTTP non-ok (422 pseudo non lié, 502 Chess.com down)", async () => {
+    global.fetch = jest.fn().mockResolvedValue({ ok: false, status: 422 });
+    await expect(ApiClient.syncGames()).rejects.toThrow("HTTP 422");
+  });
+});
+
 describe("salvageGame (EPIC 15, US 15.2)", () => {
   test("POST /api/v1/games/{id}/salvage et renvoie la position du pivot", async () => {
     global.fetch = jest.fn().mockResolvedValue({

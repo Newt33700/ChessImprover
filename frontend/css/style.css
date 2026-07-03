@@ -151,6 +151,24 @@ input, textarea { font-family: inherit; }
   min-width: 0;
 }
 
+/* EPIC 23 — indicateur discret des analyses de fond (header) */
+.sync-indicator {
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: var(--text-secondary);
+  white-space: nowrap;
+  padding: 3px 8px;
+  background: var(--bg-600);
+  border: 1px solid var(--border);
+  border-radius: 20px;
+  animation: sync-pulse 2s ease-in-out infinite;
+}
+
+@keyframes sync-pulse {
+  0%, 100% { opacity: 1; }
+  50%      { opacity: 0.55; }
+}
+
 .streak-badge {
   font-size: 0.78rem;
   font-weight: 700;
