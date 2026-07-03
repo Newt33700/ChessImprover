@@ -1345,6 +1345,22 @@ Modules **purs** (couche domaine), entièrement testés, indépendants de l'infr
 
 **Frontend :** `_onAuthSuccess()` appelle `_startBackgroundSync()` (best-effort, silencieux sur 422/502) ; si `queued+requeued > 0`, badge discret `#sync-indicator` dans le header (« 🔄 N analyses en cours », pulsation CSS — pas de toasts, règle US 22.1) + polling `GET /api/v1/games` toutes les 15 s (borné à ~10 min). Quand plus aucune partie n'est `processing` : toast unique de fin, `serverGames` rafraîchi, `_loadAdvStats()` relancé si la vue Stats Avancées est ouverte. Le polling s'arrête à la déconnexion.
 
+### 4.20 EPIC 24 — Courbe d'Elo Chess.com réelle (par cadence et période)
+
+**Fichiers :** `domain/elo_curve.py`, `routers/games.py` (`GET /api/v1/stats/elo-curve`), `infrastructure/chess_com_client.py` (`get_games_for_months`), `js/api_client.js` (`getEloCurve`), `js/advanced_stats.js` (`fetchEloCurve`/`buildEloCurveData`/`renderEloCurve`), `js/app.js` (`_loadEloCurve`), `index.html` (carte ELO CHESS.COM)
+
+> **Contexte :** demande PO — afficher la courbe du classement Chess.com RÉEL sur 7/30/90 jours selon la cadence sélectionnée. L'API publique Chess.com n'expose pas d'historique de rating : la courbe est reconstruite depuis les archives mensuelles (chaque partie archivée porte le rating du joueur après la partie + `end_time`).
+
+**Route** (JWT requis) :
+
+| Route | Méthode | Comportement |
+|---|---|---|
+| `/api/v1/stats/elo-curve` | GET | Query `cadence` (bullet\|blitz\|rapid\|daily, défaut blitz — 422 sinon) et `days` (1-365, défaut 30). Lit `chess_username` du profil (422 si non lié), récupère les mois d'archives couvrant la fenêtre (`months_covering`, ≤ 4 mois pour 90 j, mois sans archive ignorés), renvoie `{cadence, days, points:[{date, rating}]}` — un point par jour joué, dernier rating du jour. 502 générique si Chess.com est injoignable. |
+
+**Domaine pur (`domain/elo_curve.py`)** : `months_covering` (mois calendaires de la fenêtre, gère le passage d'année), `build_elo_curve` (filtre `time_class` + fenêtre, rating lu du bon côté insensiblement à la casse, dernier rating par jour, tri chronologique, entrées inexploitables ignorées).
+
+**Frontend :** carte **ELO CHESS.COM** dans la vue Statistiques Avancées, pilotée par les onglets de cadence (BULLET/BLITZ/RAPIDE) et les boutons de période (7j/30j/90j) déjà existants — changer l'un ou l'autre recharge la courbe (`_loadEloCurve`). États vides explicites : « liez votre pseudo Chess.com » (courbe indisponible) / « aucune partie {cadence} sur les N derniers jours ». Aucune donnée de démonstration : une courbe d'Elo réelle ne se simule pas (`fetchEloCurve` renvoie `null` en échec, contrairement aux `MOCK_*` des autres cartes).
+
 ---
 
 ## 5. Règles métier
@@ -1609,6 +1625,18 @@ requeued   = parties `processing` depuis ≥ 10 min (instance endormie/redémarr
 ```
 La sync est idempotente : appelée à CHAQUE connexion sans risque de double analyse.
 
+### 5.24 Courbe d'Elo Chess.com (EPIC 24)
+
+```
+source     = archives mensuelles Chess.com (rating APRÈS chaque partie + end_time)
+fenêtre    = [aujourd'hui − days ; aujourd'hui], days ∈ [1..365] (UI : 7/30/90)
+mois lus   = mois calendaires couvrant la fenêtre (≤ 4 pour 90 jours)
+filtre     = time_class == cadence (bullet|blitz|rapid|daily)
+point/jour = rating de la DERNIÈRE partie du jour (état de l'Elo en fin de journée)
+```
+Parties sans `end_time` numérique, sans rating, ou où le pseudo n'apparaît ni
+côté blanc ni côté noir : ignorées silencieusement.
+
 ---
 
 ## 6. Tests & Qualité
@@ -1639,9 +1667,9 @@ npm run test:mutation # Stryker
 | `srs_sm2.test.js` | SRS (extrait de app.js) | createCard, SM-2 quality=5/3/1, EF clamp, due date |
 | `stats_dashboard.test.js` | StatsDashboard | wpFromCp, estimateEloLogistic, movingAverage, filterByDays, buildChartData, render (Chart mock) |
 | `personal_coach.test.js` | PersonalCoach | computeMetrics, diagnose (toutes les 6 branches), renderHTML, _detectResult, _detectUserColor, _extractOpening |
-| `advanced_stats.test.js` | AdvancedStats | cellClass, deltas, deepDiveFor, gaugeAngle, matrixRows, `categoryDetailHtml` (tactics/endgames/openings/strategy), `tacticSuccessGaugeHtml` (bornes, clamp, NaN-safe), fetchSummary (fallbacks), `formatShortDate`, `buildProgressDatasets`, `toggleProgressSeries`, `fetchHistory` (fallbacks) |
+| `advanced_stats.test.js` | AdvancedStats | cellClass, deltas, deepDiveFor, gaugeAngle, matrixRows, `categoryDetailHtml` (tactics/endgames/openings/strategy), `tacticSuccessGaugeHtml` (bornes, clamp, NaN-safe), fetchSummary (fallbacks), `formatShortDate`, `buildProgressDatasets`, `toggleProgressSeries`, `fetchHistory` (fallbacks), **`buildEloCurveData`/`fetchEloCurve`/`renderEloCurve` (EPIC 24 : labels courts, entrées invalides, null sur échec — jamais de mock, config Chart line)** |
 | `cognitive_dashboard.test.js` (EPIC 19) | CognitiveDashboard | formatSeconds, buildPhaseChartData, buildInsightMessages (phase dominante, pression, fatigue décisionnelle), fetchReport (fallbacks), renderHTML, render |
-| `api_client.test.js` | ApiClient | baseUrl/isConfigured (window/localStorage), url (query), analyzeGame (POST + erreur), getStatsSummary, getGame, getStatsHistory, **en-tête `Authorization: Bearer` présent/absent selon `Auth.getToken()` (US 6.4)**, **getGames (US 7.1)**, **updateGameStatus (US 7.3)**, **getNextTacticalProblem + régression bug `?` orphelin (US 8.2)**, **submitTacticalAttempt + time_taken, getTacticsStats (US 8.3/8.4)**, **createOpeningLine/getOpeningLines/getDueOpeningLines/reviewOpeningLine/deleteOpeningLine (EPIC 9)**, **getNextEndgameProblem/submitEndgameAttempt (EPIC 10)**, **salvageGame (EPIC 15)**, **getCognitiveLoad (EPIC 19)**, **getFlashcards/getDueFlashcards/reviewFlashcard (EPIC 20)**, **syncGames (EPIC 23 : POST, compteurs, JWT attaché, rejet non-ok)** |
+| `api_client.test.js` | ApiClient | baseUrl/isConfigured (window/localStorage), url (query), analyzeGame (POST + erreur), getStatsSummary, getGame, getStatsHistory, **en-tête `Authorization: Bearer` présent/absent selon `Auth.getToken()` (US 6.4)**, **getGames (US 7.1)**, **updateGameStatus (US 7.3)**, **getNextTacticalProblem + régression bug `?` orphelin (US 8.2)**, **submitTacticalAttempt + time_taken, getTacticsStats (US 8.3/8.4)**, **createOpeningLine/getOpeningLines/getDueOpeningLines/reviewOpeningLine/deleteOpeningLine (EPIC 9)**, **getNextEndgameProblem/submitEndgameAttempt (EPIC 10)**, **salvageGame (EPIC 15)**, **getCognitiveLoad (EPIC 19)**, **getFlashcards/getDueFlashcards/reviewFlashcard (EPIC 20)**, **syncGames (EPIC 23 : POST, compteurs, JWT attaché, rejet non-ok)**, **getEloCurve (EPIC 24 : query cadence/days, défauts, rejet non-ok)** |
 | `auth.test.js` (US 6.1/6.3) | Auth | signup/login (succès, `detail` chaîne, `detail` liste Pydantic 422 — un ou plusieurs champs, absence de `detail`), `updateChessUsername` (sans token, succès + PATCH + persistance session, format invalide), **`updateSettings` (EPIC 18 : sans token, succès + persistance session, settings absent → objet vide)**, isLoggedIn/logout, **résolution de la base API (audit 07/2026 : fallback dev, `window.API_BASE` prod, priorité `CI_API_URL`, relecture paresseuse à chaque appel)** |
 | `coaching_voice.test.js` (EPIC 14) | CoachingVoice | `isSupported`, `setEnabled`/`isEnabled`/`loadPreference` (persistance localStorage), `alertFor` (blunder/mistake/aucune alerte, coup absent), `bestMoveNarration`, `beep` (no-op sans AudioContext, fréquence par gravité), `speak` (no-op désactivé/non supporté, appel réel `speechSynthesis`) |
 | `analysis_feedback.test.js` (EPIC 22) | AnalysisFeedback | `createState` (états indépendants), `shouldDispatch` (1er dispatch, 20 ré-émissions identiques bloquées, raffinement cpLoss autorisé, arrondi infra-centipion, bascule book→moteur, coups indépendants, entrées invalides), `shouldAlert` (une seule alerte par coup blunder/mistake, classifications non alertables, reset par nouvelle partie) — **15 TUs, 100 % lignes/branches/fonctions** |
@@ -1671,6 +1699,8 @@ JWT_SECRET=ci-test-secret pytest tests/ -v
 | `test_auth.py` | TestPasswordHashing (5), TestJWT (6 — dont **rejet `alg: none` et header `alg` falsifié**, audit 07/2026), TestSignup (4+3 US 6.1+2 US 6.2), TestLogin (4), TestMe (3+1 US 6.2), TestUpdateMe (7, US 6.3), TestUpdateSettings (8, EPIC 18), TestSync (4) | **47 TUs** |
 | `test_game_sync.py` (EPIC 23) | TestContratPo (10/5), TestDetectUserColor (5), TestExtractSyncCandidates (5), TestIsStaleProcessing (8 — bornes du seuil, datetime naïf/aware, valeurs illisibles) | **20 TUs** |
 | `test_games_sync_api.py` (EPIC 23) | TestSyncGames (12 — 401 sans JWT, 422 sans pseudo lié, enfilage + statut `completed` via BackgroundTasks, limit=10 transmis, idempotence, plafond 5 + `deferred`, rattrapage au 2ᵉ sync, couleur noire détectée, 502 sans fuite interne, re-enfilage orphelin, seuil non atteint, parties sans PGN ignorées) | **12 TUs** |
+| `test_elo_curve.py` (EPIC 24) | TestMonthsCovering (5 — mois uniques, chevauchements, passage d'année), TestBuildEloCurve (7 — dernier rating du jour, filtres cadence/fenêtre, côté noir insensible à la casse, entrées inexploitables, tri ISO) | **12 TUs** |
+| `test_elo_curve_api.py` (EPIC 24) | TestEloCurve (8 — 401 sans JWT, 422 cadence inconnue/pseudo non lié/days hors bornes, points quotidiens, mois de la fenêtre transmis, défauts blitz/30j, 502 sans fuite interne) | **8 TUs** |
 | `test_tactics_fallback.py` (EPIC 22, US 22.2) | TestDbClientFallback (6 — dépôt Postgres cassé/vide → seed in-memory, élargissement de pool tactique/finales), TestApiNeverFreezesUi (5 — `/tactics/next`, `/tactics/custom`, `/tactics/attempt`, `/endgames/next` répondent 200 même avec un dépôt Postgres défaillant) | **11 TUs** |
 | `test_main_api.py` (audit 07/2026) | TestHealth, TestGetGamesValidation (pseudo Chess.com : regex, injections de chemin rejetées **sans appel réseau**, bornes `limit`), TestGetGamesErrorMapping (404 joueur inconnu, 502 génériques **sans fuite du message interne**, 503 client absent), **TestJwtSecretFailFast (démarrage refusé avec le secret par défaut hors debug, autorisé en debug ou avec secret custom)**, TestChessComClientSafeEncoding (encodage URL du pseudo) | **18 TUs** |
 | `test_analyzer.py` | — | Analyse géométrique |
@@ -1710,7 +1740,7 @@ JWT_SECRET=ci-test-secret pytest tests/ -v
 | `test_db_srs_flashcards.py` | Store flashcards : création (calendrier SM-2 initial), liste/isolation par utilisateur, cartes dues (bornes de date), mise à jour de calendrier, reset | EPIC 20 |
 | `test_srs_flashcards_api.py` | Génération auto depuis une gaffe analysée (evals moteur), aucune flashcard sur partie propre, isolation entre utilisateurs, `POST /{id}/review` (rappel correct avance le calendrier, rappel incorrect réinitialise + révèle la solution), 404 carte inconnue/non-propriétaire, 401 sans JWT | EPIC 20 |
 
-**Couverture backend :** 826 TUs au total, couverture globale **89 %+** ; cœur Stats Avancées + EPIC 1/5.1/US 4.2/EPIC 19 à 92–100 % (`stats_aggregator`, `cadence`, `progress_history`, `models`, `engine`, `cognitive_load`, `srs_flashcards` à 100 %, `analysis_pipeline` 92 %, `routers/games` 92 %, `db_client` 98 %). Les requêtes SQL réelles de `pg_repository` (nécessitant une base) sont marquées `pragma: no cover`.
+**Couverture backend :** 846 TUs au total, couverture globale **89 %+** ; cœur Stats Avancées + EPIC 1/5.1/US 4.2/EPIC 19 à 92–100 % (`stats_aggregator`, `cadence`, `progress_history`, `models`, `engine`, `cognitive_load`, `srs_flashcards` à 100 %, `analysis_pipeline` 92 %, `routers/games` 92 %, `db_client` 98 %). Les requêtes SQL réelles de `pg_repository` (nécessitant une base) sont marquées `pragma: no cover`.
 
 **Architecture de test `test_auth.py` :**
 - App de test minimale (`FastAPI()` + routers auth/sync uniquement) pour éviter la dépendance `python-chess`
@@ -1907,6 +1937,7 @@ UNIQUE (user_id)
 | **Dashboard de Performance Cognitive** (EPIC 19, US 19.1/19.2) | `domain/cognitive_load.py` + `routers/games.py:/stats/cognitive-load` + `js/cognitive_dashboard.js` + `index.html:#cog-dashboard-container` + `app.js:_loadAdvStats` | Carte CHARGE COGNITIVE de la vue Stats Avancées : temps de réflexion par phase/pression (graphe barre) + fluidité de décision (alerte fatigue décisionnelle), opérationnel et testé (backend + frontend + E2E) |
 | **Le Cimetière des Erreurs — Flashcards SRS** (EPIC 20, US 20.1/20.2) | `domain/srs_flashcards.py` + `routers/srs_flashcards.py` + `routers/games.py:run_analysis` + `index.html:#flashcards-col`/`#card-flashcards` + `app.js:_showFlashcards/_onFlashcardDrop/_submitFlashcardAttempt` | Chaque gaffe (perte ≥ 200cp) devient automatiquement une flashcard SM-2 ; vue plein écran Rappel Actif (échiquier indépendant, validation 100 % serveur, qualité déduite automatiquement) ; opérationnel et testé (backend + frontend + E2E) |
 | **Sync & analyse de fond à la connexion** (EPIC 23) | `domain/game_sync.py` + `routers/games.py:POST /api/v1/games/sync` + `chess_com_client.get_latest_games` + `api_client.js:syncGames` + `app.js:_startBackgroundSync/_pollSyncStatus` + `index.html:#sync-indicator` | À chaque connexion : 10 dernières parties Chess.com ratissées, ≤ 5 nouvelles analyses de fond (KPI mis à jour en cascade par `run_analysis`), re-enfilage des analyses orphelines, badge discret + polling 15 s côté frontend |
+| **Courbe d'Elo Chess.com réelle** (EPIC 24) | `domain/elo_curve.py` + `routers/games.py:GET /api/v1/stats/elo-curve` + `chess_com_client.get_games_for_months` + `advanced_stats.js:fetchEloCurve/renderEloCurve` + `app.js:_loadEloCurve` + `index.html` (carte ELO CHESS.COM) | Courbe du classement réel par cadence (bullet/blitz/rapid) sur 7/30/90 j, pilotée par les onglets/boutons existants de la vue Stats Avancées, un point par jour joué (dernier rating du jour) |
 | **Stabilisation Critique — feedback, fallback, auth, empty states** (EPIC 22, US 22.1-22.4) | `js/analysis_feedback.js` + `app.js` (`_toast` unique, `_showAnalysisAlert`, `_renderModulePlaceholders`, `_emptyStateHtml`) + `index.html:#analysis-alert` + `style.css` + `db_client.py` (fallback anti-404) + `auth.js` (`_apiBase` alignée sur ApiClient) | Une seule alerte d'analyse à la fois (bandeau panneau latéral, plus de toasts empilés) ; exercices toujours servis même si Postgres est cassé/vide ; placeholders des modules synchronisés avec la session (loader pendant `autoConnect`) ; Empty States avec CTA `[Analyser une partie]`/`[Réessayer]` ; pastilles EXERCICE libellées |
 
 
