@@ -216,7 +216,7 @@ ChessImprover/
 │       │   ├── test_srs_flashcards_api.py # EPIC 20 : câblage worker + routes /flashcards, /flashcards/due, /review
 │       │   ├── test_coaching_voice.py  # EPIC 14 : build_move_alert (sévérité, pièce en prise) + attach_move_alert
 │       │   └── test_game_salvage.py    # EPIC 15 : find_defeat_pivot (filtre couleur, seuil) + reconstruct_position_before_move
-│       └── mutants/                    # Mutation testing mutmut
+│       └── mutants/                    # Mutation testing mutmut (généré à l'exécution, gitignoré depuis l'audit 07/2026)
 │
 ├── supabase/
 │   └── migrations/
@@ -949,7 +949,7 @@ Carte **PROGRESSION**, première carte de la colonne principale de la vue Stats 
 - HMAC-SHA256 via `hmac.new(secret, signing_input, hashlib.sha256)`
 - Signature en base64url sans padding (`=`)
 - `hmac.compare_digest()` pour la comparaison à temps constant (résistance timing attacks)
-- **Audit sécurité 07/2026** : `decode_token` rejette tout header dont `alg != HS256` (anti « alg confusion » / `alg: none`) ; `POST /auth/login` vérifie un hash bcrypt factice quand l'email est inconnu, pour un temps de réponse constant (anti-énumération de comptes) ; au démarrage, `app.main` journalise un avertissement **critique** si `JWT_SECRET` est resté sur sa valeur par défaut hors mode debug.
+- **Audit sécurité 07/2026** : `decode_token` rejette tout header dont `alg != HS256` (anti « alg confusion » / `alg: none`) ; `POST /auth/login` vérifie un hash bcrypt factice quand l'email est inconnu, pour un temps de réponse constant (anti-énumération de comptes) ; au démarrage hors mode debug, `app.main` **refuse de démarrer** (`RuntimeError`, fail-fast) si `JWT_SECRET` est resté sur sa valeur par défaut — en dev local, définir `DEBUG=true` ou n'importe quel `JWT_SECRET` dans `.env` (le `webServer` Playwright fournit `e2e-test-secret` automatiquement).
 
 **Listes blanches de colonnes SQL (audit sécurité 07/2026) :** `db_client.update_game` / `update_sprint` (et leurs pendants `PgRepository`) n'acceptent plus que des noms de champs figés (`GAME_UPDATABLE_FIELDS`, `SPRINT_UPDATABLE_FIELDS`) et lèvent `ValueError` sinon. Les noms de colonnes ne pouvant pas être paramétrés dans une requête SQL, ils étaient interpolés dans le `SET` — une liste fermée est la seule protection contre une injection via un nom de champ si un appelant futur relaie un jour des clés d'origine client.
 
@@ -1610,7 +1610,7 @@ JWT_SECRET=ci-test-secret pytest tests/ -v
 | Fichier | Classes | TUs |
 |---|---|---|
 | `test_auth.py` | TestPasswordHashing (5), TestJWT (6 — dont **rejet `alg: none` et header `alg` falsifié**, audit 07/2026), TestSignup (4+3 US 6.1+2 US 6.2), TestLogin (4), TestMe (3+1 US 6.2), TestUpdateMe (7, US 6.3), TestUpdateSettings (8, EPIC 18), TestSync (4) | **47 TUs** |
-| `test_main_api.py` (audit 07/2026) | TestHealth, TestGetGamesValidation (pseudo Chess.com : regex, injections de chemin rejetées **sans appel réseau**, bornes `limit`), TestGetGamesErrorMapping (404 joueur inconnu, 502 génériques **sans fuite du message interne**, 503 client absent), TestChessComClientSafeEncoding (encodage URL du pseudo) | **15 TUs** |
+| `test_main_api.py` (audit 07/2026) | TestHealth, TestGetGamesValidation (pseudo Chess.com : regex, injections de chemin rejetées **sans appel réseau**, bornes `limit`), TestGetGamesErrorMapping (404 joueur inconnu, 502 génériques **sans fuite du message interne**, 503 client absent), **TestJwtSecretFailFast (démarrage refusé avec le secret par défaut hors debug, autorisé en debug ou avec secret custom)**, TestChessComClientSafeEncoding (encodage URL du pseudo) | **18 TUs** |
 | `test_analyzer.py` | — | Analyse géométrique |
 | `test_elo.py` | — | Formules Elo/précision backend |
 | `test_phases.py` | Constantes, Material, IsEndgame, OpeningEndPly, SegmentPhases, SegmentPgn | US 2.1 |
@@ -1648,7 +1648,7 @@ JWT_SECRET=ci-test-secret pytest tests/ -v
 | `test_db_srs_flashcards.py` | Store flashcards : création (calendrier SM-2 initial), liste/isolation par utilisateur, cartes dues (bornes de date), mise à jour de calendrier, reset | EPIC 20 |
 | `test_srs_flashcards_api.py` | Génération auto depuis une gaffe analysée (evals moteur), aucune flashcard sur partie propre, isolation entre utilisateurs, `POST /{id}/review` (rappel correct avance le calendrier, rappel incorrect réinitialise + révèle la solution), 404 carte inconnue/non-propriétaire, 401 sans JWT | EPIC 20 |
 
-**Couverture backend :** 780 TUs au total, couverture globale **89 %+** ; cœur Stats Avancées + EPIC 1/5.1/US 4.2/EPIC 19 à 92–100 % (`stats_aggregator`, `cadence`, `progress_history`, `models`, `engine`, `cognitive_load`, `srs_flashcards` à 100 %, `analysis_pipeline` 92 %, `routers/games` 92 %, `db_client` 98 %). Les requêtes SQL réelles de `pg_repository` (nécessitant une base) sont marquées `pragma: no cover`.
+**Couverture backend :** 783 TUs au total, couverture globale **89 %+** ; cœur Stats Avancées + EPIC 1/5.1/US 4.2/EPIC 19 à 92–100 % (`stats_aggregator`, `cadence`, `progress_history`, `models`, `engine`, `cognitive_load`, `srs_flashcards` à 100 %, `analysis_pipeline` 92 %, `routers/games` 92 %, `db_client` 98 %). Les requêtes SQL réelles de `pg_repository` (nécessitant une base) sont marquées `pragma: no cover`.
 
 **Architecture de test `test_auth.py` :**
 - App de test minimale (`FastAPI()` + routers auth/sync uniquement) pour éviter la dépendance `python-chess`
@@ -1989,9 +1989,9 @@ Identifier les ouvertures jouées le plus souvent, montrer leurs performances pa
 Corrigé lors de l'audit : cf. §3 (échappement XSS `app.js`, base API `auth.js`), §4.3 (validation du pseudo Chess.com + non-fuite d'erreurs), §4.4 (durcissement JWT, anti-énumération login, listes blanches de colonnes SQL). **Reste identifié, volontairement non traité ici :**
 
 - **Pool de connexions PostgreSQL** : `PgRepository` ouvre une connexion par appel (simple et correct, documenté dans son docstring). Sous charge réelle, `psycopg_pool.ConnectionPool` réduirait fortement la latence — nécessite d'ajouter la dépendance et un vrai banc d'essai avec base.
-- **`JWT_SECRET` par défaut = avertissement, pas d'arrêt** : au démarrage hors debug, un log **critique** est émis si le secret n'a pas été changé ; faire échouer le démarrage (fail-fast) serait plus strict mais casserait tout déploiement où la variable manque — décision produit à prendre.
+- ~~**`JWT_SECRET` par défaut = avertissement, pas d'arrêt**~~ → **✅ traité (PR de suite de l'audit)** : le démarrage échoue désormais (`RuntimeError`) hors debug si le secret n'a pas été changé (cf. §4.4).
 - **N+1 sur `/stats/summary` et `/stats/cognitive-load`** : une requête `get_moves_for_game` par partie analysée. Négligeable in-memory, mais en PostgreSQL une jointure unique (`game_moves JOIN games ON ... WHERE user_id = ...`) serait préférable dès que le volume de parties croît.
-- **`backend/mutants/`** : artefacts générés par mutmut committés dans le dépôt (copie de `src/` + `tests/` obsolètes) — candidats à un `.gitignore` + suppression, non touchés pendant l'audit pour ne pas interférer avec la config mutation testing.
+- ~~**`backend/mutants/`**~~ → **✅ traité (PR de suite de l'audit)** : artefacts mutmut supprimés du dépôt et ajoutés au `.gitignore` (`backend/mutants/`, `.mutmut-cache`) — mutmut les régénère à l'exécution. Le symlink hérité `backend/src → app/domain` (ancien layout, plus référencé nulle part) reste présent : sa suppression est triviale mais volontairement laissée pour un nettoyage explicite.
 
 ---
 
