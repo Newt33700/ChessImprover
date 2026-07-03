@@ -8,10 +8,12 @@ Routes disponibles :
 
 from __future__ import annotations
 
+import logging
 from contextlib import asynccontextmanager
 from typing import Any, AsyncGenerator, Dict, List
 
-from fastapi import FastAPI, HTTPException, Query
+import httpx
+from fastapi import FastAPI, HTTPException, Path, Query
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import settings
@@ -41,12 +43,23 @@ from app.routers import tactics as tactics_router
 # Lifespan (remplace les événements on_startup / on_shutdown dépréciés)
 # ---------------------------------------------------------------------------
 
+logger = logging.getLogger(__name__)
+
 chess_com_client: ChessComClient | None = None
+
+#: Format des pseudos Chess.com — borne aussi l'entrée utilisateur injectée
+#: dans les URLs de l'API publique (cf. ChessComClient).
+CHESS_USERNAME_PATTERN = r"^[A-Za-z0-9_-]{1,50}$"
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     global chess_com_client
+    if not settings.debug and settings.jwt_secret == "dev-secret-change-in-production":
+        logger.critical(
+            "JWT_SECRET utilise encore la valeur par défaut : tout token est "
+            "forgeable. Définir JWT_SECRET dans l'environnement de production."
+        )
     chess_com_client = ChessComClient()
     yield
     if chess_com_client:
@@ -123,16 +136,28 @@ async def analyze(body: AnalyzeRequest) -> GameAnalysis:
 
 @app.get("/games/{username}")
 async def get_games(
-    username: str,
+    username: str = Path(..., regex=CHESS_USERNAME_PATTERN),
     limit: int = Query(default=10, ge=1, le=50),
 ) -> List[Dict[str, Any]]:
-    """Récupère les dernières parties d'un joueur Chess.com."""
+    """Récupère les dernières parties d'un joueur Chess.com.
+
+    Le pseudo est validé (alphanumériques, ``_``, ``-``) avant d'être injecté
+    dans l'URL de l'API Chess.com. Les erreurs amont ne sont jamais renvoyées
+    telles quelles au client (pas de fuite d'URL/trace interne) : 404 si le
+    joueur est inconnu, 502 générique sinon.
+    """
     if chess_com_client is None:
         raise HTTPException(status_code=503, detail="Service not ready")
     try:
         games = await chess_com_client.get_latest_games(username, limit=limit)
+    except httpx.HTTPStatusError as exc:
+        if exc.response.status_code == 404:
+            raise HTTPException(status_code=404, detail="Joueur Chess.com introuvable") from exc
+        logger.warning("Chess.com API error for %s: HTTP %s", username, exc.response.status_code)
+        raise HTTPException(status_code=502, detail="Erreur de l'API Chess.com") from exc
     except Exception as exc:
-        raise HTTPException(status_code=502, detail=str(exc)) from exc
+        logger.exception("Chess.com API unreachable for %s", username)
+        raise HTTPException(status_code=502, detail="API Chess.com injoignable") from exc
     return games
 
 

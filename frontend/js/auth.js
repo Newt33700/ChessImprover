@@ -4,7 +4,18 @@
  */
 
 const Auth = (() => {
-  const API_BASE = (typeof window !== "undefined" && window.CI_API_URL) || "http://localhost:8000";
+  // Base API résolue à chaque appel (pas au chargement du module) :
+  // 1. `window.CI_API_URL`  — surcharge explicite (tests E2E) ;
+  // 2. `window.API_BASE`    — configuration de production (config.js) ;
+  // 3. fallback dev local. Avant ce correctif, la prod (où seul API_BASE est
+  //    défini) retombait silencieusement sur http://localhost:8000.
+  function _apiBase() {
+    if (typeof window !== "undefined") {
+      if (window.CI_API_URL != null) return window.CI_API_URL;
+      if (window.API_BASE != null) return window.API_BASE;
+    }
+    return "http://localhost:8000";
+  }
   const TOKEN_KEY = "ci_jwt";
   const USER_KEY  = "ci_user";
 
@@ -51,7 +62,7 @@ const Auth = (() => {
   async function _request(method, path, body, token) {
     const headers = { "Content-Type": "application/json" };
     if (token) headers["Authorization"] = `Bearer ${token}`;
-    const res = await fetch(`${API_BASE}${path}`, {
+    const res = await fetch(`${_apiBase()}${path}`, {
       method,
       headers,
       body: JSON.stringify(body),
@@ -92,7 +103,7 @@ const Auth = (() => {
     if (!token) return null;
     try {
       const headers = { Authorization: `Bearer ${token}` };
-      const res = await fetch(`${API_BASE}/auth/me`, { headers });
+      const res = await fetch(`${_apiBase()}/auth/me`, { headers });
       if (!res.ok) { logout(); return null; }
       const user = await res.json();
       localStorage.setItem(USER_KEY, JSON.stringify(user));

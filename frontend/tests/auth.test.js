@@ -167,3 +167,46 @@ describe("isLoggedIn / logout", () => {
     expect(Auth.isLoggedIn()).toBe(false);
   });
 });
+
+describe("résolution de la base API (audit sécurité)", () => {
+  const okLogin = () => ({
+    ok: true,
+    json: async () => ({ token: "t1", user: { id: "u1", email: "a@b.com", username: "a" } }),
+  });
+
+  afterEach(() => {
+    delete global.window.CI_API_URL;
+    delete global.window.API_BASE;
+  });
+
+  test("sans configuration → fallback dev http://localhost:8000", async () => {
+    global.fetch = jest.fn().mockResolvedValue(okLogin());
+    await Auth.login("a@b.com", "secret1");
+    expect(global.fetch.mock.calls[0][0]).toBe("http://localhost:8000/auth/login");
+  });
+
+  test("window.API_BASE (config.js prod) est utilisé — plus de fallback localhost en prod", async () => {
+    global.window.API_BASE = "https://chess-improver-api.onrender.com";
+    global.fetch = jest.fn().mockResolvedValue(okLogin());
+    await Auth.login("a@b.com", "secret1");
+    expect(global.fetch.mock.calls[0][0]).toBe(
+      "https://chess-improver-api.onrender.com/auth/login"
+    );
+  });
+
+  test("window.CI_API_URL (E2E) prime sur window.API_BASE", async () => {
+    global.window.CI_API_URL = "http://127.0.0.1:9999";
+    global.window.API_BASE = "https://prod.example";
+    global.fetch = jest.fn().mockResolvedValue(okLogin());
+    await Auth.login("a@b.com", "secret1");
+    expect(global.fetch.mock.calls[0][0]).toBe("http://127.0.0.1:9999/auth/login");
+  });
+
+  test("la base est relue à chaque appel (résolution paresseuse)", async () => {
+    global.fetch = jest.fn().mockResolvedValue(okLogin());
+    await Auth.login("a@b.com", "secret1");
+    global.window.API_BASE = "https://prod.example";
+    await Auth.login("a@b.com", "secret1");
+    expect(global.fetch.mock.calls[1][0]).toBe("https://prod.example/auth/login");
+  });
+});

@@ -66,6 +66,18 @@ class TestGames:
     def test_update_missing_returns_none(self):
         assert db_client.update_game("nope", status="failed") is None
 
+    def test_update_game_rejects_unknown_field(self):
+        # Liste blanche de colonnes : empêche toute injection via un nom de
+        # champ interpolé dans la requête SQL (PgRepository.update_game).
+        g = db_client.create_game(pgn="x")
+        with pytest.raises(ValueError):
+            db_client.update_game(g["id"], **{"status = 'x' WHERE 1=1; --": "pwned"})
+
+    def test_update_game_rejects_field_outside_whitelist(self):
+        g = db_client.create_game(pgn="x")
+        with pytest.raises(ValueError):
+            db_client.update_game(g["id"], user_id="autre-utilisateur")
+
     def test_completed_games_filter(self):
         g1 = db_client.create_game(pgn="a", user_id="u1")
         db_client.create_game(pgn="b", user_id="u1")  # reste processing

@@ -81,6 +81,31 @@ class TestJWT:
         payload = decode_token(token)
         assert "exp" in payload
 
+    def test_alg_none_token_rejected(self):
+        """Un token forgé avec alg="none" (sans signature valide) est refusé."""
+        import base64
+        import json as _json
+
+        def b64(d: dict) -> str:
+            return base64.urlsafe_b64encode(_json.dumps(d).encode()).rstrip(b"=").decode()
+
+        forged = f'{b64({"alg": "none", "typ": "JWT"})}.{b64({"sub": "admin", "exp": 9999999999})}.'
+        with pytest.raises(JWTError):
+            decode_token(forged)
+
+    def test_tampered_alg_header_rejected(self):
+        """Changer l'algorithme du header invalide le token (anti alg-confusion)."""
+        import base64
+        import json as _json
+
+        token = create_token("user-1", "a@b.com")
+        _, payload, sig = token.split(".")
+        evil_header = base64.urlsafe_b64encode(
+            _json.dumps({"alg": "HS512", "typ": "JWT"}).encode()
+        ).rstrip(b"=").decode()
+        with pytest.raises(JWTError):
+            decode_token(f"{evil_header}.{payload}.{sig}")
+
 
 # ── POST /auth/signup ─────────────────────────────────────────────────────────
 
