@@ -27,6 +27,9 @@ module.exports = {
       port: 8006,
       reuseExistingServer: true,
       timeout: 30_000,
+      // Le backend refuse de démarrer avec le JWT_SECRET par défaut hors debug
+      // (fail-fast, audit 07/2026) — on fournit un secret de test explicite.
+      env: { ...process.env, JWT_SECRET: process.env.JWT_SECRET || "e2e-test-secret" },
     },
     {
       command: "python3 -m http.server 8080",

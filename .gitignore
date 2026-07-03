@@ -22,6 +22,10 @@ build/
 htmlcov/
 .coverage
 
+# Mutation testing (artefacts générés par mutmut à l'exécution)
+backend/mutants/
+.mutmut-cache
+
 # IDE
 .idea/
 .vscode/

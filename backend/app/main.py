@@ -56,9 +56,12 @@ CHESS_USERNAME_PATTERN = r"^[A-Za-z0-9_-]{1,50}$"
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     global chess_com_client
     if not settings.debug and settings.jwt_secret == "dev-secret-change-in-production":
-        logger.critical(
+        # Fail-fast : mieux vaut un démarrage refusé qu'un backend en production
+        # dont tous les tokens sont forgeables. En dev local, définir DEBUG=true
+        # ou un JWT_SECRET quelconque dans .env.
+        raise RuntimeError(
             "JWT_SECRET utilise encore la valeur par défaut : tout token est "
-            "forgeable. Définir JWT_SECRET dans l'environnement de production."
+            "forgeable. Définir JWT_SECRET dans l'environnement (ou DEBUG=true en dev)."
         )
     chess_com_client = ChessComClient()
     yield

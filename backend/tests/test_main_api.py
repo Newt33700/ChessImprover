@@ -126,6 +126,37 @@ class TestGetGamesErrorMapping:
         assert r.status_code == 503
 
 
+class TestJwtSecretFailFast:
+    """Le serveur refuse de démarrer avec le JWT_SECRET par défaut hors debug."""
+
+    _DEFAULT = "dev-secret-change-in-production"
+
+    def test_default_secret_outside_debug_aborts_startup(self, monkeypatch):
+        from app.config import settings
+
+        monkeypatch.setattr(settings, "jwt_secret", self._DEFAULT)
+        monkeypatch.setattr(settings, "debug", False)
+        with pytest.raises(RuntimeError, match="JWT_SECRET"):
+            with TestClient(main_module.app):  # déclenche le lifespan
+                pass
+
+    def test_default_secret_in_debug_allows_startup(self, monkeypatch):
+        from app.config import settings
+
+        monkeypatch.setattr(settings, "jwt_secret", self._DEFAULT)
+        monkeypatch.setattr(settings, "debug", True)
+        with TestClient(main_module.app) as c:
+            assert c.get("/health").status_code == 200
+
+    def test_custom_secret_allows_startup(self, monkeypatch):
+        from app.config import settings
+
+        monkeypatch.setattr(settings, "jwt_secret", "un-vrai-secret-de-production")
+        monkeypatch.setattr(settings, "debug", False)
+        with TestClient(main_module.app) as c:
+            assert c.get("/health").status_code == 200
+
+
 class TestChessComClientSafeEncoding:
     """Défense en profondeur : même appelé directement, le client encode le pseudo."""
 
