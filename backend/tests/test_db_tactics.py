@@ -115,8 +115,13 @@ class TestGetNextTacticalProblem:
         problem = db_client.get_next_tactical_problem(1000, category="mate_in_1")
         assert problem["category"] == "mate_in_1"
 
-    def test_unknown_category_returns_none(self):
-        assert db_client.get_next_tactical_problem(1000, category="does-not-exist") is None
+    def test_unknown_category_widens_to_full_pool(self):
+        # EPIC 22 (US 22.2) : un filtre qui vide le pool est élargi à toutes
+        # les catégories — plus jamais None (qui devenait un 404 côté route
+        # et figeait l'interface « Impossible de charger un problème »).
+        problem = db_client.get_next_tactical_problem(1000, category="does-not-exist")
+        assert problem is not None
+        assert problem["category"] in {"mate_in_1", "mate_in_2", "hanging_piece"}
 
 
 class TestTacticalAttempts:

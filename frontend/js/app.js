@@ -34,6 +34,27 @@ const ERROR_TYPE_LABELS = {
 // Calibré pour analyse depth-5 (moteur asm.js) : 100cp perte → ~74% précision
 const DECAY = 0.003;
 
+// EPIC 22 (US 22.3) — Placeholders des modules protégés par authentification.
+// Chaque module a 3 états rendus par `_renderModulePlaceholders()` : session en
+// cours de vérification (loader), connecté (message prêt) ou déconnecté.
+const AUTH_MODULE_PLACEHOLDERS = [
+  { id: "tactics-problem-body",    activeClass: "tactics-active",
+    ready: "Choisissez un thème pour démarrer le Coach Tactique.",
+    locked: "Connectez-vous pour accéder au Coach Tactique." },
+  { id: "flashcards-problem-body", activeClass: "flashcards-active",
+    ready: "Vos flashcards se chargent à l'ouverture du module.",
+    locked: "Connectez-vous pour accéder au Cimetière des Erreurs." },
+  { id: "endgame-problem-body",    activeClass: "endgame-trainer-active",
+    ready: "Choisissez un thème de mat pour commencer.",
+    locked: "Connectez-vous pour accéder à l'entraîneur de finales." },
+  { id: "ot-review-body",          activeClass: "openings-trainer-active",
+    ready: "Vos lignes à réviser se chargent à l'ouverture du module.",
+    locked: "Connectez-vous pour accéder à l'entraîneur d'ouvertures." },
+  { id: "sprint-body",             activeClass: "sprint-active",
+    ready: "Résolvez un maximum de problèmes tactiques en 60 secondes.",
+    locked: "Connectez-vous pour lancer un sprint." },
+];
+
 /**
  * Échappe une valeur avant interpolation dans du HTML (`innerHTML`).
  * Obligatoire pour toute donnée non maîtrisée : pseudo choisi à l'inscription,
@@ -534,6 +555,11 @@ class ChessImproverApp {
     this._hideBoardPanels();
     this.currentGame = analysis;
 
+    // US 22.1 : nouvelle review = remise à zéro des alertes Coach (une seule
+    // alerte par coup) et effacement du bandeau d'analyse précédent.
+    this._feedbackState = window.AnalysisFeedback ? AnalysisFeedback.createState() : null;
+    this._clearAnalysisAlert();
+
     // Détecter la couleur du joueur depuis les headers PGN
     this.playerColor = this._detectPlayerColor(analysis.pgn);
 
@@ -845,10 +871,16 @@ class ChessImproverApp {
 
     // EPIC 14 (US 14.1/14.2) : alerte Coach Vocal — signal + texte contextuel,
     // et narration du meilleur coup lue à voix haute si activée.
-    if (window.CoachingVoice && (classification === "blunder" || classification === "mistake")) {
+    // US 22.1 : une seule alerte par coup (le moteur raffine son évaluation en
+    // plusieurs passes) et affichage dans le bandeau du panneau latéral, plus
+    // jamais en toasts empilés au-dessus de l'échiquier.
+    const canAlert = this._feedbackState
+      ? AnalysisFeedback.shouldAlert(this._feedbackState, moveIdx, classification)
+      : (classification === "blunder" || classification === "mistake");
+    if (window.CoachingVoice && canAlert) {
       const alert = CoachingVoice.alertFor(classification, game.moves[moveIdx].san);
       if (alert) {
-        this._toast(`🔊 ${alert.text}`, classification === "blunder" ? "error" : "info");
+        this._showAnalysisAlert(alert.text, classification);
         CoachingVoice.beep(alert.severity);
         const prevFen = moveIdx > 0 ? game.moves[moveIdx - 1].fen : new Chess().fen();
         const bestSan = pv.length ? this._sanFromUci(prevFen, pv[0]) : null;
@@ -1226,10 +1258,37 @@ class ChessImproverApp {
     this._closeThemeModal();
   }
 
+  /**
+   * EPIC 22 (US 22.3) — Synchronise les placeholders des modules protégés
+   * (Coach Tactique, Cimetière, Technique de Mat, Ouvertures, Sprint) avec
+   * l'état d'authentification réel : loader discret pendant la vérification
+   * de session, message « prêt » si connecté, invite à se connecter sinon.
+   * Les modules actuellement ouverts (contenu réel affiché) ne sont pas
+   * touchés.
+   */
+  _renderModulePlaceholders() {
+    const pending  = !!this._authPending;
+    const loggedIn = !!window.Auth?.isLoggedIn();
+    AUTH_MODULE_PLACEHOLDERS.forEach(({ id, activeClass, ready, locked }) => {
+      if (document.body.classList.contains(activeClass)) return;
+      const el = document.getElementById(id);
+      if (!el) return;
+      if (pending) {
+        el.innerHTML = `<p class="empty-state">⏳ Vérification de la session…</p>`;
+      } else if (loggedIn) {
+        el.innerHTML = `<p class="empty-state">${ready}</p>`;
+      } else {
+        el.innerHTML = `<p class="empty-state">${locked}</p>`;
+      }
+    });
+  }
+
   _onAuthSuccess(user) {
+    this._authPending = false;
     this._closeAuthModal();
     this._toast(`Bienvenue ${user.username} !`, "success");
     this._renderAuthState();
+    this._renderModulePlaceholders();
     this._applyServerTheme(user);
     this._loadServerGames();
     // Auto-charger les parties Chess.com si un username est mémorisé
@@ -1262,6 +1321,7 @@ class ChessImproverApp {
   _onAuthLogout() {
     window.Auth?.logout();
     this._renderAuthState();
+    this._renderModulePlaceholders();
     this._toast("Déconnecté", "info");
   }
 
@@ -1627,6 +1687,21 @@ class ChessImproverApp {
 
   // ─── Utilitaires ────────────────────────────────────────────────
 
+  /**
+   * EPIC 22 (US 22.4) — Empty State standard : message stimulant + action
+   * directe, à la place des textes techniques d'erreur bruts.
+   * `action` : "analyze" (ouvre le modal PGN) ou `{ label, onclick }` custom.
+   */
+  _emptyStateHtml(message, action) {
+    let btn = "";
+    if (action === "analyze") {
+      btn = `<button class="btn btn--accent btn--sm" onclick="window.app?._openPgnModal()">Analyser une partie</button>`;
+    } else if (action && action.label && action.onclick) {
+      btn = `<button class="btn btn--accent btn--sm" onclick="${action.onclick}">${action.label}</button>`;
+    }
+    return `<div class="empty-state-box"><p class="empty-state">${message}</p>${btn}</div>`;
+  }
+
   _showSection(id) {
     // New layout: section-dashboard is always the container
     // Map legacy section IDs to the new panel system
@@ -1905,8 +1980,18 @@ class ChessImproverApp {
       this._tacticsSolved = false;
       this._initTacticsBoard(problem);
     } catch {
-      body.innerHTML = `<p class="empty-state">Impossible de charger un problème pour le moment.</p>`;
+      // US 22.4 : plus d'erreur brute qui fige l'interface — état vide propre
+      // avec action de relance immédiate.
+      body.innerHTML = this._emptyStateHtml(
+        "Impossible de charger un problème pour le moment.",
+        { label: "Réessayer", onclick: "window.app?._retryTactics()" },
+      );
     }
+  }
+
+  /** US 22.4 — Relance le dernier chargement tactique (thème/focus courants). */
+  _retryTactics() {
+    this._loadTacticalProblem(this._currentTacticsTheme, this._customFocus);
   }
 
   /**
@@ -2017,7 +2102,11 @@ class ChessImproverApp {
     if (!body) return;
     const card = this._flashcardQueue?.shift();
     if (!card) {
-      body.innerHTML = `<p class="empty-state">Aucune flashcard à réviser aujourd'hui — reviens plus tard !</p>`;
+      // US 22.4 : état vide stimulant + action directe pour alimenter le SRS.
+      body.innerHTML = this._emptyStateHtml(
+        "Aucune flashcard à réviser pour le moment. Lancez l'analyse automatique d'une partie pour alimenter cette section !",
+        "analyze",
+      );
       return;
     }
     body.innerHTML = `
@@ -2107,6 +2196,14 @@ class ChessImproverApp {
     }
     try {
       const [all, due] = await Promise.all([ApiClient.getFlashcards(), ApiClient.getDueFlashcards()]);
+      // US 22.4 : une liste vide n'est PAS une erreur — état vide stimulant.
+      if (!all.length) {
+        container.innerHTML = this._emptyStateHtml(
+          "Aucune donnée pour le moment. Lancez l'analyse automatique d'une partie pour alimenter cette section !",
+          "analyze",
+        );
+        return;
+      }
       container.innerHTML = `
         <div class="tac-rating">${all.length}</div>
         <div class="tac-rating-label">Flashcards générées</div>
@@ -2117,7 +2214,11 @@ class ChessImproverApp {
       `;
       container.querySelector("#btn-review-flashcards")?.addEventListener("click", () => this._showFlashcards());
     } catch {
-      container.innerHTML = `<p class="empty-state">Impossible de charger les flashcards pour le moment.</p>`;
+      // US 22.4 : même en cas d'échec réseau/API, pas de texte technique brut.
+      container.innerHTML = this._emptyStateHtml(
+        "Aucune donnée pour le moment. Lancez l'analyse automatique d'une partie pour alimenter cette section !",
+        "analyze",
+      );
     }
   }
 
@@ -2344,8 +2445,16 @@ class ChessImproverApp {
       this._endgameSolved = false;
       this._initEndgameBoard(problem);
     } catch {
-      body.innerHTML = `<p class="empty-state">Impossible de charger une position pour le moment.</p>`;
+      body.innerHTML = this._emptyStateHtml(
+        "Impossible de charger une position pour le moment.",
+        { label: "Réessayer", onclick: "window.app?._retryEndgame()" },
+      );
     }
+  }
+
+  /** US 22.4 — Relance le dernier chargement de finale (thème courant). */
+  _retryEndgame() {
+    this._loadEndgameProblem(this._currentEndgameTheme);
   }
 
   _initEndgameBoard(problem) {
@@ -2478,7 +2587,11 @@ class ChessImproverApp {
         this._ghostData = null;
       }
     } catch {
-      body.innerHTML = `<p class="empty-state">Impossible de démarrer un sprint pour le moment.</p>`;
+      // US 22.4 : le bouton Réessayer réutilise la délégation #btn-sprint-start.
+      body.innerHTML = `<div class="empty-state-box">
+        <p class="empty-state">Impossible de démarrer un sprint pour le moment.</p>
+        <button class="btn btn--accent btn--sm" id="btn-sprint-start">Réessayer</button>
+      </div>`;
     }
   }
 
@@ -2704,15 +2817,45 @@ class ChessImproverApp {
     if (m) m.textContent = msg;
   }
 
+  /**
+   * US 22.1 — Toast UNIQUE : jamais plus d'une notification affichée à la
+   * fois. Un nouveau message écrase immédiatement le précédent au lieu de
+   * s'empiler au-dessus de l'échiquier.
+   */
   _toast(message, type = "info") {
     const container = document.getElementById("toast-container");
     if (!container) return;
+    container.querySelectorAll(".toast").forEach((el) => el.remove());
+    if (this._toastTimer) { clearTimeout(this._toastTimer); this._toastTimer = null; }
     const t = document.createElement("div");
     t.className = `toast toast-${type}`;
     t.textContent = message;
     container.appendChild(t);
     requestAnimationFrame(() => t.classList.add("visible"));
-    setTimeout(() => { t.classList.remove("visible"); setTimeout(() => t.remove(), 300); }, 3500);
+    this._toastTimer = setTimeout(() => {
+      t.classList.remove("visible");
+      setTimeout(() => t.remove(), 300);
+    }, 3500);
+  }
+
+  /**
+   * US 22.1 — Bandeau d'alerte d'analyse, intégré en haut du panneau latéral
+   * (au-dessus du score de précision) : le contenu est REMPLACÉ à chaque
+   * nouvelle alerte, jamais empilé, et ne masque jamais l'échiquier.
+   */
+  _showAnalysisAlert(text, severity = "info") {
+    const el = document.getElementById("analysis-alert");
+    if (!el) return;
+    el.textContent = `🔊 ${text}`;
+    el.className = `analysis-alert analysis-alert--${severity}`;
+    el.hidden = false;
+  }
+
+  _clearAnalysisAlert() {
+    const el = document.getElementById("analysis-alert");
+    if (!el) return;
+    el.textContent = "";
+    el.hidden = true;
   }
 }
 
@@ -2725,10 +2868,22 @@ document.addEventListener("DOMContentLoaded", async () => {
   }
   window.app = new ChessImproverApp();
 
-  // US 7 : restaurer la session auth si un token existe
+  // US 7 : restaurer la session auth si un token existe.
+  // US 22.3 : tant que /auth/me n'a pas répondu, les modules protégés
+  // affichent un loader discret — jamais un faux « Connectez-vous » alors
+  // qu'un token de session est présent.
   if (window.Auth) {
+    if (Auth.getToken()) {
+      window.app._authPending = true;
+      window.app._renderModulePlaceholders();
+    }
     const user = await Auth.autoConnect();
-    if (user) window.app._onAuthSuccess(user);
-    else      window.app._renderAuthState();
+    window.app._authPending = false;
+    if (user) {
+      window.app._onAuthSuccess(user);
+    } else {
+      window.app._renderAuthState();
+      window.app._renderModulePlaceholders();
+    }
   }
 });

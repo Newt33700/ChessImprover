@@ -26,6 +26,7 @@
       "**/tests/**/*.test.js"
     ],
     "collectCoverageFrom": [
+      "js/analysis_feedback.js",
       "js/db.js",
       "js/wp_chart.js",
       "js/openings_stats.js",

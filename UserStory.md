@@ -879,3 +879,62 @@ En tant qu'équipe, nous voulons que chaque modification de `supabase/migrations
 - Tests : `backend/tests/test_srs_flashcards_api.py` (10 tests d'intégration : génération auto, isolation par utilisateur, rappel correct/incorrect, 404 carte inconnue/non propriétaire), `frontend/tests/api_client.test.js` (`getFlashcards`/`getDueFlashcards`/`reviewFlashcard`).
 
 **Vérifié en navigateur (Playwright + Chromium)** : `frontend/tests/e2e/cognitive_flashcards.spec.js` — partie avec gaffe analysée via l'API réelle → flashcard visible dans le Cimetière → rappel correct (halo vert, message de succès) et rappel incorrect (halo rouge, solution révélée) via le vrai backend local. 18/18 tests E2E verts (14 existants + 4 nouveaux).
+
+## EPIC 22 : Stabilisation Critique, Correction des Dysfonctionnements & Optimisation UX
+
+**Contexte :** diagnostic PO (tests de parcours utilisateur, juillet 2026) — empilement infini d'alertes au-dessus de l'échiquier, exercices « Impossible de charger un problème », faux blocs « Connectez-vous » alors que la session est active, erreurs brutes à la place d'états vides. Exécuté AVANT toute nouvelle fonctionnalité.
+
+### US 22.1 : Élimination du « Toast-Spamming » et Refonte du Feedback d'Analyse
+
+**En tant qu'** utilisateur, **je veux** recevoir une seule alerte claire et lisible lors de l'analyse d'un coup, **afin de** ne pas avoir mon échiquier masqué par des dizaines de notifications empilées.
+
+**Critères d'Acceptation (DoD) :**
+- Jamais plus d'une alerte affichée simultanément ; un nouveau retour écrase le précédent.
+- Le conteneur des alertes d'analyse est intégré en haut du panneau de droite, plus jamais en position absolue au-dessus de l'échiquier.
+- Le Web Worker ne déclenche plus 20 fois le même événement pour un seul coup analysé.
+
+**Statut :** ✅ Implémenté :
+- Nouveau module pur `frontend/js/analysis_feedback.js` (100 % de couverture, 15 TUs) : `shouldDispatch` (dédoublonnage des événements `move:accuracy` — Stockfish émet un message `info` par profondeur atteinte) et `shouldAlert` (une seule alerte Coach par coup et par partie).
+- `board_manager.js` : `feedbackState` filtre les dispatchs ; réinitialisé à chaque `startReview`.
+- `app.js` : `_toast` devient mono-instance (le nouveau message écrase l'existant) ; nouvelle bannière `#analysis-alert` dans le panneau latéral (au-dessus du score de précision), contenu remplacé à chaque alerte ; alerte Coach (bandeau + beep + TTS) émise une seule fois par coup via `_feedbackState`.
+
+### US 22.2 : Rétablissement de l'Interactivité et du Chargement des Exercices
+
+**En tant qu'** utilisateur s'entraînant dans le module Exercice / Tactique, **je veux** pouvoir cliquer, glisser et déposer les pièces sur l'échiquier, **afin de** résoudre les problèmes tactiques interactivement.
+
+**Critères d'Acceptation (DoD) :**
+- `draggable: true` vérifié dans toutes les vues Exercice/Tactique/Finales.
+- `onDrop` lié à la validation serveur (`POST /api/v1/tactics/attempt`).
+- Fallback backend : plus jamais de 404/500 « Impossible de charger un problème ».
+
+**Statut :** ✅ Implémenté :
+- Audit : tous les échiquiers d'exercice (`_initTacticsBoard`, `_initFlashcardBoard`, `_initEndgameBoard`, `_initSprintBoard`, `_startOpeningReview`, `BoardManager`) étaient déjà en `draggable: true` avec `onDrop` → validation serveur ; le gel venait du 404/500 backend (aucun échiquier rendu) et du CSS US 22.3.
+- `db_client.py` : fallback anti-404 — dépôt Postgres cassé (méthodes tactiques jamais migrées, README §10.6) ou vide → seed in-memory servi ; filtre de catégorie qui vide le pool → élargissement à toutes les catégories (tactiques, finales, entraînement personnalisé). Règle métier documentée au README §5.22.
+- Tests : `backend/tests/test_tactics_fallback.py` (11 TUs) — les routes `/tactics/next`, `/tactics/custom`, `/tactics/attempt`, `/endgames/next` répondent 200 même avec un dépôt Postgres défaillant ; 3 anciens tests du contrat « catégorie inconnue → None » mis à jour vers le nouveau contrat d'élargissement.
+
+### US 22.3 : Correction de la Désynchronisation du Token JWT (Faux « Déconnecté »)
+
+**En tant qu'** utilisateur connecté, **je veux** que l'ensemble des onglets et modules me reconnaissent instantanément comme connecté, **afin de** ne plus voir de blocs « Connectez-vous » sur les sections Rappel Actif, Technique de Mat et Tactical Sprint.
+
+**Critères d'Acceptation (DoD) :**
+- Les requêtes des sous-composants attachent le JWT actif (`Authorization: Bearer`).
+- Les composants ne se rendent pas avant la résolution de l'état d'authentification ; loader discret pendant la vérification.
+
+**Statut :** ✅ Implémenté :
+- **Cause racine visuelle identifiée et corrigée** : le sélecteur CSS `body.tactics-active .tactics-col { display: block }` affichait les QUATRE modules partageant la classe (`#tactics-col`, `#flashcards-col`, `#endgame-trainer-col`, `#sprint-col`) — les blocs « Connectez-vous » empilés en bas de page étaient les placeholders statiques des trois modules non ouverts. Corrigé en `body.tactics-active #tactics-col`.
+- Audit `api_client.js` : le token est déjà lu à chaque requête (`Auth.getToken()` au moment de l'appel — pas de capture périmée). `auth.js:_apiBase` aligné sur ApiClient (surcharge `localStorage['apiBase']`) pour que Auth et ApiClient parlent toujours au même backend.
+- `app.js:_renderModulePlaceholders()` : les placeholders des 5 modules protégés reflètent l'état réel de session — « ⏳ Vérification de la session… » pendant `Auth.autoConnect()`, message prêt si connecté, invite à se connecter sinon ; rafraîchi au boot, après login/signup et après logout ; ne touche jamais un module ouvert.
+
+### US 22.4 : Amélioration de l'UX des « Empty States » et Boutons
+
+**En tant qu'** utilisateur naviguant sur mon tableau de bord, **je veux** des messages d'accueil stimulants quand je n'ai pas encore de données et des boutons explicites, **afin de** comprendre immédiatement quelle action effectuer.
+
+**Critères d'Acceptation (DoD) :**
+- Une liste vide `[]` n'affiche plus d'erreur technique : Empty State propre + bouton `[Analyser une partie]`.
+- Libellés/tooltips sous les 3 icônes rondes du bloc EXERCICE.
+
+**Statut :** ✅ Implémenté :
+- `app.js:_emptyStateHtml(message, action)` : composant Empty State standard (message + CTA `[Analyser une partie]` ouvrant le modal PGN, ou `[Réessayer]` relançant le chargement). Appliqué au Cimetière des Erreurs (résumé Stats Avancées : liste vide ET échec réseau), à la file de flashcards, au Coach Tactique, à la Technique de Mat et au Sprint (bouton Réessayer via la délégation `#btn-sprint-start` existante).
+- Bloc EXERCICE : pastilles libellées **Réussi** (verte) / **À revoir** (orange) / **Échoué** (grise) avec tooltips `title`, `aria-hidden` retiré ; `flex: 0 0 auto` sur `.exo-board` (mini-plateau plus jamais compressé/distordu).
+
+**Validation EPIC 22 :** suites complètes vertes — backend 794/794 pytest (dont 11 nouveaux), frontend 324/324 Jest (dont 15 nouveaux, `analysis_feedback.js` à 100 % de couverture), seuils de couverture globaux ≥ 80 % respectés.

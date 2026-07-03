@@ -928,6 +928,41 @@ input[type="text"]::placeholder { color: var(--text-muted); }
 }
 
 /* --------------------------------------------------------------------------
+   Bandeau d'alerte d'analyse (EPIC 22, US 22.1) — intégré au panneau latéral,
+   jamais au-dessus de l'échiquier ; le contenu est remplacé, jamais empilé.
+-------------------------------------------------------------------------- */
+.analysis-alert {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-600);
+  color: var(--text-primary);
+  font-size: 0.82rem;
+  line-height: 1.35;
+  padding: 8px var(--space-md);
+}
+.analysis-alert--blunder {
+  border-color: var(--col-blunder, #ca3431);
+  color: #f87171;
+}
+.analysis-alert--mistake {
+  border-color: var(--col-mistake, #e09a44);
+  color: #fbbf24;
+}
+
+/* --------------------------------------------------------------------------
+   Empty State standard (EPIC 22, US 22.4) — message + action directe
+-------------------------------------------------------------------------- */
+.empty-state-box {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-sm);
+  padding: var(--space-md) 0;
+  text-align: center;
+  width: 100%;
+}
+
+/* --------------------------------------------------------------------------
    Toasts
 -------------------------------------------------------------------------- */
 #toast-container {
@@ -1422,6 +1457,7 @@ body.board-active .dash-grid { display: none; }
 .exo-board {
   width: 120px;
   height: 120px;
+  flex: 0 0 auto; /* US 22.4 : jamais compressé/distordu par le conteneur flex */
   border-radius: var(--radius-sm);
   background:
     linear-gradient(45deg, var(--sq-dark) 25%, transparent 25%) 0 0/40px 40px,
@@ -1478,12 +1514,26 @@ body.board-active .dash-grid { display: none; }
   text-align: center;
 }
 
-/* Medals row */
+/* Medals row — US 22.4 : chaque pastille porte un libellé explicite */
 .exo-medals {
   display: flex;
   justify-content: center;
   gap: var(--space-md);
   margin-top: var(--space-lg);
+}
+
+.exo-medal-wrap {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+}
+
+.exo-medal-label {
+  font-size: 0.68rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--text-secondary);
 }
 
 .exo-medal {
@@ -1940,7 +1990,11 @@ body.advstats-active .advstats-col { display: block; }
 }
 body.tactics-active .dash-grid { display: none; }
 body.tactics-active .board-col { display: none; }
-body.tactics-active .tactics-col { display: block; }
+/* US 22.3 : cibler UNIQUEMENT le Coach Tactique — l'ancien sélecteur
+   `.tactics-col` affichait aussi les modules Cimetière/Finales/Sprint
+   (qui partagent cette classe), empilant leurs encadrés « Connectez-vous »
+   sous l'échiquier alors que l'utilisateur était connecté. */
+body.tactics-active #tactics-col { display: block; }
 
 /* Entraîneur de Finales (EPIC 10) réutilise le style `.tactics-col` générique */
 body.endgame-trainer-active .dash-grid { display: none; }

@@ -45,6 +45,13 @@ class BoardManager {
     // Cache des évaluations : fen → { evaluation, bestMove }
     this.evalCache = {};
 
+    // EPIC 22 (US 22.1) : dédoublonnage des événements move:accuracy — le
+    // moteur émet plusieurs messages `info` par position, on ne re-dispatche
+    // que si le résultat du coup a réellement changé.
+    this.feedbackState = window.AnalysisFeedback
+      ? AnalysisFeedback.createState()
+      : null;
+
     this._initWorker();
     this._initBoard();
   }
@@ -261,6 +268,8 @@ class BoardManager {
     if (moveIdx < 0) return;
 
     if (moveIdx < this.bookMoveThreshold) {
+      if (this.feedbackState
+          && !AnalysisFeedback.shouldDispatch(this.feedbackState, moveIdx, 0, true)) return;
       document.dispatchEvent(new CustomEvent("move:accuracy", {
         detail: { moveIdx, cpLoss: 0, book: true },
       }));
@@ -283,6 +292,8 @@ class BoardManager {
       ? Math.max(0, whiteBefore - whiteAfter)
       : Math.max(0, whiteAfter  - whiteBefore);
 
+    if (this.feedbackState
+        && !AnalysisFeedback.shouldDispatch(this.feedbackState, moveIdx, cpLoss, false)) return;
     document.dispatchEvent(new CustomEvent("move:accuracy", {
       detail: { moveIdx, cpLoss, evalCp: whiteAfter },
     }));
@@ -358,6 +369,8 @@ class BoardManager {
     this.reviewMoves = moves;
     this.reviewIndex = -1;
     this.bookMoveThreshold = 15; // valeur provisoire, affinée par setBookDepth()
+    // US 22.1 : nouvelle partie = nouvel état de dédoublonnage
+    if (window.AnalysisFeedback) this.feedbackState = AnalysisFeedback.createState();
     this.chess.reset();
     this.board.position("start");
 

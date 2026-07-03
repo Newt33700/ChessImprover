@@ -872,6 +872,25 @@ Carte **PROGRESSION**, première carte de la colonne principale de la vue Stats 
 
 ---
 
+### 3.13 bis EPIC 22 — Stabilisation Critique du feedback d'analyse (US 22.1)
+
+**Fichier :** `js/analysis_feedback.js` (nouveau module, testé à 100 %)
+
+| API publique | Rôle |
+|---|---|
+| `createState()` | état neuf de dédoublonnage (à recréer à chaque nouvelle review) |
+| `shouldDispatch(state, moveIdx, cpLoss, book)` | `true` seulement si le résultat d'analyse du coup a changé depuis la dernière émission (signature `book/mistake + cpLoss arrondi`) — bloque les ~20 messages `info` identiques que Stockfish émet par position |
+| `shouldAlert(state, moveIdx, classification)` | `true` UNE SEULE fois par coup, et uniquement pour `blunder`/`mistake` — plus jamais d'alertes Coach empilées |
+
+**Câblage :**
+- `board_manager.js` : `this.feedbackState` (réinitialisé dans `startReview`) filtre les dispatchs `move:accuracy` via `shouldDispatch`.
+- `app.js:_onMoveAccuracy` : `this._feedbackState` (réinitialisé dans `_enterReviewMode`) filtre l'alerte Coach via `shouldAlert` ; l'alerte s'affiche dans le bandeau `#analysis-alert` du panneau latéral (`_showAnalysisAlert`, contenu REMPLACÉ à chaque alerte), plus jamais en toasts au-dessus de l'échiquier.
+- `app.js:_toast` : toast unique — tout nouveau message écrase l'existant (jamais d'empilement).
+- US 22.3 : `_renderModulePlaceholders()` synchronise les placeholders des modules protégés (Coach Tactique, Cimetière, Technique de Mat, Ouvertures, Sprint) avec l'état d'authentification réel (loader « Vérification de la session… » pendant `autoConnect`, message prêt si connecté, invite sinon) ; correctif CSS : `body.tactics-active` n'affiche plus que `#tactics-col` (l'ancien sélecteur `.tactics-col` empilait les 4 modules avec leurs faux « Connectez-vous »).
+- US 22.4 : `_emptyStateHtml(message, action)` — Empty State standard (message stimulant + bouton `[Analyser une partie]` ou `[Réessayer]`) utilisé par le Cimetière, le Coach Tactique, les Finales et le Sprint à la place des erreurs brutes ; pastilles du bloc EXERCICE libellées (Réussi / À revoir / Échoué + tooltips).
+
+---
+
 ### 3.14 Système XP / Niveaux / Streaks
 
 **Fichier :** `app.js` — `XPSystem`, `StreakSystem`
@@ -1551,6 +1570,15 @@ révision (US 20.2) : succès ⟹ quality = infer_quality(0)  = 5 (SM-2 avance)
                       échec  ⟹ quality = infer_quality(2)  = 1 (SM-2 réinitialise, jamais de crédit partiel)
 ```
 
+### 5.22 Fallback de sélection de problèmes — anti-404 (EPIC 22, US 22.2)
+
+Un exercice doit TOUJOURS être servi : l'encadré « Impossible de charger un problème » ne doit plus jamais être causé par le backend.
+
+- Si le dépôt Postgres échoue (méthode non migrée → `AttributeError`, table vide → `None`, erreur SQL), `db_client` retombe silencieusement sur le **set de problèmes par défaut in-memory** (seed tactique 14 problèmes / seed finales 9 positions).
+- Si un filtre de catégorie vide le pool de sélection, le pool est **élargi à toutes les catégories** au lieu de renvoyer `None` (qui devenait un 404 côté route et figeait l'interface).
+- La sélection par proximité d'Elo (`select_nearest_problem`) est déjà sans plage stricte : le problème le plus proche est servi quel que soit l'écart — l'« élargissement ±200 » du backlog est donc couvert par construction.
+- Les `theme_id`/`focus` inconnus restent rejetés en 422 (erreur d'appel, pas un état vide).
+
 ---
 
 ## 6. Tests & Qualité
@@ -1586,9 +1614,10 @@ npm run test:mutation # Stryker
 | `api_client.test.js` | ApiClient | baseUrl/isConfigured (window/localStorage), url (query), analyzeGame (POST + erreur), getStatsSummary, getGame, getStatsHistory, **en-tête `Authorization: Bearer` présent/absent selon `Auth.getToken()` (US 6.4)**, **getGames (US 7.1)**, **updateGameStatus (US 7.3)**, **getNextTacticalProblem + régression bug `?` orphelin (US 8.2)**, **submitTacticalAttempt + time_taken, getTacticsStats (US 8.3/8.4)**, **createOpeningLine/getOpeningLines/getDueOpeningLines/reviewOpeningLine/deleteOpeningLine (EPIC 9)**, **getNextEndgameProblem/submitEndgameAttempt (EPIC 10)**, **salvageGame (EPIC 15)**, **getCognitiveLoad (EPIC 19)**, **getFlashcards/getDueFlashcards/reviewFlashcard (EPIC 20)** |
 | `auth.test.js` (US 6.1/6.3) | Auth | signup/login (succès, `detail` chaîne, `detail` liste Pydantic 422 — un ou plusieurs champs, absence de `detail`), `updateChessUsername` (sans token, succès + PATCH + persistance session, format invalide), **`updateSettings` (EPIC 18 : sans token, succès + persistance session, settings absent → objet vide)**, isLoggedIn/logout, **résolution de la base API (audit 07/2026 : fallback dev, `window.API_BASE` prod, priorité `CI_API_URL`, relecture paresseuse à chaque appel)** |
 | `coaching_voice.test.js` (EPIC 14) | CoachingVoice | `isSupported`, `setEnabled`/`isEnabled`/`loadPreference` (persistance localStorage), `alertFor` (blunder/mistake/aucune alerte, coup absent), `bestMoveNarration`, `beep` (no-op sans AudioContext, fréquence par gravité), `speak` (no-op désactivé/non supporté, appel réel `speechSynthesis`) |
+| `analysis_feedback.test.js` (EPIC 22) | AnalysisFeedback | `createState` (états indépendants), `shouldDispatch` (1er dispatch, 20 ré-émissions identiques bloquées, raffinement cpLoss autorisé, arrondi infra-centipion, bascule book→moteur, coups indépendants, entrées invalides), `shouldAlert` (une seule alerte par coup blunder/mistake, classifications non alertables, reset par nouvelle partie) — **15 TUs, 100 % lignes/branches/fonctions** |
 | `theme_service.test.js` (EPIC 18) | ThemeService | `getPieceThemePath`/`getBoardColors` (thème valide/invalide/absent/état courant sans argument), `listPieceThemes`/`listBoardThemes`, `saveLocalCache`/`loadLocalCache` (JSON corrompu, valeur non-objet), `applySettings` (variables CSS, classe `<body>`, résilience totale : `null`/`undefined`/valeurs de mauvais type/`document` indisponible) |
 
-> `advanced_stats.js` n'est pas dans `collectCoverageFrom` (comme `app.js`, `auth.js`, `board_manager.js`) : seules ses fonctions pures sont testées, les `render*` sont de la glue DOM. `cognitive_dashboard.js` y a été ajouté (EPIC 19, 87 % lignes/branches).
+> `advanced_stats.js` n'est pas dans `collectCoverageFrom` (comme `app.js`, `auth.js`, `board_manager.js`) : seules ses fonctions pures sont testées, les `render*` sont de la glue DOM. `cognitive_dashboard.js` y a été ajouté (EPIC 19, 87 % lignes/branches). `analysis_feedback.js` y a été ajouté (EPIC 22, 100 %).
 
 **Mocks globaux (`tests/setup.js`) :**
 - `global.indexedDB = new IDBFactory()` (fake-indexeddb, réinitialisé dans `beforeEach`)
@@ -1610,6 +1639,7 @@ JWT_SECRET=ci-test-secret pytest tests/ -v
 | Fichier | Classes | TUs |
 |---|---|---|
 | `test_auth.py` | TestPasswordHashing (5), TestJWT (6 — dont **rejet `alg: none` et header `alg` falsifié**, audit 07/2026), TestSignup (4+3 US 6.1+2 US 6.2), TestLogin (4), TestMe (3+1 US 6.2), TestUpdateMe (7, US 6.3), TestUpdateSettings (8, EPIC 18), TestSync (4) | **47 TUs** |
+| `test_tactics_fallback.py` (EPIC 22, US 22.2) | TestDbClientFallback (6 — dépôt Postgres cassé/vide → seed in-memory, élargissement de pool tactique/finales), TestApiNeverFreezesUi (5 — `/tactics/next`, `/tactics/custom`, `/tactics/attempt`, `/endgames/next` répondent 200 même avec un dépôt Postgres défaillant) | **11 TUs** |
 | `test_main_api.py` (audit 07/2026) | TestHealth, TestGetGamesValidation (pseudo Chess.com : regex, injections de chemin rejetées **sans appel réseau**, bornes `limit`), TestGetGamesErrorMapping (404 joueur inconnu, 502 génériques **sans fuite du message interne**, 503 client absent), **TestJwtSecretFailFast (démarrage refusé avec le secret par défaut hors debug, autorisé en debug ou avec secret custom)**, TestChessComClientSafeEncoding (encodage URL du pseudo) | **18 TUs** |
 | `test_analyzer.py` | — | Analyse géométrique |
 | `test_elo.py` | — | Formules Elo/précision backend |
@@ -1648,7 +1678,7 @@ JWT_SECRET=ci-test-secret pytest tests/ -v
 | `test_db_srs_flashcards.py` | Store flashcards : création (calendrier SM-2 initial), liste/isolation par utilisateur, cartes dues (bornes de date), mise à jour de calendrier, reset | EPIC 20 |
 | `test_srs_flashcards_api.py` | Génération auto depuis une gaffe analysée (evals moteur), aucune flashcard sur partie propre, isolation entre utilisateurs, `POST /{id}/review` (rappel correct avance le calendrier, rappel incorrect réinitialise + révèle la solution), 404 carte inconnue/non-propriétaire, 401 sans JWT | EPIC 20 |
 
-**Couverture backend :** 783 TUs au total, couverture globale **89 %+** ; cœur Stats Avancées + EPIC 1/5.1/US 4.2/EPIC 19 à 92–100 % (`stats_aggregator`, `cadence`, `progress_history`, `models`, `engine`, `cognitive_load`, `srs_flashcards` à 100 %, `analysis_pipeline` 92 %, `routers/games` 92 %, `db_client` 98 %). Les requêtes SQL réelles de `pg_repository` (nécessitant une base) sont marquées `pragma: no cover`.
+**Couverture backend :** 794 TUs au total, couverture globale **89 %+** ; cœur Stats Avancées + EPIC 1/5.1/US 4.2/EPIC 19 à 92–100 % (`stats_aggregator`, `cadence`, `progress_history`, `models`, `engine`, `cognitive_load`, `srs_flashcards` à 100 %, `analysis_pipeline` 92 %, `routers/games` 92 %, `db_client` 98 %). Les requêtes SQL réelles de `pg_repository` (nécessitant une base) sont marquées `pragma: no cover`.
 
 **Architecture de test `test_auth.py` :**
 - App de test minimale (`FastAPI()` + routers auth/sync uniquement) pour éviter la dépendance `python-chess`
@@ -1844,6 +1874,8 @@ UNIQUE (user_id)
 | **Personnalisation Visuelle — Thème & Plateau** (EPIC 18, US 18.1/18.2/18.3) | `js/theme_service.js` + `PATCH /auth/me/settings` + `profiles.settings` (JSONB) + `board_manager.js:refreshTheme` + `index.html:#theme-modal`/`#btn-open-theme` + `assets/pieces/{cburnett,cyber-tactics}/` + `scripts/validate_assets.py` | Jeu de pièces (Cburnett/Cyber-Tactics avec lueur néon) + couleurs de plateau (4 présets) sélectionnables via modale, persistés serveur + cache local anti-flash, résilients à toute valeur invalide ; script bloquant le lancement de `serve.py` si un SVG de pièce manque |
 | **Dashboard de Performance Cognitive** (EPIC 19, US 19.1/19.2) | `domain/cognitive_load.py` + `routers/games.py:/stats/cognitive-load` + `js/cognitive_dashboard.js` + `index.html:#cog-dashboard-container` + `app.js:_loadAdvStats` | Carte CHARGE COGNITIVE de la vue Stats Avancées : temps de réflexion par phase/pression (graphe barre) + fluidité de décision (alerte fatigue décisionnelle), opérationnel et testé (backend + frontend + E2E) |
 | **Le Cimetière des Erreurs — Flashcards SRS** (EPIC 20, US 20.1/20.2) | `domain/srs_flashcards.py` + `routers/srs_flashcards.py` + `routers/games.py:run_analysis` + `index.html:#flashcards-col`/`#card-flashcards` + `app.js:_showFlashcards/_onFlashcardDrop/_submitFlashcardAttempt` | Chaque gaffe (perte ≥ 200cp) devient automatiquement une flashcard SM-2 ; vue plein écran Rappel Actif (échiquier indépendant, validation 100 % serveur, qualité déduite automatiquement) ; opérationnel et testé (backend + frontend + E2E) |
+| **Stabilisation Critique — feedback, fallback, auth, empty states** (EPIC 22, US 22.1-22.4) | `js/analysis_feedback.js` + `app.js` (`_toast` unique, `_showAnalysisAlert`, `_renderModulePlaceholders`, `_emptyStateHtml`) + `index.html:#analysis-alert` + `style.css` + `db_client.py` (fallback anti-404) + `auth.js` (`_apiBase` alignée sur ApiClient) | Une seule alerte d'analyse à la fois (bandeau panneau latéral, plus de toasts empilés) ; exercices toujours servis même si Postgres est cassé/vide ; placeholders des modules synchronisés avec la session (loader pendant `autoConnect`) ; Empty States avec CTA `[Analyser une partie]`/`[Réessayer]` ; pastilles EXERCICE libellées |
+
 
 ### ❌ Non câblé ou incomplet
 

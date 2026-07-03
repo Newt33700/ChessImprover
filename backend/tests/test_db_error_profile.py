@@ -61,8 +61,11 @@ class TestGetNextTacticalProblemForCategories:
         assert problem is not None
         assert problem["category"] in ("mate_in_1", "mate_in_2")
 
-    def test_empty_category_list_yields_no_problem(self):
-        assert db_client.get_next_tactical_problem_for_categories(1000, []) is None
+    def test_empty_category_list_widens_to_full_pool(self):
+        # EPIC 22 (US 22.2) : un pool vide est élargi à toutes les catégories
+        # plutôt que de renvoyer None (404 → « Impossible de charger »).
+        problem = db_client.get_next_tactical_problem_for_categories(1000, [])
+        assert problem is not None
 
     def test_single_category_matches_theme_filter(self):
         problem = db_client.get_next_tactical_problem_for_categories(1000, ["hanging_piece"])

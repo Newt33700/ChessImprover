@@ -297,10 +297,20 @@
             <div id="exercise-preview-card" class="exercise-preview">
               <p class="empty-state">Aucun exercice disponible. Analysez des parties pour en générer.</p>
             </div>
-            <div class="exo-medals" aria-hidden="true">
-              <span class="exo-medal exo-medal--gold">♟</span>
-              <span class="exo-medal exo-medal--bronze">♟</span>
-              <span class="exo-medal exo-medal--silver">♟</span>
+            <!-- US 22.4 : chaque pastille est libellée (plus d'icônes muettes) -->
+            <div class="exo-medals">
+              <div class="exo-medal-wrap">
+                <span class="exo-medal exo-medal--gold" title="Exercices réussis du premier coup">♟</span>
+                <span class="exo-medal-label">Réussi</span>
+              </div>
+              <div class="exo-medal-wrap">
+                <span class="exo-medal exo-medal--bronze" title="Exercices à revoir (réussis avec hésitation)">♟</span>
+                <span class="exo-medal-label">À revoir</span>
+              </div>
+              <div class="exo-medal-wrap">
+                <span class="exo-medal exo-medal--silver" title="Exercices échoués — reprogrammés en priorité">♟</span>
+                <span class="exo-medal-label">Échoué</span>
+              </div>
             </div>
           </div>
         </div>
@@ -462,6 +472,8 @@
           </div>
 
           <aside class="side-panel">
+            <!-- US 22.1 : alerte d'analyse unique, hors de la zone échiquier -->
+            <div id="analysis-alert" class="analysis-alert" role="status" aria-live="polite" hidden></div>
             <div id="move-info" class="move-info-box"></div>
             <div id="accuracy-bar" class="accuracy-bar-wrap" hidden>
               <div class="accuracy-bar-label">
@@ -851,6 +863,7 @@
 <script src="assets/js/chart-4.4.0.umd.js"></script>
 <script src="js/db.js"></script>
 <script src="js/theme_service.js"></script>
+<script src="js/analysis_feedback.js"></script>
 <script src="js/board_manager.js"></script>
 <script src="js/coaching_voice.js"></script>
 <script src="js/wp_chart.js"></script>
