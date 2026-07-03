@@ -149,3 +149,60 @@ class TestBuildClientEngine:
         pos = engine.analyse("FEN")
         assert pos.best.is_mate is True
         assert pos.best.mate_in == 3
+
+
+# ---------------------------------------------------------------------------
+# EPIC 19/20 : fen / best_move_san / time_spent_seconds
+# ---------------------------------------------------------------------------
+
+CLOCK_PGN = (
+    '[Event "x"][Result "*"][TimeControl "600+0"]\n\n'
+    "1. e4 {[%clk 0:10:00]} e5 {[%clk 0:10:00]} "
+    "2. Nf3 {[%clk 0:09:40]} Nc6 {[%clk 0:09:50]} *"
+)
+
+
+class TestFenAndBestMoveSan:
+    def test_fen_present_without_engine(self):
+        out = analyze_pgn(PGN)
+        assert out["moves"][0]["fen"] == chess.Board().fen()
+        assert out["moves"][0]["best_move_san"] is None
+
+    def test_best_move_san_from_engine(self):
+        engine = build_client_engine(_evals_for(PGN, played=40, best_delta=0))
+        out = analyze_pgn(PGN, engine)
+        # best_delta=0 -> le meilleur coup ("0000" = null move) reste inconnu
+        # en SAN (coup nul), donc None : on vérifie plutôt un cas où le
+        # meilleur coup EST un coup réel.
+        assert "best_move_san" in out["moves"][0]
+
+    def test_best_move_san_resolves_real_move(self):
+        game = chess.pgn.read_game(io.StringIO(PGN))
+        board = game.board()
+        first_move = next(iter(game.mainline_moves()))
+        evals = {board.fen(): [[first_move.uci(), 40]]}
+        out = analyze_pgn(PGN, build_client_engine(evals))
+        assert out["moves"][0]["best_move_san"] == board.san(first_move)
+
+
+class TestTimeSpentSeconds:
+    def test_no_clocks_yields_none(self):
+        out = analyze_pgn(PGN)
+        assert all(m["time_spent_seconds"] is None for m in out["moves"])
+
+    def test_first_move_per_color_is_none(self):
+        out = analyze_pgn(CLOCK_PGN)
+        assert out["moves"][0]["time_spent_seconds"] is None  # e4 (blanc, 1er)
+        assert out["moves"][1]["time_spent_seconds"] is None  # e5 (noir, 1er)
+
+    def test_subsequent_move_time_computed(self):
+        out = analyze_pgn(CLOCK_PGN)
+        # Nf3 : 10:00 -> 9:40 = 20s (pas d'incrément, TimeControl "600+0")
+        assert out["moves"][2]["time_spent_seconds"] == 20.0
+        # Nc6 : 10:00 -> 9:50 = 10s
+        assert out["moves"][3]["time_spent_seconds"] == 10.0
+
+    def test_explicit_time_control_overrides_header(self):
+        out = analyze_pgn(CLOCK_PGN, time_control="600+5")
+        # incrément 5s retranché : 20s de chute d'horloge + 5s d'incrément = 25s réels
+        assert out["moves"][2]["time_spent_seconds"] == 25.0

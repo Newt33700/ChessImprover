@@ -666,6 +666,79 @@ def get_best_sprint() -> Optional[Dict[str, Any]]:
     return max(finished, key=lambda s: s["score"])
 
 
+
+# ---------------------------------------------------------------------------
+# EPIC 20 — Flashcards SRS auto-générées (US 20.1/20.2)
+# ---------------------------------------------------------------------------
+
+_srs_flashcards: Dict[str, Dict[str, Any]] = {}  # keyed by card id
+
+
+def create_flashcard(user_id: str, game_id: Optional[str], fen: str, solution: str) -> Dict[str, Any]:
+    """Crée une flashcard au calendrier SM-2 initial (US 20.1)."""
+    repo = _pg()
+    if repo is not None:  # pragma: no cover - nécessite DATABASE_URL
+        return repo.create_flashcard(user_id, game_id, fen, solution)
+    from app.domain.srs_flashcards import DEFAULT_EASE_FACTOR, DEFAULT_INTERVAL_DAYS
+
+    card_id = str(uuid.uuid4())
+    card = {
+        "id": card_id,
+        "user_id": user_id,
+        "game_id": game_id,
+        "fen": fen,
+        "solution": solution,
+        "ease_factor": DEFAULT_EASE_FACTOR,
+        "interval_days": DEFAULT_INTERVAL_DAYS,
+        "repetitions": 0,
+        "due_date": datetime.now(timezone.utc).date().isoformat(),
+    }
+    _srs_flashcards[card_id] = card
+    return card
+
+
+def get_flashcards(user_id: str) -> List[Dict[str, Any]]:
+    """Toutes les flashcards de l'utilisateur (le « Cimetière des Erreurs »)."""
+    repo = _pg()
+    if repo is not None:  # pragma: no cover - nécessite DATABASE_URL
+        return repo.get_flashcards(user_id)
+    return [c for c in _srs_flashcards.values() if c["user_id"] == user_id]
+
+
+def get_flashcard(card_id: str) -> Optional[Dict[str, Any]]:
+    repo = _pg()
+    if repo is not None:  # pragma: no cover - nécessite DATABASE_URL
+        return repo.get_flashcard(card_id)
+    return _srs_flashcards.get(card_id)
+
+
+def get_due_flashcards(user_id: str, today: str) -> List[Dict[str, Any]]:
+    """Flashcards dont l'échéance de révision (US 20.2, Recall Training) est atteinte."""
+    repo = _pg()
+    if repo is not None:  # pragma: no cover - nécessite DATABASE_URL
+        return repo.get_due_flashcards(user_id, today)
+    return [
+        c for c in _srs_flashcards.values()
+        if c["user_id"] == user_id and c["due_date"] <= today
+    ]
+
+
+def update_flashcard_schedule(
+    card_id: str, ease_factor: float, interval_days: int, repetitions: int, due_date: str
+) -> Optional[Dict[str, Any]]:
+    repo = _pg()
+    if repo is not None:  # pragma: no cover - nécessite DATABASE_URL
+        return repo.update_flashcard_schedule(card_id, ease_factor, interval_days, repetitions, due_date)
+    card = _srs_flashcards.get(card_id)
+    if card is None:
+        return None
+    card["ease_factor"] = ease_factor
+    card["interval_days"] = interval_days
+    card["repetitions"] = repetitions
+    card["due_date"] = due_date
+    return card
+
+
 def _reset_store() -> None:
     """Reset in-memory store between tests."""
     _users.clear()
@@ -677,3 +750,4 @@ def _reset_store() -> None:
     _opening_lines.clear()
     _error_profiles.clear()
     _tactical_sprints.clear()
+    _srs_flashcards.clear()

@@ -18,7 +18,10 @@ import chess
 import chess.pgn
 
 from app.domain.acpl import centipawn_loss
+from app.domain.analyzer import read_mainline_clocks
+from app.domain.cadence import parse_increment
 from app.domain.coaching_voice import attach_move_alert
+from app.domain.cognitive_load import derive_time_spent
 from app.domain.move_class import classify_position
 from app.domain.phases import segment_phases
 from app.infrastructure.engine import (
@@ -64,6 +67,9 @@ def _blank_record(board: chess.Board, move: chess.Move, phase) -> Dict[str, Any]
         "mate_in": None,
         "phase": phase.value,
         "position_type": "neutral",
+        "fen": board.fen(),
+        "best_move_san": None,
+        "time_spent_seconds": None,
     }
 
 
@@ -89,6 +95,14 @@ def _enrich_with_engine(
         record["score_cp"] = played_cp
         record["cpl"] = centipawn_loss(best.score_cp, played_cp)
 
+    # US 20.1 : SAN du meilleur coup, base de la génération auto de flashcards
+    # SRS sur les gaffes (`domain.srs_flashcards`) — jamais exposé au client
+    # avant tentative, comme tout le reste des solutions du produit.
+    try:
+        record["best_move_san"] = chess.Board(fen).san(chess.Move.from_uci(best.move_uci))
+    except (ValueError, AssertionError):
+        record["best_move_san"] = None
+
 
 def _extract_opening(headers: Any) -> tuple:
     """Extrait ``(eco, opening_name)`` des en-têtes PGN (US 4.2 — top 3 ouvertures).
@@ -111,12 +125,21 @@ def _extract_opening(headers: Any) -> tuple:
     return eco, name
 
 
-def analyze_pgn(pgn: str, engine: Optional[EngineProvider] = None) -> Dict[str, Any]:
+def analyze_pgn(
+    pgn: str, engine: Optional[EngineProvider] = None, time_control: Optional[str] = None
+) -> Dict[str, Any]:
     """Analyse un PGN et renvoie ``{"result", "eco", "opening_name", "moves": [...]}``.
 
     Chaque ``record`` de ``moves`` suit le schéma ``game_moves`` (US 1.2). Sans
     moteur, les évaluations restent ``None`` mais les phases et coups sont
     produits. ``eco``/``opening_name`` sont ``None`` si absents du PGN.
+
+    Parameters
+    ----------
+    time_control : str, optional
+        Cadence Chess.com (``"180+2"``), pour corriger l'incrément dans le
+        calcul du temps de réflexion (EPIC 19, US 19.1/19.2). Sans valeur
+        explicite, l'en-tête PGN ``TimeControl`` sert de repli.
     """
     empty = {"result": None, "eco": None, "opening_name": None, "moves": []}
     try:
@@ -147,5 +170,13 @@ def analyze_pgn(pgn: str, engine: Optional[EngineProvider] = None) -> Dict[str, 
         # position APRÈS le coup pour détecter une pièce laissée en prise.
         attach_move_alert(record, cursor, mover_color)
         records.append(record)
+
+    tc = time_control or (game.headers.get("TimeControl") if game.headers else None)
+    increment = parse_increment(tc)
+    clocks = read_mainline_clocks(game)
+    colors = [r["color"] for r in records]
+    time_spent = derive_time_spent(clocks, colors, increment)
+    for record, spent in zip(records, time_spent):
+        record["time_spent_seconds"] = spent
 
     return {"result": result, "eco": eco, "opening_name": opening_name, "moves": records}

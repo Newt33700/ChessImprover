@@ -264,6 +264,37 @@ const ApiClient = (() => {
     return _json(await fetch(url("/api/v1/sprints/ghost"), { headers: _authHeaders() }));
   }
 
+  /**
+   * Dashboard de Performance Cognitive (EPIC 19, US 19.1/19.2) : répartition
+   * du temps de réflexion par phase/pression + fluidité de décision.
+   */
+  async function getCognitiveLoad() {
+    return _json(await fetch(url("/api/v1/stats/cognitive-load"), { headers: _authHeaders() }));
+  }
+
+  /** Le Cimetière des Erreurs complet (EPIC 20, US 20.1) — jamais la solution. */
+  async function getFlashcards() {
+    return _json(await fetch(url("/api/v1/flashcards"), { headers: _authHeaders() }));
+  }
+
+  /** Flashcards dont l'échéance de révision est atteinte (EPIC 20, US 20.2). */
+  async function getDueFlashcards() {
+    return _json(await fetch(url("/api/v1/flashcards/due"), { headers: _authHeaders() }));
+  }
+
+  /**
+   * Soumet une tentative de rappel actif (EPIC 20, US 20.2). La validation
+   * du coup et la qualité SM-2 (déduite du résultat) sont 100 % serveur.
+   */
+  async function reviewFlashcard(cardId, move) {
+    const res = await fetch(url(`/api/v1/flashcards/${cardId}/review`), {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ..._authHeaders() },
+      body: JSON.stringify({ move }),
+    });
+    return _json(res);
+  }
+
   /** Vrai si une base API est configurée (sinon, mode 100 % local). */
   function isConfigured() {
     return baseUrl() !== "";
@@ -277,6 +308,7 @@ const ApiClient = (() => {
     getErrorProfile, getCustomTacticalProblem,
     startSprint, submitSprintAttempt, finishSprint, getGhostReplay,
     getStatsSummary, getStatsHistory, isConfigured,
+    getCognitiveLoad, getFlashcards, getDueFlashcards, reviewFlashcard,
   };
 })();
 

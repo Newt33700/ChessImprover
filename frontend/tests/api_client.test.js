@@ -420,3 +420,50 @@ describe("Entraîneur d'Ouvertures (EPIC 9)", () => {
     expect(out).toEqual({ deleted: true });
   });
 });
+
+describe("Dashboard Cognitif (EPIC 19, US 19.1/19.2)", () => {
+  test("getCognitiveLoad GET /api/v1/stats/cognitive-load", async () => {
+    global.fetch = jest.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ time_allocation: { by_phase: {}, by_pressure: {}, sample_size: 0 }, decision_fluidity: { top3: {}, weak: {}, decision_fatigue: false } }),
+    });
+    const out = await ApiClient.getCognitiveLoad();
+    expect(global.fetch.mock.calls[0][0]).toBe("/api/v1/stats/cognitive-load");
+    expect(out.decision_fluidity.decision_fatigue).toBe(false);
+  });
+
+  test("rejette sur HTTP non-ok", async () => {
+    global.fetch = jest.fn().mockResolvedValue({ ok: false, status: 401 });
+    await expect(ApiClient.getCognitiveLoad()).rejects.toThrow("HTTP 401");
+  });
+});
+
+describe("Le Cimetière des Erreurs (EPIC 20, US 20.1/20.2)", () => {
+  test("getFlashcards GET /api/v1/flashcards", async () => {
+    global.fetch = jest.fn().mockResolvedValue({ ok: true, json: async () => ([]) });
+    await ApiClient.getFlashcards();
+    expect(global.fetch.mock.calls[0][0]).toBe("/api/v1/flashcards");
+  });
+
+  test("getDueFlashcards GET /api/v1/flashcards/due", async () => {
+    global.fetch = jest.fn().mockResolvedValue({ ok: true, json: async () => ([]) });
+    await ApiClient.getDueFlashcards();
+    expect(global.fetch.mock.calls[0][0]).toBe("/api/v1/flashcards/due");
+  });
+
+  test("reviewFlashcard POST .../review avec le coup joué", async () => {
+    global.fetch = jest.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ success: true, solution: "Qd4+", ease_factor: 2.6, interval_days: 1, repetitions: 1, due_date: "2026-07-02" }),
+    });
+    const out = await ApiClient.reviewFlashcard("c1", "Qd4+");
+    expect(global.fetch.mock.calls[0][0]).toBe("/api/v1/flashcards/c1/review");
+    expect(JSON.parse(global.fetch.mock.calls[0][1].body)).toEqual({ move: "Qd4+" });
+    expect(out.success).toBe(true);
+  });
+
+  test("rejette sur HTTP non-ok (404 carte inconnue)", async () => {
+    global.fetch = jest.fn().mockResolvedValue({ ok: false, status: 404 });
+    await expect(ApiClient.reviewFlashcard("missing", "Qd4+")).rejects.toThrow("HTTP 404");
+  });
+});

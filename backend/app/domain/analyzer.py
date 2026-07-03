@@ -149,12 +149,17 @@ def find_fork_moves(
     return forks
 
 
-def _read_mainline_clocks(
+def read_mainline_clocks(
     game: chess.pgn.Game,
 ) -> List[Optional[float]]:
     """Construit la liste des horloges après chaque coup de la ligne principale.
 
     L'index ``i`` correspond au i-ème coup (0-based). ``None`` si pas de balise.
+
+    Fonction publique (au lieu de privée) : réutilisée telle quelle par
+    ``domain.analysis_pipeline`` pour dériver le temps de réflexion par coup
+    (EPIC 19, US 19.1/19.2) — une seule source de vérité pour la lecture des
+    horloges PGN, au lieu de dupliquer la traversée de l'arbre `chess.pgn`.
     """
     clocks: List[Optional[float]] = []
     node = game
@@ -198,7 +203,7 @@ def analyze_pgn(pgn: str, player_color: str = "w") -> GeometricReport:
     board = game.board()
     node = game
 
-    clocks = _read_mainline_clocks(game)
+    clocks = read_mainline_clocks(game)
     player_clock_before: Optional[float] = None  # horloge du joueur avant son coup
 
     move_index = 0

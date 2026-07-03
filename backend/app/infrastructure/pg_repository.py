@@ -113,6 +113,7 @@ class PgRepository:
     _MOVE_COLS = (
         "move_number", "color", "move_san", "eval_before", "eval_after",
         "score_cp", "cpl", "is_mate", "mate_in", "phase", "position_type",
+        "fen", "best_move_san", "time_spent_seconds",
         # EPIC 14 (US 14.1/14.2) : alerte vocale contextuelle, optionnelle.
         "alert_severity", "alert_text", "tts_text",
     )
@@ -361,4 +362,56 @@ class PgRepository:
         with self._connect() as conn, conn.cursor() as cur:
             cur.execute(sql)
             row = cur.fetchone()
+            return self._iso(dict(row)) if row else None
+
+    # -- EPIC 20 : flashcards SRS auto-générées (US 20.1/20.2) ----------------
+
+    def create_flashcard(
+        self, user_id: str, game_id: Optional[str], fen: str, solution: str
+    ) -> Dict[str, Any]:  # pragma: no cover - nécessite une base réelle
+        sql = (
+            "INSERT INTO srs_flashcards (user_id, game_id, fen, solution) "
+            "VALUES (%s::uuid, %s::uuid, %s, %s) RETURNING *"
+        )
+        with self._connect() as conn, conn.cursor() as cur:
+            cur.execute(sql, (user_id, game_id, fen, solution))
+            row = cur.fetchone()
+            conn.commit()
+        return self._iso(dict(row))
+
+    def get_flashcards(self, user_id: str) -> List[Dict[str, Any]]:  # pragma: no cover
+        sql = "SELECT * FROM srs_flashcards WHERE user_id = %s::uuid"
+        with self._connect() as conn, conn.cursor() as cur:
+            cur.execute(sql, (user_id,))
+            return [self._iso(dict(r)) for r in cur.fetchall()]
+
+    def get_flashcard(self, card_id: str) -> Optional[Dict[str, Any]]:  # pragma: no cover
+        sql = "SELECT * FROM srs_flashcards WHERE id = %s::uuid"
+        with self._connect() as conn, conn.cursor() as cur:
+            cur.execute(sql, (card_id,))
+            row = cur.fetchone()
+            return self._iso(dict(row)) if row else None
+
+    def get_due_flashcards(
+        self, user_id: str, today: str
+    ) -> List[Dict[str, Any]]:  # pragma: no cover - nécessite une base réelle
+        sql = (
+            "SELECT * FROM srs_flashcards "
+            "WHERE user_id = %s::uuid AND due_date <= %s::date"
+        )
+        with self._connect() as conn, conn.cursor() as cur:
+            cur.execute(sql, (user_id, today))
+            return [self._iso(dict(r)) for r in cur.fetchall()]
+
+    def update_flashcard_schedule(
+        self, card_id: str, ease_factor: float, interval_days: int, repetitions: int, due_date: str
+    ) -> Optional[Dict[str, Any]]:  # pragma: no cover - nécessite une base réelle
+        sql = (
+            "UPDATE srs_flashcards SET ease_factor = %s, interval_days = %s, "
+            "repetitions = %s, due_date = %s::date WHERE id = %s::uuid RETURNING *"
+        )
+        with self._connect() as conn, conn.cursor() as cur:
+            cur.execute(sql, (ease_factor, interval_days, repetitions, due_date, card_id))
+            row = cur.fetchone()
+            conn.commit()
             return self._iso(dict(row)) if row else None

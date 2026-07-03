@@ -47,6 +47,26 @@ def estimate_seconds(time_control: Optional[str]) -> Optional[int]:
         return None
 
 
+def parse_increment(time_control: Optional[str]) -> int:
+    """Incrément (secondes/coup) d'un ``time_control`` Chess.com, ``0`` si absent.
+
+    Utilisé par ``domain.cognitive_load`` (EPIC 19) pour corriger le temps de
+    réflexion mesuré depuis les horloges PGN : l'incrément est rajouté au
+    compteur après chaque coup, il faut le retrancher pour retrouver le temps
+    réellement consommé (sinon un coup joué très vite avec un gros incrément
+    peut faire *remonter* l'horloge et fausser le calcul vers le bas).
+    """
+    if not time_control:
+        return 0
+    tc = time_control.strip()
+    if "/" in tc or "+" not in tc:
+        return 0
+    try:
+        return int(tc.split("+", 1)[1])
+    except ValueError:
+        return 0
+
+
 def classify_cadence(time_control: Optional[str]) -> Optional[TimeClass]:
     """Classe un ``time_control`` Chess.com en ``TimeClass``.
 

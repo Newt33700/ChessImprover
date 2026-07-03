@@ -32,6 +32,7 @@ from app.routers import endgames as endgames_router
 from app.routers import error_profile as error_profile_router
 from app.routers import games as games_router
 from app.routers import openings_trainer as openings_trainer_router
+from app.routers import srs_flashcards as srs_flashcards_router
 from app.routers import sync as sync_router
 from app.routers import tactical_sprint as tactical_sprint_router
 from app.routers import tactics as tactics_router
@@ -78,6 +79,7 @@ app.include_router(openings_trainer_router.router)
 app.include_router(endgames_router.router)
 app.include_router(error_profile_router.router)
 app.include_router(tactical_sprint_router.router)
+app.include_router(srs_flashcards_router.router)
 
 
 # ---------------------------------------------------------------------------

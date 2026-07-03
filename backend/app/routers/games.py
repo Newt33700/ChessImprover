@@ -21,6 +21,7 @@ logger = logging.getLogger(__name__)
 
 from app.config import settings
 from app.domain.analysis_pipeline import analyze_pgn, build_client_engine, compute_pgn_hash
+from app.domain.cognitive_load import build_decision_fluidity_report, build_time_allocation_report
 from app.domain.error_profile import ERROR_TYPES, detect_error_occurrences, update_frequency_score
 from app.domain.game_salvage import find_defeat_pivot, reconstruct_position_before_move
 from app.domain.models import (
@@ -31,6 +32,7 @@ from app.domain.models import (
     GameStatusUpdate,
 )
 from app.domain.progress_history import build_snapshot, filter_history_by_days
+from app.domain.srs_flashcards import extract_blunder_flashcards
 from app.domain.stats_aggregator import build_summary
 from app.infrastructure import db_client
 from app.infrastructure.engine import EngineProvider, NativeStockfishEngine
@@ -70,7 +72,7 @@ def run_analysis(
     """Analyse une partie et persiste les métriques (bulk), puis met à jour le statut."""
     try:
         engine = _select_engine(evals)
-        outcome = analyze_pgn(pgn, engine)
+        outcome = analyze_pgn(pgn, engine, time_control)
         db_client.bulk_insert_moves(game_id, outcome["moves"])
         db_client.update_game(
             game_id,
@@ -112,6 +114,19 @@ def run_analysis(
                 db_client.upsert_error_profile(user_id, error_type, new_score, now_iso)
     except Exception:  # pragma: no cover - garde-fou worker
         logger.exception("run_analysis: échec de la mise à jour du profil d'erreurs")
+
+    # EPIC 20 (US 20.1) : Le Cimetière des Erreurs — flashcards SRS auto-générées
+    # depuis les gaffes de la partie. Même garde-fou que les deux blocs
+    # ci-dessus : ne doit jamais faire échouer l'analyse déjà persistée.
+    try:
+        if user_id:
+            own_moves = [m for m in outcome["moves"] if m.get("color") == user_color]
+            for candidate in extract_blunder_flashcards(own_moves):
+                db_client.create_flashcard(
+                    user_id, game_id, candidate["fen"], candidate["solution"]
+                )
+    except Exception:  # pragma: no cover - garde-fou worker
+        logger.exception("run_analysis: échec de la génération des flashcards SRS")
 
 
 # ---------------------------------------------------------------------------
@@ -282,3 +297,32 @@ async def stats_history(
             for row in filtered
         ],
     }
+
+
+@router.get("/stats/cognitive-load")
+async def stats_cognitive_load(user_id: str = Depends(get_current_user_id)) -> Dict[str, Any]:
+    """Dashboard de Performance Cognitive (EPIC 19, US 19.1/19.2).
+
+    Agrège tous les coups (toutes parties analysées confondues, comme
+    ``/stats/summary``) en deux vues : répartition du temps de réflexion par
+    phase/pression (US 19.1) et fluidité de décision (US 19.2). Dégrade en
+    résumé vide (200) plutôt qu'un 500 si la base est indisponible.
+    """
+    try:
+        games = db_client.get_completed_games(user_id)
+        own_moves: List[Dict[str, Any]] = []
+        for g in games:
+            color = g.get("user_color", "white")
+            own_moves.extend(
+                m for m in db_client.get_moves_for_game(g["id"]) if m.get("color") == color
+            )
+        return {
+            "time_allocation": build_time_allocation_report(own_moves),
+            "decision_fluidity": build_decision_fluidity_report(own_moves),
+        }
+    except Exception:
+        logger.exception("stats/cognitive-load: échec d'accès aux données, résumé vide renvoyé")
+        return {
+            "time_allocation": build_time_allocation_report([]),
+            "decision_fluidity": build_decision_fluidity_report([]),
+        }

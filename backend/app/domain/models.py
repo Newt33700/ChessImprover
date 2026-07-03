@@ -463,6 +463,35 @@ class GameMoveRecord(BaseModel):
     mate_in: Optional[int] = None
     phase: Phase = Phase.MIDDLEGAME
     position_type: str = "neutral"
+    fen: Optional[str] = Field(None, description="FEN avant le coup (EPIC 19/20)")
+    best_move_san: Optional[str] = Field(None, description="Meilleur coup SAN, jamais exposé avant tentative (US 20.1)")
+    time_spent_seconds: Optional[float] = Field(None, description="Temps de réflexion du joueur (EPIC 19)")
+
+
+class FlashcardPublic(BaseModel):
+    """Flashcard SRS auto-générée depuis une gaffe (EPIC 20, US 20.1) — jamais
+    ``solution`` avant tentative, même politique que les problèmes tactiques."""
+    id: str
+    fen: str
+    due_date: str
+    ease_factor: float
+    interval_days: int
+    repetitions: int
+
+
+class FlashcardReviewRequest(BaseModel):
+    """Coup tenté pour se rappeler la solution d'une flashcard (US 20.2)."""
+    move: str = Field(..., min_length=2, description="Coup joué en notation SAN")
+
+
+class FlashcardReviewResult(BaseModel):
+    """Résultat d'une révision : révèle la solution + nouveau calendrier SM-2."""
+    success: bool
+    solution: str
+    ease_factor: float
+    interval_days: int
+    repetitions: int
+    due_date: str
 
 
 class GameRecord(BaseModel):

@@ -1966,6 +1966,146 @@ class ChessImproverApp {
     }
   }
 
+  // ─── Le Cimetière des Erreurs — Recall Training (EPIC 20, US 20.1/20.2) ──
+
+  _showFlashcards() {
+    document.body.classList.add("flashcards-active");
+    this._loadFlashcardQueue();
+  }
+
+  _hideFlashcards() {
+    document.body.classList.remove("flashcards-active");
+  }
+
+  /** Récupère la file du jour (US 20.2) et affiche la première carte due. */
+  async _loadFlashcardQueue() {
+    const body = document.getElementById("flashcards-problem-body");
+    if (!body) return;
+    if (!window.ApiClient || !ApiClient.isConfigured() || !window.Auth?.isLoggedIn()) {
+      body.innerHTML = `<p class="empty-state">Connectez-vous pour accéder au Cimetière des Erreurs.</p>`;
+      return;
+    }
+    body.innerHTML = `<p class="empty-state">Chargement…</p>`;
+    try {
+      this._flashcardQueue = await ApiClient.getDueFlashcards();
+    } catch {
+      this._flashcardQueue = [];
+    }
+    const badge = document.getElementById("flashcards-due-badge");
+    if (badge) badge.textContent = `${this._flashcardQueue.length} à réviser`;
+    this._loadNextFlashcard();
+  }
+
+  /** Affiche la prochaine carte de la file, ou un état vide si épuisée. */
+  _loadNextFlashcard() {
+    const body = document.getElementById("flashcards-problem-body");
+    if (!body) return;
+    const card = this._flashcardQueue?.shift();
+    if (!card) {
+      body.innerHTML = `<p class="empty-state">Aucune flashcard à réviser aujourd'hui — reviens plus tard !</p>`;
+      return;
+    }
+    body.innerHTML = `
+      <div class="tactics-board" id="flashcards-board"></div>
+      <p class="tactics-feedback" id="flashcards-feedback"></p>
+    `;
+    this._currentFlashcard = card;
+    this._flashcardSolved = false;
+    this._initFlashcardBoard(card);
+  }
+
+  /**
+   * Échiquier jouable indépendant, même stratégie que `_initTacticsBoard`
+   * (US 8.3) : pas de moteur, pas de couplage au `#board` partagé.
+   */
+  _initFlashcardBoard(card) {
+    if (typeof Chess === "undefined" || typeof Chessboard === "undefined") return;
+    this._flashcardChess = new Chess(card.fen);
+    const orientation = this._flashcardChess.turn() === "w" ? "white" : "black";
+    this._flashcardBoard = Chessboard("flashcards-board", {
+      draggable: true,
+      position: card.fen,
+      orientation,
+      pieceTheme: "assets/images/pieces/{piece}.svg",
+      onDragStart: (src, piece) => this._onFlashcardDragStart(src, piece),
+      onDrop: (src, tgt) => this._onFlashcardDrop(src, tgt),
+      onSnapEnd: () => this._flashcardBoard.position(this._flashcardChess.fen()),
+    });
+  }
+
+  _onFlashcardDragStart(src, piece) {
+    if (this._flashcardSolved || !this._flashcardChess || this._flashcardChess.game_over()) return false;
+    const turn = this._flashcardChess.turn();
+    if ((turn === "w" && piece.startsWith("b")) || (turn === "b" && piece.startsWith("w"))) return false;
+    return true;
+  }
+
+  /**
+   * Coup relâché sur l'échiquier : légalité vérifiée localement (chess.js)
+   * pour le feedback immédiat ; la validation de la *solution* reste 100 %
+   * serveur via `ApiClient.reviewFlashcard` (même politique anti-triche
+   * que le Coach Tactique, US 8.3).
+   */
+  _onFlashcardDrop(src, tgt) {
+    if (this._flashcardSolved) return "snapback";
+    const move = this._flashcardChess.move({ from: src, to: tgt, promotion: "q" });
+    if (move === null) return "snapback";
+    this._flashcardSolved = true;
+    this._submitFlashcardAttempt(move.san);
+  }
+
+  async _submitFlashcardAttempt(san) {
+    const boardEl = document.getElementById("flashcards-board");
+    const feedback = document.getElementById("flashcards-feedback");
+    const card = this._currentFlashcard;
+    try {
+      const result = await ApiClient.reviewFlashcard(card.id, san);
+      boardEl?.classList.add(result.success ? "tactics-board--success" : "tactics-board--error");
+      if (feedback) {
+        feedback.classList.add(result.success ? "tactics-feedback--success" : "tactics-feedback--error");
+        feedback.textContent = result.success
+          ? `Bravo, tu t'en souvenais ! Prochaine révision dans ${result.interval_days} j.`
+          : `Raté. Solution : ${result.solution}. La carte revient bientôt.`;
+      }
+      if (result.success) {
+        const { xp, level } = XPSystem.add(XP_PER_EXERCISE);
+        this._renderXP(xp, level);
+        StreakSystem.record();
+      }
+      setTimeout(() => this._loadNextFlashcard(), 1600);
+    } catch {
+      if (feedback) feedback.textContent = "Erreur lors de la validation du coup.";
+      this._flashcardSolved = false;
+    }
+  }
+
+  /**
+   * Résumé du Cimetière (total générées + dues) dans le dashboard
+   * Statistiques Avancées (EPIC 20, câblé depuis `_loadAdvStats`).
+   */
+  async _loadFlashcardsSummary() {
+    const container = document.getElementById("flashcards-summary");
+    if (!container) return;
+    if (!window.ApiClient || !ApiClient.isConfigured() || !window.Auth?.isLoggedIn()) {
+      container.innerHTML = `<p class="empty-state">Connectez-vous pour voir vos flashcards.</p>`;
+      return;
+    }
+    try {
+      const [all, due] = await Promise.all([ApiClient.getFlashcards(), ApiClient.getDueFlashcards()]);
+      container.innerHTML = `
+        <div class="tac-rating">${all.length}</div>
+        <div class="tac-rating-label">Flashcards générées</div>
+        <div class="tac-stats">
+          <div class="tac-stat"><strong>${due.length}</strong><span>À RÉVISER</span></div>
+        </div>
+        <button class="btn btn--accent btn--full btn--sm" id="btn-review-flashcards">Rappel Actif →</button>
+      `;
+      container.querySelector("#btn-review-flashcards")?.addEventListener("click", () => this._showFlashcards());
+    } catch {
+      container.innerHTML = `<p class="empty-state">Impossible de charger les flashcards pour le moment.</p>`;
+    }
+  }
+
   // ─── Entraîneur d'Ouvertures — Répertoire + SRS (EPIC 9) ──────────────
 
   _showOpeningsTrainer() {
@@ -2485,6 +2625,14 @@ class ChessImproverApp {
     }
     this._advSummary = await AdvancedStats.fetchSummary(this._advPeriod);
     await this._loadProgressChart();
+
+    // EPIC 19 (US 19.1/19.2) + EPIC 20 (US 20.1) : indépendants du résumé
+    // AdvancedStats (routes/agrégations distinctes), donc jamais bloqués par
+    // un état vide de ce dernier.
+    if (window.CognitiveDashboard) {
+      CognitiveDashboard.render("cog-dashboard-container", "cog-phase-chart");
+    }
+    this._loadFlashcardsSummary();
 
     // État vide : aucune partie analysée → message explicite (pas de tableau cassé).
     if (AdvancedStats.isEmpty(this._advSummary)) {
