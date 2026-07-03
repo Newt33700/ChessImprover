@@ -104,6 +104,47 @@ const ChessDB = (() => {
     return get("openings_cache", epd);
   }
 
+  // ── Livre d'ouvertures complet (EPIC 25, US 25.2 — gap §10.2 fermé) ──
+  // Le Set d'EPD (~28k positions) était reparsé depuis les 5 TSV à chaque
+  // refresh (~5 requêtes réseau + ~2s de chess.js). Il est désormais mis en
+  // cache dans `openings_cache` sous une clé réservée, avec un TTL de 7 jours.
+
+  const OPENING_BOOK_KEY = "__opening_book__";
+  const OPENING_BOOK_TTL_MS = 7 * 24 * 3600 * 1000;
+
+  /** Vrai si l'entrée de cache du livre est encore fraîche (TTL 7 jours). */
+  function isOpeningBookFresh(entry, now = Date.now()) {
+    return !!(entry
+      && Array.isArray(entry.epds)
+      && entry.epds.length > 0
+      && typeof entry.savedAt === "number"
+      && now - entry.savedAt < OPENING_BOOK_TTL_MS);
+  }
+
+  /** Liste d'EPD du livre en cache, ou `null` si absente/périmée/corrompue. */
+  async function getOpeningBook() {
+    try {
+      const entry = await get("openings_cache", OPENING_BOOK_KEY);
+      return isOpeningBookFresh(entry) ? entry.epds : null;
+    } catch {
+      return null;
+    }
+  }
+
+  /** Persiste la liste d'EPD du livre (horodatée pour le TTL). Best-effort. */
+  async function saveOpeningBook(epds) {
+    if (!Array.isArray(epds) || !epds.length) return null;
+    try {
+      return await put("openings_cache", {
+        epd: OPENING_BOOK_KEY,
+        epds,
+        savedAt: Date.now(),
+      });
+    } catch {
+      return null;
+    }
+  }
+
   // ── Migration from localStorage ──────────────────────────────────
 
   async function migrateFromLocalStorage() {
@@ -156,6 +197,10 @@ const ChessDB = (() => {
     getDueCards,
     saveOpening,
     getOpening,
+    getOpeningBook,
+    saveOpeningBook,
+    isOpeningBookFresh,
+    OPENING_BOOK_TTL_MS,
     migrateFromLocalStorage,
     // exposed for tests
     _put: put,

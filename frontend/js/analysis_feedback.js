@@ -56,7 +56,32 @@ const AnalysisFeedback = (() => {
     return true;
   }
 
-  return { createState, shouldDispatch, shouldAlert };
+  /**
+   * EPIC 25 (US 25.3, ex-gap §10.3) — Évaluation du point de vue du joueur :
+   * le moteur renvoie toujours le score du camp AU TRAIT ; après le coup du
+   * joueur c'est l'adversaire qui est au trait, il faut donc inverser.
+   * @returns {number|null} centipions positifs = avantage joueur
+   */
+  function evalForPlayer(evaluation, sideToMove, playerColor) {
+    if (evaluation == null || typeof evaluation !== "number") return null;
+    return sideToMove === playerColor ? evaluation : -evaluation;
+  }
+
+  /**
+   * EPIC 25 (US 25.3) — Qualité SM-2 nuancée d'une tentative d'exercice :
+   *   5 = coup correct ;
+   *   3 = coup différent de la solution mais la position reste avantageuse
+   *       pour le joueur (`playerEvalCp > 0`) — « correct mais non optimal » ;
+   *   1 = raté (position non avantageuse, ou évaluation inconnue : pas de
+   *       crédit sans preuve moteur).
+   */
+  function exerciseQuality(correct, playerEvalCp) {
+    if (correct) return 5;
+    if (typeof playerEvalCp === "number" && playerEvalCp > 0) return 3;
+    return 1;
+  }
+
+  return { createState, shouldDispatch, shouldAlert, evalForPlayer, exerciseQuality };
 })();
 
 if (typeof window !== "undefined") window.AnalysisFeedback = AnalysisFeedback;

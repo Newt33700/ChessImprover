@@ -463,9 +463,11 @@ class BoardManager {
     const correct     = matchesSan || matchesUCI;
 
     if (!correct) {
-      document.dispatchEvent(new CustomEvent("exercise:result", {
-        detail: { correct: false, played: playedMove.san, solution: expected, quality: 1 }
-      }));
+      // US 25.3 (EPIC 25) : qualité nuancée — si le coup joué diffère de la
+      // solution mais laisse la position avantageuse (éval moteur > 0 côté
+      // joueur), la tentative vaut quality=3 (« correct mais non optimal »)
+      // au lieu d'un échec sec quality=1.
+      this._emitExerciseFail(playedMove, expected);
       return false;
     }
 
@@ -491,6 +493,47 @@ class BoardManager {
       }));
     }
     return true;
+  }
+
+  /**
+   * US 25.3 — Émet le résultat d'un exercice raté avec la qualité SM-2
+   * nuancée : attend (brièvement) l'évaluation Stockfish de la position
+   * résultante — déjà demandée par `_onDrop` — pour créditer quality=3 si le
+   * coup joué reste avantageux. Repli quality=1 après 2,5 s sans évaluation.
+   */
+  _emitExerciseFail(playedMove, expected) {
+    const fen = this.chess.fen();
+    const emit = (evaluation) => {
+      const sideToMove = fen.split(" ")[1];
+      const playerEval = window.AnalysisFeedback
+        ? AnalysisFeedback.evalForPlayer(evaluation, sideToMove, this.exercisePlayerColor)
+        : null;
+      const quality = window.AnalysisFeedback
+        ? AnalysisFeedback.exerciseQuality(false, playerEval)
+        : 1;
+      document.dispatchEvent(new CustomEvent("exercise:result", {
+        detail: { correct: false, played: playedMove.san, solution: expected, quality },
+      }));
+    };
+
+    const cached = this.evalCache[fen];
+    if (cached && cached.evaluation !== undefined) { emit(cached.evaluation); return; }
+
+    let settled = false;
+    const handler = (e) => {
+      if (settled || e.detail.fen !== fen) return;
+      settled = true;
+      document.removeEventListener("engine:eval", handler);
+      clearTimeout(timer);
+      emit(e.detail.evaluation);
+    };
+    const timer = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      document.removeEventListener("engine:eval", handler);
+      emit(null); // pas de preuve moteur → pas de crédit partiel
+    }, 2500);
+    document.addEventListener("engine:eval", handler);
   }
 
   // -------------------------------------------------------------------------

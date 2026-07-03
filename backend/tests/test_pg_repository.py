@@ -140,6 +140,77 @@ class TestPgRepository:
             "self", "card_id", "ease_factor", "interval_days", "repetitions", "due_date",
         ]
 
+    def test_user_profile_methods_exist(self):
+        # Verrouille le contrat EPIC 25 (gap §10.1 fermé) : les comptes doivent
+        # être persistables en Postgres avec ces signatures.
+        import inspect
+
+        assert list(inspect.signature(PgRepository.create_user).parameters) == [
+            "self", "email", "username", "password_hash",
+        ]
+        assert list(inspect.signature(PgRepository.find_user_by_email).parameters) == [
+            "self", "email",
+        ]
+        assert list(inspect.signature(PgRepository.find_user_by_username).parameters) == [
+            "self", "username",
+        ]
+        assert list(inspect.signature(PgRepository.find_user_by_id).parameters) == [
+            "self", "user_id",
+        ]
+        assert list(inspect.signature(PgRepository.update_chess_username).parameters) == [
+            "self", "user_id", "chess_username",
+        ]
+        assert list(inspect.signature(PgRepository.update_settings).parameters) == [
+            "self", "user_id", "settings",
+        ]
+        assert list(inspect.signature(PgRepository.get_user_elo).parameters) == [
+            "self", "user_id", "column",
+        ]
+        assert list(inspect.signature(PgRepository.update_user_elo).parameters) == [
+            "self", "user_id", "column", "new_elo",
+        ]
+        assert list(inspect.signature(PgRepository.get_user_data).parameters) == [
+            "self", "user_id",
+        ]
+        assert list(inspect.signature(PgRepository.save_user_data).parameters) == [
+            "self", "user_id", "games", "srs_cards",
+        ]
+
+    def test_tactical_problem_methods_exist(self):
+        # Verrouille la fermeture du gap US 8.1/§10.6 : sélection tactique
+        # désormais implémentée côté Postgres (le fallback seed d'EPIC 22
+        # reste le filet de sécurité si la table est vide).
+        import inspect
+
+        assert list(inspect.signature(PgRepository.get_tactical_problem).parameters) == [
+            "self", "problem_id",
+        ]
+        assert list(inspect.signature(PgRepository.get_next_tactical_problem).parameters) == [
+            "self", "tactical_elo", "category",
+        ]
+
+    def test_user_elo_column_whitelisted(self):
+        # Le nom de colonne n'est pas paramétrable en SQL : liste blanche stricte.
+        repo = PgRepository("postgresql://user:pw@host/db")
+        with pytest.raises(ValueError):
+            repo.get_user_elo("u1", "password_hash; DROP TABLE profiles")
+        with pytest.raises(ValueError):
+            repo.update_user_elo("u1", "created_at", 1200)
+
+    def test_merge_user_data_client_wins(self):
+        # Règle « Client Wins » (US 7) partagée in-memory/Postgres (EPIC 25).
+        existing = {
+            "games": [{"game_id": "g1", "date": "2026-01-01", "src": "serveur"}],
+            "srs_cards": [{"id": "c1", "ef": 2.5}],
+        }
+        merged = db_client._merge_user_data(
+            existing,
+            games=[{"game_id": "g1", "date": "2026-01-02", "src": "client"}],
+            srs_cards=[{"id": "c2", "ef": 1.3}],
+        )
+        assert merged["games"][0]["src"] == "client"  # le client écrase
+        assert {c["id"] for c in merged["srs_cards"]} == {"c1", "c2"}
+
     def test_line_row_maps_line_name_column_to_name_key(self):
         row = {"id": "1", "line_name": "Ruy Lopez", "color": "white"}
         mapped = PgRepository._line_row(row)

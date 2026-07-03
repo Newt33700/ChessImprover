@@ -104,3 +104,45 @@ describe("AnalysisFeedback.shouldAlert — une seule alerte Coach par coup", () 
     expect(AnalysisFeedback.shouldAlert(state, null, "blunder")).toBe(false);
   });
 });
+
+describe("AnalysisFeedback.evalForPlayer (EPIC 25, US 25.3)", () => {
+  test("camp au trait = joueur → score inchangé", () => {
+    expect(AnalysisFeedback.evalForPlayer(120, "w", "w")).toBe(120);
+    expect(AnalysisFeedback.evalForPlayer(-50, "b", "b")).toBe(-50);
+  });
+
+  test("camp au trait = adversaire → score inversé", () => {
+    // Après le coup du joueur blanc, c'est aux noirs de jouer : un score
+    // négatif pour les noirs est un avantage pour le joueur.
+    expect(AnalysisFeedback.evalForPlayer(-80, "b", "w")).toBe(80);
+    expect(AnalysisFeedback.evalForPlayer(200, "w", "b")).toBe(-200);
+  });
+
+  test("évaluation absente ou invalide → null", () => {
+    expect(AnalysisFeedback.evalForPlayer(null, "w", "w")).toBeNull();
+    expect(AnalysisFeedback.evalForPlayer(undefined, "b", "w")).toBeNull();
+    expect(AnalysisFeedback.evalForPlayer("100", "w", "w")).toBeNull();
+  });
+});
+
+describe("AnalysisFeedback.exerciseQuality (EPIC 25, US 25.3)", () => {
+  test("coup correct → 5", () => {
+    expect(AnalysisFeedback.exerciseQuality(true, null)).toBe(5);
+    expect(AnalysisFeedback.exerciseQuality(true, -300)).toBe(5);
+  });
+
+  test("coup différent mais position avantageuse → 3", () => {
+    expect(AnalysisFeedback.exerciseQuality(false, 1)).toBe(3);
+    expect(AnalysisFeedback.exerciseQuality(false, 250)).toBe(3);
+  });
+
+  test("position égale ou perdante → 1", () => {
+    expect(AnalysisFeedback.exerciseQuality(false, 0)).toBe(1);
+    expect(AnalysisFeedback.exerciseQuality(false, -120)).toBe(1);
+  });
+
+  test("évaluation inconnue → 1 (pas de crédit sans preuve moteur)", () => {
+    expect(AnalysisFeedback.exerciseQuality(false, null)).toBe(1);
+    expect(AnalysisFeedback.exerciseQuality(false, undefined)).toBe(1);
+  });
+});

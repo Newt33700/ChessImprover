@@ -44,11 +44,27 @@ def _auth(token: str) -> dict:
     return {"Authorization": f"Bearer {token}"}
 
 
-class _BrokenRepo:
-    """Simule le dépôt Postgres réel : les méthodes *problèmes tactiques*
-    n'existent pas (AttributeError au premier appel, README §10.6), mais
-    l'historique des tentatives, lui, est bien implémenté — comme dans
-    ``PgRepository`` aujourd'hui."""
+class _UserAwareRepo:
+    """Socle commun des doublures : depuis EPIC 25, les comptes sont délégués
+    à Postgres — les fakes relaient donc les lectures utilisateur vers le
+    store in-memory (où le signup des tests a créé le compte), et simulent
+    une table `profiles` aux Elos non initialisés (None → défaut 1000)."""
+
+    def find_user_by_id(self, user_id):
+        return db_client._users.get(user_id)
+
+    def get_user_elo(self, user_id, column):
+        return None  # ligne sans Elo → db_client retombe sur le défaut 1000
+
+    def update_user_elo(self, user_id, column, new_elo):
+        return db_client._users.get(user_id)
+
+
+class _BrokenRepo(_UserAwareRepo):
+    """Simule un dépôt Postgres partiel : les méthodes *problèmes tactiques*
+    sont indisponibles (AttributeError au premier appel — scénario historique
+    du gap §10.6, fermé par EPIC 25 mais que le fallback doit continuer de
+    couvrir), tandis que l'historique des tentatives fonctionne."""
 
     def __init__(self):
         self._attempts = []
@@ -73,7 +89,7 @@ class _BrokenRepo:
         return [a for a in self._attempts if a["user_id"] == user_id]
 
 
-class _EmptyRepo:
+class _EmptyRepo(_UserAwareRepo):
     """Simule un dépôt Postgres joignable mais dont la table est vide."""
 
     def get_tactical_problem(self, problem_id):
