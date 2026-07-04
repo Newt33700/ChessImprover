@@ -1059,3 +1059,40 @@ En tant qu'équipe, nous voulons que chaque modification de `supabase/migrations
 **Statut :** ✅ Implémenté : Échap ferme toute modale ouverte (auth, profil, thème, PGN) ; CTA du Coach Personnel recâblé vers la page Exercice.
 
 **Validation EPIC 26 :** backend 841/841 pytest (inchangé), frontend 355/355 Jest (5 nouveaux TUs), couverture ≥ 80 % maintenue.
+
+## EPIC 27 : Refonte « Zero-Friction » — Navigation & Import Silencieux
+
+**Contexte :** demande PO (refonte nocturne) — sidebar de navigation unique (Accueil / Mes Parties / Entraînement / Statistiques), suppression du champ de collage PGN au profit d'un import Chess.com silencieux, bibliothèque de parties dédiée, et sélection visuelle des ouvertures (grille de mini-échiquiers) à la place de la saisie texte pure. Règle d'or : Zero-Proxy (aucune ressource externe, tout est déjà auto-hébergé) et zéro régression sur les modules existants.
+
+### US 27.1 : Sidebar de navigation + routage central
+
+**Statut :** ✅ Implémenté :
+- Nouveau registre central `VIEW_SECTIONS`/`VIEW_BODY_CLASSES`/`TOP_LEVEL_TO_VIEW` (`app.js`) : une seule vue visible à la fois, que ce soit une `<section>` du shell (Accueil/Mes Parties/Entraînement) ou une vue plein écran pilotée par une classe `<body>` (Coach Tactique, Sprint, Cimetière, Ouvertures, Finales, Exercice, Statistiques Avancées).
+- `_setActiveView(key)` (bascule brute section/classe), `_navigateTo(key, {pushState})` (les 4 destinations de la sidebar : historique navigateur via `#!/<clé>` + surlignage `.sidebar-link.active`), `_returnToLastTopLevelView()` (les boutons ← des sous-vues reviennent à Accueil ou à Entraînement selon la provenance mémorisée dans `_lastTopLevelView`).
+- Toutes les paires `_show*/_hide*` existantes (Tactique, Sprint, Cimetière, Ouvertures, Finales, Statistiques Avancées) déléguées à ce registre unique — fin des `classList.add/remove` dispersés.
+- Deep-link au chargement (`location.hash` → vue initiale, défaut Accueil) + `popstate` (retour/avance navigateur).
+- Nouveau shell HTML `.app-shell` (`<nav class="sidebar">` + `<main class="app-main">`), responsive (bascule en barre horizontale scrollable ≤ 860px).
+
+### US 27.2 : Suppression du collage PGN, import Chess.com silencieux
+
+**Statut :** ✅ Implémenté :
+- Le modal `#pgn-modal` et son textarea sont **supprimés** (plus de collage PGN manuel) ; `_analyzePGN(pgn)` accepte désormais directement une chaîne PGN (au lieu de lire un champ caché) — appelée depuis la bibliothèque « Mes Parties » ou la liste Chess.com, jamais depuis une saisie utilisateur.
+- Nouveau bouton « 🔄 Synchroniser » (`#btn-library-sync`, vue Mes Parties) → `_triggerManualSync()` : réutilise le pipeline serveur idempotent de l'EPIC 23 (`POST /api/v1/games/sync`, hash PGN — aucun risque de doublon), avec retour utilisateur explicite (toast + badge « analyses en cours ») au lieu du silence total de la sync de fond.
+- Tous les CTA « Analyser une partie » (états vides Exercice/Cimetière/Coach Personnel) redirigent vers la bibliothèque Mes Parties plutôt que d'ouvrir un modal disparu.
+- Nettoyage : CSS mort retiré (`.pgn-modal-*`, `.pgn-textarea`, `.or-divider`, `.db-link`/`.db-link-row`).
+
+### US 27.3 : Vue « Mes Parties » (bibliothèque)
+
+**Statut :** ✅ Implémenté :
+- `_renderGamesLibrary()` : table des parties déjà soumises au serveur (`GET /api/v1/games`) — badge résultat (V/L/½ déduit de `game.result` + `game.user_color`, ou « analyse en cours » tant que `status === "processing"`), adversaire (extrait des en-têtes PGN `White`/`Black`), date, bouton **Analyser** (rejoue `_analyzePGN(game.pgn)`, donc le même pipeline Review que tout le reste — pas de code dupliqué).
+- Rafraîchie automatiquement à l'arrivée sur l'onglet (`_navigateTo("parties")`), après une synchronisation manuelle, et à la fin du polling de sync de fond si la vue est ouverte.
+- État vide explicite (« aucune partie synchronisée, cliquez sur Synchroniser ») et état d'erreur réseau distincts (US 22.4).
+
+### US 27.4 : Grille visuelle d'ouvertures
+
+**Statut :** ✅ Implémenté :
+- `_renderOpeningsGrid()` : 10 ouvertures curatées (Ruy Lopez, Italienne, Sicilienne, Française, Caro-Kann, Gambit Dame refusé, Est-Indienne, Anglaise, Scandinave, Système Londres) cherchées par nom exact dans le même livre ECO TSV que `_buildOpeningBook` (US 25.2, `assets/data/openings/*.tsv`) — aucun appel réseau externe (Zero-Proxy).
+- Chaque carte affiche un mini-échiquier **statique** (`_createProblemBoard(..., {draggable:false})` — nouveau paramètre optionnel de la fabrique commune EPIC 26) positionné après les coups de l'ouverture ; cliquer une carte pré-remplit le formulaire « Ajouter une ligne » (nom + coups SAN) de l'Entraîneur d'Ouvertures existant, sans le remplacer (validation chess.js toujours de mise avant tout ajout au répertoire).
+- Résultat mis en cache mémoire (`_openingsGridCache`) : un seul parsing des TSV par session, même en rouvrant la vue plusieurs fois.
+
+**Validation EPIC 27 :** backend 841/841 pytest (inchangé, aucun fichier backend touché), frontend 355/355 Jest (inchangé — travail de plomberie DOM dans `app.js`, module historiquement non couvert directement par des TUs dédiés, comme les autres paires `_show*/_hide*`), couverture ≥ 80 % maintenue sur les modules testés.

@@ -24,6 +24,38 @@ const XP_PER_GAME     = 50;
 const XP_PER_EXERCISE = 10;
 const XP_PER_LEVEL    = (lvl) => lvl * 100;
 
+// EPIC 27 (US 27.1) — Registre des vues top-level : une seule visible à la
+// fois, qu'elle soit une <section> du shell ou une vue plein écran pilotée
+// par une classe sur <body> (Coach Tactique, Sprint, Cimetière, etc.).
+const VIEW_SECTIONS = {
+  dashboard: "section-dashboard",
+  library: "section-library",
+  "training-hub": "section-training-hub",
+};
+const VIEW_BODY_CLASSES = {
+  tactics: "tactics-active",
+  sprint: "sprint-active",
+  flashcards: "flashcards-active",
+  "openings-trainer": "openings-trainer-active",
+  "endgame-trainer": "endgame-trainer-active",
+  exercise: "exercise-active",
+  advstats: "advstats-active",
+};
+//: Les 4 destinations de la sidebar → clé de vue correspondante.
+const TOP_LEVEL_TO_VIEW = {
+  accueil: "dashboard", parties: "library", entrainement: "training-hub", stats: "advstats",
+};
+const TOP_LEVEL_VIEWS = Object.keys(TOP_LEVEL_TO_VIEW);
+
+// EPIC 27 (US 27.4) — Sélection curatée pour la grille visuelle d'ouvertures :
+// une entrée par famille connue, cherchée par nom exact dans les TSV ECO déjà
+// livrés avec l'app (assets/data/openings/*.tsv, source du livre US 25.2).
+const CURATED_OPENINGS = [
+  "Ruy Lopez", "Italian Game", "Sicilian Defense", "French Defense",
+  "Caro-Kann Defense", "Queen's Gambit Declined", "King's Indian Defense",
+  "English Opening", "Scandinavian Defense", "London System",
+];
+
 // EPIC 11 (US 9.1/9.2) — libellés lisibles des error_type du profil comportemental.
 const ERROR_TYPE_LABELS = {
   hanging_piece: "Gaffe sur pièce non protégée",
@@ -316,6 +348,14 @@ class ChessImproverApp {
     if (this.username) {
       document.getElementById("username-input").value = this.username;
     }
+
+    // EPIC 27 (US 27.1) : résout la destination initiale depuis le hash
+    // (deep-link / retour navigateur après refresh), Accueil par défaut.
+    const initialKey = (location.hash.match(/^#!\/(\w+)$/) || [])[1];
+    this._navigateTo(TOP_LEVEL_VIEWS.includes(initialKey) ? initialKey : "accueil", { pushState: false });
+    window.addEventListener("popstate", (e) => {
+      this._navigateTo(e.state?.view || "accueil", { pushState: false });
+    });
   }
 
   // ─── Init ───────────────────────────────────────────────────────
@@ -336,13 +376,11 @@ class ChessImproverApp {
   _bindEvents() {
     document.getElementById("btn-connect")?.addEventListener("click",  () => this._connectUser());
     document.getElementById("username-input")?.addEventListener("keydown", (e) => { if (e.key === "Enter") this._connectUser(); });
-    document.getElementById("btn-analyze")?.addEventListener("click",  () => this._analyzePGN());
     document.getElementById("btn-exercise")?.addEventListener("click", () => this._showExercise());
 
-    // US 26.3 : Échap ferme toute modale ouverte (auth, profil, thème, PGN)
+    // US 26.3 : Échap ferme toute modale ouverte (auth, profil, thème)
     document.addEventListener("keydown", (e) => {
       if (e.key !== "Escape") return;
-      if (!document.getElementById("pgn-modal")?.hidden)     this._closePgnModal();
       if (!document.getElementById("auth-modal")?.hidden)    this._closeAuthModal();
       if (!document.getElementById("profile-modal")?.hidden) this._closeProfileModal();
       if (!document.getElementById("theme-modal")?.hidden)   this._closeThemeModal();
@@ -352,19 +390,11 @@ class ChessImproverApp {
     document.getElementById("btn-flip")?.addEventListener("click",     () => this.boardMgr.flipBoard());
     document.getElementById("games-list")?.addEventListener("click",   (e) => {
       const item = e.target.closest("[data-pgn]");
-      if (item) { document.getElementById("pgn-input").value = item.dataset.pgn; this._openPgnModal(); }
+      if (item) this._analyzePGN(item.dataset.pgn);
     });
     document.getElementById("moves-list")?.addEventListener("click", (e) => {
       const item = e.target.closest("[data-move-index]");
       if (item) this.boardMgr.goToMove(parseInt(item.dataset.moveIndex, 10));
-    });
-
-    // PGN modal
-    document.getElementById("btn-to-pgn")?.addEventListener("click",    () => this._openPgnModal());
-    document.getElementById("btn-to-pgn-2")?.addEventListener("click",  () => this._openPgnModal());
-    document.getElementById("btn-close-pgn")?.addEventListener("click", () => this._closePgnModal());
-    document.getElementById("pgn-modal")?.addEventListener("click", (e) => {
-      if (e.target === e.currentTarget) this._closePgnModal();
     });
 
     // Launch review from match card
@@ -513,9 +543,9 @@ class ChessImproverApp {
 
   // ─── Analyse PGN ────────────────────────────────────────────────
 
-  _analyzePGN() {
-    const pgn = document.getElementById("pgn-input")?.value.trim();
-    if (!pgn) { this._toast("Collez un PGN à analyser", "error"); return; }
+  _analyzePGN(pgn) {
+    pgn = (pgn || "").trim();
+    if (!pgn) { this._toast("PGN introuvable pour cette partie", "error"); return; }
 
     this._setLoading(true, "Analyse en cours…");
     setTimeout(() => {   // yielde le rendu avant le calcul
@@ -548,7 +578,6 @@ class ChessImproverApp {
         this._renderXP(xp, level);
 
         this.currentGame = analysis;
-        this._closePgnModal();
         this._enterReviewMode(analysis);
       } catch (err) {
         this._toast(`Erreur d'analyse : ${err.message}`, "error");
@@ -845,7 +874,7 @@ class ChessImproverApp {
   // — pour nuancer la qualité SM-2 d'un échec (US 25.3, quality=3).
 
   async _showExercise() {
-    document.body.classList.add("exercise-active");
+    this._setActiveView("exercise");
     let due = [];
     if (window.ChessDB) due = await ChessDB.getDueCards().catch(() => []);
     if (!due.length) due = SRS.getDue(SRS.load());
@@ -855,7 +884,7 @@ class ChessImproverApp {
   }
 
   _hideExercise() {
-    document.body.classList.remove("exercise-active");
+    this._returnToLastTopLevelView();
   }
 
   _renderExerciseRemaining() {
@@ -872,7 +901,7 @@ class ChessImproverApp {
     if (!card) {
       body.innerHTML = `<div class="empty-state-box">
         <p class="empty-state">✅ Aucune révision en attente ! Les exercices sont créés automatiquement à partir de vos gaffes.</p>
-        <button class="btn btn--accent btn--sm" onclick="window.app?._openPgnModal()">Analyser une partie</button>
+        <button class="btn btn--accent btn--sm" onclick="window.app?._navigateTo('parties')">Analyser une partie</button>
         <button class="btn btn--secondary btn--sm" onclick="window.app?._hideExercise(); window.app?._showTactics()">Coach Tactique →</button>
       </div>`;
       return;
@@ -1543,8 +1572,9 @@ class ChessImproverApp {
     this._stopSyncPolling();
     this.serverGames = games;
     this._toast("✓ Analyses terminées — vos statistiques sont à jour", "success");
-    // Rafraîchir les vues serveur ouvertes (Stats Avancées + Cimetière).
+    // Rafraîchir les vues serveur ouvertes (Stats Avancées + Cimetière + Mes Parties).
     if (document.body.classList.contains("advstats-active")) this._loadAdvStats();
+    if (document.getElementById("section-library")?.hidden === false) this._renderGamesLibrary();
   }
 
   _stopSyncPolling() {
@@ -1578,6 +1608,115 @@ class ChessImproverApp {
     } finally {
       this._setLoading(false);
     }
+  }
+
+  // ─── EPIC 27 (US 27.2/27.3) : Mes Parties — sync manuelle + bibliothèque ──
+
+  /**
+   * Déclenche la synchronisation Chess.com à la demande (bouton « 🔄
+   * Synchroniser » de Mes Parties), remplace le champ PGN retiré (US 27.2).
+   * Réutilise le même pipeline serveur que la sync de fond (US 23.1) :
+   * idempotent (hash PGN), donc aucun risque de doublon.
+   */
+  async _triggerManualSync() {
+    if (!window.ApiClient || !ApiClient.isConfigured() || !window.Auth?.isLoggedIn()) {
+      this._toast("Connectez-vous pour synchroniser vos parties Chess.com", "error");
+      return;
+    }
+    const btn = document.getElementById("btn-library-sync");
+    if (btn) { btn.disabled = true; btn.textContent = "🔄 Synchronisation…"; }
+    try {
+      const result = await ApiClient.syncGames();
+      const inFlight = (result?.queued || 0) + (result?.requeued || 0);
+      if (inFlight) {
+        this._toast(`${inFlight} nouvelle${inFlight > 1 ? "s" : ""} partie${inFlight > 1 ? "s" : ""} en cours d'analyse…`, "info");
+        this._renderSyncIndicator(inFlight);
+        this._syncPollCount = 0;
+        if (this._syncPolling) clearInterval(this._syncPolling);
+        this._syncPolling = setInterval(() => this._pollSyncStatus(), 15000);
+      } else {
+        this._toast("Aucune nouvelle partie à synchroniser", "info");
+      }
+    } catch {
+      this._toast("Impossible de contacter Chess.com pour le moment", "error");
+    } finally {
+      if (btn) { btn.disabled = false; btn.textContent = "🔄 Synchroniser"; }
+      this._renderGamesLibrary();
+    }
+  }
+
+  /** Extrait le nom de l'adversaire depuis les headers PGN (US 27.3). */
+  _extractOpponentFromPgn(pgn, userColor) {
+    if (!pgn) return "Adversaire";
+    const tag = userColor === "black" ? "White" : "Black";
+    const m = pgn.match(new RegExp(`\\[${tag}\\s+"([^"]+)"\\]`));
+    return m ? m[1] : "Adversaire";
+  }
+
+  /** Ligne de tableau « Mes Parties » : badge résultat, adversaire, date, action. */
+  _libraryRowHtml(g) {
+    const userColor = g.user_color === "black" ? "black" : "white";
+    let cls = "draw", icon = "½", statusLabel = "";
+    if (g.status === "processing") {
+      cls = "processing"; icon = "…"; statusLabel = "Analyse en cours…";
+    } else if (g.status === "failed") {
+      cls = "loss"; icon = "!"; statusLabel = "Échec de l'analyse";
+    } else if (g.result) {
+      const whiteWon = g.result === "1-0";
+      const blackWon = g.result === "0-1";
+      const won  = (userColor === "white" && whiteWon) || (userColor === "black" && blackWon);
+      const lost = (userColor === "white" && blackWon) || (userColor === "black" && whiteWon);
+      cls  = won ? "win" : lost ? "loss" : "draw";
+      icon = won ? "V"   : lost ? "L"    : "½";
+    }
+    const opponent = escapeHtml(this._extractOpponentFromPgn(g.pgn, userColor));
+    const date = g.created_at ? new Date(g.created_at).toLocaleDateString("fr-FR") : "";
+    const action = statusLabel
+      ? `<span class="library-status">${statusLabel}</span>`
+      : `<button class="btn btn--accent btn--sm" data-library-analyze="${g.id}">Analyser</button>`;
+    return `<tr>
+      <td><span class="game-result-badge ${cls}">${icon}</span></td>
+      <td>vs ${opponent}</td>
+      <td>${date}</td>
+      <td>${action}</td>
+    </tr>`;
+  }
+
+  /** Rend la bibliothèque de parties (US 27.3) : table W/L, adversaire, date, Analyser. */
+  async _renderGamesLibrary() {
+    const container = document.getElementById("library-table-container");
+    if (!container) return;
+    if (!window.ApiClient || !ApiClient.isConfigured() || !window.Auth?.isLoggedIn()) {
+      container.innerHTML = `<p class="empty-state">Connectez-vous pour voir vos parties Chess.com.</p>`;
+      return;
+    }
+    container.innerHTML = `<p class="empty-state">Chargement…</p>`;
+    let games;
+    try {
+      const data = await ApiClient.getGames();
+      games = data?.games || [];
+      this.serverGames = games;
+    } catch {
+      container.innerHTML = `<p class="empty-state">Impossible de charger vos parties pour le moment.</p>`;
+      return;
+    }
+    if (!games.length) {
+      container.innerHTML = this._emptyStateHtml(
+        "Aucune partie synchronisée pour le moment. Cliquez sur « 🔄 Synchroniser » pour importer vos dernières parties Chess.com.",
+      );
+      return;
+    }
+    const sorted = [...games].sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+    container.innerHTML = `
+      <table class="library-table">
+        <tbody>${sorted.map((g) => this._libraryRowHtml(g)).join("")}</tbody>
+      </table>`;
+    container.querySelectorAll("[data-library-analyze]").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const game = games.find((g) => g.id === btn.dataset.libraryAnalyze);
+        if (game?.pgn) this._analyzePGN(game.pgn);
+      });
+    });
   }
 
   _onAuthLogout() {
@@ -1963,27 +2102,53 @@ class ChessImproverApp {
   _emptyStateHtml(message, action) {
     let btn = "";
     if (action === "analyze") {
-      btn = `<button class="btn btn--accent btn--sm" onclick="window.app?._openPgnModal()">Analyser une partie</button>`;
+      btn = `<button class="btn btn--accent btn--sm" onclick="window.app?._navigateTo('parties')">Analyser une partie</button>`;
     } else if (action && action.label && action.onclick) {
       btn = `<button class="btn btn--accent btn--sm" onclick="${action.onclick}">${action.label}</button>`;
     }
     return `<div class="empty-state-box"><p class="empty-state">${message}</p>${btn}</div>`;
   }
 
-  _showSection(id) {
-    // New layout: section-dashboard is always the container
-    // Map legacy section IDs to the new panel system
-    if (id === "section-board") {
-      this._showBoardActive();
-    } else if (id === "section-pgn") {
-      this._openPgnModal();
-    } else if (id === "section-dashboard") {
-      this._goHome();
-    }
-    // section-tabs stays always hidden (content moved to dashboard cards)
+  // ─── EPIC 27 (US 27.1) — Registre central des vues top-level ───────
+  // Une seule vue visible à la fois : les 3 sections du shell (Accueil/Mes
+  // Parties/Entraînement, + Statistiques en 4ᵉ destination) et les vues
+  // plein écran existantes (Coach Tactique, Sprint, Cimetière, Ouvertures,
+  // Finales, Exercice) partagent désormais UN SEUL point de bascule, pour
+  // qu'il ne soit plus possible d'avoir deux vues superposées.
+
+  _setActiveView(key) {
+    Object.entries(VIEW_SECTIONS).forEach(([k, id]) => {
+      const el = document.getElementById(id);
+      if (el) el.hidden = k !== key;
+    });
+    Object.values(VIEW_BODY_CLASSES).forEach((cls) => document.body.classList.remove(cls));
+    const bodyClass = VIEW_BODY_CLASSES[key];
+    if (bodyClass) document.body.classList.add(bodyClass);
+  }
+
+  /**
+   * Navigation de la sidebar (US 27.1) : les 4 destinations principales.
+   * Met à jour le hash (retour navigateur) et le surlignage de la sidebar.
+   */
+  _navigateTo(key, { pushState = true } = {}) {
+    if (!TOP_LEVEL_VIEWS.includes(key)) key = "accueil";
+    this._lastTopLevelView = key;
+    this._setActiveView(TOP_LEVEL_TO_VIEW[key]);
+    document.querySelectorAll(".sidebar-link").forEach((btn) => {
+      btn.classList.toggle("active", btn.dataset.nav === key);
+    });
+    if (pushState) history.pushState({ view: key }, "", `#!/${key}`);
+    if (key === "parties") this._renderGamesLibrary();
+    if (key === "stats") this._loadAdvStats();
+  }
+
+  /** Retour (←) des vues plein écran : revient à la dernière destination principale. */
+  _returnToLastTopLevelView() {
+    this._navigateTo(this._lastTopLevelView || "accueil", { pushState: false });
   }
 
   _showBoardActive() {
+    this._navigateTo("accueil", { pushState: false }); // met aussi à jour sidebar + _lastTopLevelView
     const empty  = document.getElementById("board-col-empty");
     const active = document.getElementById("board-active");
     if (empty)  empty.hidden  = true;
@@ -1996,6 +2161,7 @@ class ChessImproverApp {
   }
 
   _goHome() {
+    this._navigateTo("accueil");
     const empty  = document.getElementById("board-col-empty");
     const active = document.getElementById("board-active");
     if (empty)  empty.hidden  = false;
@@ -2129,8 +2295,7 @@ class ChessImproverApp {
   }
 
   async _showAdvStats() {
-    document.body.classList.add("advstats-active");
-    await this._loadAdvStats();
+    this._navigateTo("stats"); // met à jour la sidebar + déclenche _loadAdvStats
   }
 
   _showCategoryDetail(category) {
@@ -2148,7 +2313,6 @@ class ChessImproverApp {
   }
 
   _hideAdvStats() {
-    document.body.classList.remove("advstats-active");
     document.body.classList.remove("adv-detail-open");
     if (this._advCharts) {
       this._advCharts.forEach((c) => c && c.destroy && c.destroy());
@@ -2162,12 +2326,13 @@ class ChessImproverApp {
       this._eloChart.destroy();
       this._eloChart = null;
     }
+    this._navigateTo("accueil"); // Statistiques est une destination sidebar : retour explicite à l'Accueil
   }
 
   // ─── Coach Tactique Adaptatif (EPIC 8 — US 8.1/8.2) ──────────────
 
   _showTactics() {
-    document.body.classList.add("tactics-active");
+    this._setActiveView("tactics");
     this._loadTacticalProblem(null);
     this._loadTacticsStreak();
     this._loadErrorProfileHint();
@@ -2238,7 +2403,7 @@ class ChessImproverApp {
   }
 
   _hideTactics() {
-    document.body.classList.remove("tactics-active");
+    this._returnToLastTopLevelView();
   }
 
   /**
@@ -2293,10 +2458,10 @@ class ChessImproverApp {
    * n'avait pas encore sa taille finale au moment de la construction, ce qui
    * arrive quand la vue vient d'être affichée (`display:none → block`).
    */
-  _createProblemBoard(containerId, { position, orientation, onDragStart, onDrop, onSnapEnd }) {
+  _createProblemBoard(containerId, { position, orientation, onDragStart, onDrop, onSnapEnd, draggable = true }) {
     if (typeof Chessboard === "undefined") return null;
     const board = Chessboard(containerId, {
-      draggable: true,
+      draggable,
       position,
       orientation,
       pieceTheme: window.ThemeService ? ThemeService.getPieceThemePath() : "assets/images/pieces/{piece}.svg",
@@ -2380,12 +2545,12 @@ class ChessImproverApp {
   // ─── Le Cimetière des Erreurs — Recall Training (EPIC 20, US 20.1/20.2) ──
 
   _showFlashcards() {
-    document.body.classList.add("flashcards-active");
+    this._setActiveView("flashcards");
     this._loadFlashcardQueue();
   }
 
   _hideFlashcards() {
-    document.body.classList.remove("flashcards-active");
+    this._returnToLastTopLevelView();
   }
 
   /** Récupère la file du jour (US 20.2) et affiche la première carte due. */
@@ -2533,12 +2698,79 @@ class ChessImproverApp {
   // ─── Entraîneur d'Ouvertures — Répertoire + SRS (EPIC 9) ──────────────
 
   _showOpeningsTrainer() {
-    document.body.classList.add("openings-trainer-active");
+    this._setActiveView("openings-trainer");
     this._loadOpeningsTrainerView();
+    this._renderOpeningsGrid(); // EPIC 27 (US 27.4) : grille visuelle
   }
 
   _hideOpeningsTrainer() {
-    document.body.classList.remove("openings-trainer-active");
+    this._returnToLastTopLevelView();
+  }
+
+  /**
+   * EPIC 27 (US 27.4) — Grille visuelle d'ouvertures : remplace la sélection
+   * purement textuelle par des mini-échiquiers statiques (non-draggable),
+   * construits depuis le même livre ECO TSV que `_buildOpeningBook` (US
+   * 25.2), sans aucun appel réseau externe (Zero-Proxy). Cliquer une carte
+   * pré-remplit le formulaire d'ajout au répertoire (nom + coups SAN).
+   */
+  async _renderOpeningsGrid() {
+    const grid = document.getElementById("ot-openings-grid");
+    if (!grid) return;
+    if (typeof Chess === "undefined" || typeof Chessboard === "undefined") return;
+
+    if (this._openingsGridCache) { this._paintOpeningsGrid(grid, this._openingsGridCache); return; }
+
+    grid.innerHTML = `<p class="empty-state">Chargement des ouvertures…</p>`;
+    const found = new Map();
+    const base = "assets/data/openings/";
+    await Promise.all(["a", "b", "c", "d", "e"].map(async (f) => {
+      try {
+        const r = await fetch(`${base}${f}.tsv`);
+        if (!r.ok) return;
+        const text = await r.text();
+        for (const line of text.split("\n").slice(1)) {
+          const [, name, pgn] = line.split("\t");
+          if (!name || !pgn) continue;
+          const trimmedName = name.trim();
+          const match = CURATED_OPENINGS.find((c) => c === trimmedName);
+          if (!match || found.has(match)) continue;
+          const chess = new Chess();
+          const tokens = pgn.trim().split(/\s+/).filter((t) => t && !/^\d+\.?$/.test(t));
+          for (const san of tokens) { if (!chess.move(san)) break; }
+          found.set(match, { name: match, fen: chess.fen(), moves: tokens });
+        }
+      } catch { /* réseau indisponible, grille réduite */ }
+    }));
+
+    this._openingsGridCache = CURATED_OPENINGS.map((name) => found.get(name)).filter(Boolean);
+    this._paintOpeningsGrid(grid, this._openingsGridCache);
+  }
+
+  _paintOpeningsGrid(grid, openings) {
+    if (!openings.length) {
+      grid.innerHTML = `<p class="empty-state">Livre d'ouvertures indisponible hors-ligne.</p>`;
+      return;
+    }
+    grid.innerHTML = openings.map((o, i) => `
+      <button type="button" class="opening-card" data-opening-index="${i}">
+        <div class="opening-card-board" id="opening-card-board-${i}"></div>
+        <span class="opening-card-name">${escapeHtml(o.name)}</span>
+      </button>
+    `).join("");
+    openings.forEach((o, i) => {
+      this._createProblemBoard(`opening-card-board-${i}`, { position: o.fen, draggable: false });
+    });
+    grid.querySelectorAll("[data-opening-index]").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const o = openings[parseInt(btn.dataset.openingIndex, 10)];
+        const nameInput  = document.getElementById("ot-name");
+        const movesInput = document.getElementById("ot-moves");
+        if (nameInput)  nameInput.value  = o.name;
+        if (movesInput) movesInput.value = o.moves.join(" ");
+        document.getElementById("ot-add-form")?.scrollIntoView({ behavior: "smooth", block: "center" });
+      });
+    });
   }
 
   /** Valide (chess.js) puis soumet une nouvelle ligne de répertoire (US 9.1). */
@@ -2721,12 +2953,12 @@ class ChessImproverApp {
   // backend — aucune logique n'est dupliquée, seuls les endpoints diffèrent.
 
   _showEndgameTrainer() {
-    document.body.classList.add("endgame-trainer-active");
+    this._setActiveView("endgame-trainer");
     this._loadEndgameProblem(null);
   }
 
   _hideEndgameTrainer() {
-    document.body.classList.remove("endgame-trainer-active");
+    this._returnToLastTopLevelView();
   }
 
   async _loadEndgameProblem(themeId) {
@@ -2824,12 +3056,12 @@ class ChessImproverApp {
   // que soit ce qu'affiche le client à ce moment-là.
 
   _showSprint() {
-    document.body.classList.add("sprint-active");
+    this._setActiveView("sprint");
     this._resetSprintView();
   }
 
   async _hideSprint() {
-    document.body.classList.remove("sprint-active");
+    this._returnToLastTopLevelView();
     this._stopSprintTimer();
     if (this._sprintId && !this._sprintFinished) {
       try { await ApiClient.finishSprint(this._sprintId); } catch { /* best-effort */ }
@@ -3121,16 +3353,6 @@ class ChessImproverApp {
       AdvancedStats.renderAcplChart(refs.acplCanvas, this._advSummary),
       AdvancedStats.renderGaffeDonut(refs.donutCanvas, this._advSummary),
     ];
-  }
-
-  _openPgnModal() {
-    const modal = document.getElementById("pgn-modal");
-    if (modal) modal.hidden = false;
-  }
-
-  _closePgnModal() {
-    const modal = document.getElementById("pgn-modal");
-    if (modal) modal.hidden = true;
   }
 
   _setModePill(label) {
