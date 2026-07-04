@@ -67,7 +67,14 @@ async def _fetch_lichess_problem(theme_id: Optional[str]) -> Optional[Dict[str, 
         return None
     parsed = parse_puzzle_payload(payload, category=theme_id)
     if parsed is None:
-        logger.warning("tactics/next: réponse Lichess inexploitable (angle=%r)", angle)
+        # Diagnostic (EPIC 34 hotfix) : la forme exacte de la réponse Lichess
+        # n'a pas pu être vérifiée en développement (réseau bloqué dans le
+        # bac à sable) — logguer le payload brut (tronqué) permet de corriger
+        # le parsing sur la vraie forme plutôt que de deviner à l'aveugle.
+        logger.warning(
+            "tactics/next: réponse Lichess inexploitable (angle=%r) — payload=%.2000s",
+            angle, payload,
+        )
         return None
     problem_id = db_client.add_lichess_tactical_problem(parsed)
     return db_client.get_tactical_problem(problem_id)
