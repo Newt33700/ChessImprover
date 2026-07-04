@@ -1162,3 +1162,30 @@ En tant qu'équipe, nous voulons que chaque modification de `supabase/migrations
 - Tests : `theme_service.test.js` (5 nouveaux TUs : niveaux par défaut, seuils, thème inconnu, bornes `isUnlocked`).
 
 **Validation EPIC 29 :** backend 896/896 pytest (46 nouveaux), frontend 362/362 Jest (7 nouveaux), couverture ≥ 80 % maintenue.
+
+## EPIC 30 : Moteur de saisons
+
+**Contexte :** demande PO — `backend/app/config/seasons.json` (exemple « Halloween 15/10-05/11 »), endpoint renvoyant l'évènement actif (heure serveur UTC), UI FOMO (bandeau compte à rebours, cosmétiques exclusifs teasés).
+
+**Écart assumé (chemin du fichier)** : `app/config.py` existe déjà en tant que **module** — y créer un **paquet** `config/` du même nom entre en conflit d'import Python (un module et un paquet ne peuvent pas coexister sous le même nom dans un paquet parent). Le catalogue vit donc dans `app/data/seasons.json`, à côté d'où vivent déjà les données statiques côté frontend (`frontend/assets/data/`). Documenté dans le docstring de `domain/seasons.py`.
+
+**Statut :** ✅ Implémenté :
+- `app/data/seasons.json` : catalogue statique (1 évènement d'exemple « Halloween Chess », 15/10 → 05/11, avec `cosmetic_piece_theme`/`cosmetic_board_theme` référençant les thèmes déjà implémentés — EPIC 18/29, aucun nouvel asset fabriqué).
+- `domain/seasons.py` (module pur, zéro `datetime.now()` interne — testable sans dépendre de la date réelle) : `load_seasons` (fichier absent/JSON invalide → liste vide, jamais d'exception), `get_active_season(seasons, now)` (fenêtre `[start, end]` inclusive, entrées malformées ignorées), `seconds_remaining(season, now)`.
+- `GET /api/v1/seasons/active` (nouveau routeur `seasons.py`, **public** — aucune donnée liée à un utilisateur, la bannière doit s'afficher même avant connexion) : `{active, season, seconds_remaining}` ; `season` (`SeasonPublic`) n'expose jamais `start` (non nécessaire côté client).
+- Frontend : `ApiClient.getActiveSeason()` ; `_loadActiveSeason()` appelée une fois au boot (avant même toute connexion) ; bannière `#season-banner` (dégradé violet→orange, pleine largeur sous le header) avec message + tease cosmétique (« 🔒 Cosmétique exclusif « X » à débloquer ! ») + compte à rebours live (`setInterval` 1 s, format `Xj HH:MM` ou `HH:MM:SS` selon la durée restante), masquée automatiquement à expiration.
+- Tests : `test_seasons.py` (16 TUs : chargement, fenêtre exacte aux bornes, entrées malformées/incomplètes ignorées, plusieurs saisons, secondes restantes), `test_seasons_api.py` (4 TUs : accès public sans JWT, formes de réponse active/inactive, `start` jamais exposé).
+
+**Validation EPIC 30 :** backend 916/916 pytest (20 nouveaux), frontend 364/364 Jest (2 nouveaux), couverture ≥ 80 % maintenue.
+
+---
+
+## Bilan de la salve EPIC 27-30 (refonte Zero-Friction + Gamification)
+
+Les 4 EPICs demandés en une seule salve (04/07) ont tous été livrés, testés (backend 916/916 pytest, frontend 364/364 Jest, zéro régression sur les 841/355 tests hérités) et documentés, avec plusieurs écarts assumés et documentés au fil de l'eau plutôt que silencieusement :
+- **EPIC 27** : sync manuelle à la place du collage PGN, bibliothèque Mes Parties, grille visuelle d'ouvertures — conforme à la demande.
+- **EPIC 28** : Smart Loader appliqué à la synchronisation Chess.com (seul point d'attente réel) plutôt qu'à la Review (déjà instantanée) ; endpoint réutilisé plutôt que dupliqué.
+- **EPIC 29** : ledger XP serveur réel mais limité à l'analyse de partie (+50 XP) pour ne pas rendre la jauge visuellement incohérente ; quêtes quotidiennes sans état ; cosmétiques réutilisant les thèmes existants.
+- **EPIC 30** : catalogue de saisons déplacé de `app/config/` vers `app/data/` (conflit de nommage évité).
+
+Reste à faire, consigné en Backlog (README §11) : migration complète des 5 actions XP restantes vers le serveur + bascule de la jauge sur cette source, auto-crédit des récompenses de quêtes (nécessite un nouveau mécanisme de suivi de paiement journalier), et tout évènement saisonnier au-delà de l'exemple Halloween (le moteur est générique — ajouter une saison = ajouter une entrée JSON).
