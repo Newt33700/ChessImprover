@@ -1202,3 +1202,15 @@ Reste à faire, consigné en Backlog (README §11) : migration complète des 5 a
 - La sync silencieuse à la connexion (EPIC 23) reste inchangée (best-effort discret par design — pas de repli intrusif au login).
 
 **Validation** : backend 916/916 pytest, frontend 364/364 Jest (inchangés — le repli est de la plomberie DOM/réseau dans `app.js`, le contrat `analyzeGame`/hash PGN qu'il exploite est déjà couvert par les tests US 7.2).
+
+## Évolution du hotfix (04/07, demande PO) : le navigateur devient la source PRINCIPALE des données Chess.com
+
+**Demande PO** : « si finalement c'est le front qui récupère les data, les envoyer au back pour éviter de faire les choses plusieurs fois » — c'est-à-dire inverser l'architecture du hotfix : au lieu de « serveur d'abord, navigateur en repli », le navigateur (qui détient déjà les données, chargées pour l'affichage) devient la voie principale et POUSSE les données au backend. Fini le double fetch (front pour l'affichage + Render pour la sync) et fini la dépendance au chemin réseau Render→Chess.com bloqué par Cloudflare.
+
+**Implémenté** :
+- **Sync manuelle inversée** (`_triggerManualSync`) : voie principale = `_clientSideSync()` qui **réutilise `this.recentGames`** (déjà chargées pour le dashboard — zéro fetch supplémentaire) ou fait UN fetch navigateur, puis pousse les PGN via `_submitGamesToBackend()`. La voie serveur (`POST /games/sync`) n'est plus qu'un repli quand le navigateur lui-même ne peut pas joindre Chess.com (proxy d'entreprise…).
+- **`_submitGamesToBackend(games, username, cap=5)`** (nouveau helper partagé) : pré-filtre côté client (PGN déjà présents dans `serverGames` → pas de POST inutile), soumet le reste via `/games/analyze` (hash PGN US 7.2 = garde-fou serveur, zéro doublon), plafond 5 analyses comme la voie serveur.
+- **Piggy-back au login** (`_connectUser`) : les 20 parties récupérées pour l'affichage du dashboard sont poussées silencieusement au backend dans la foulée (badge d'en-tête + polling seulement — pas d'overlay intrusif au login). La sync serveur EPIC 23 reste en place (elle seule re-enfile les analyses orphelines) ; le chevauchement éventuel est neutralisé par le pré-filtre client + le hash serveur.
+- **Courbe d'Elo — même principe** (le 502 des logs Render) : si `GET /stats/elo-curve` échoue, `_loadEloCurve` récupère les archives mensuelles dans le navigateur (`ChessComClient.getGamesForMonths`, mois couvrant la fenêtre, 404 tolérés) et reconstruit la courbe en JS pur via **`AdvancedStats.buildEloCurvePoints`** — fonction pure répliquant exactement les règles du backend (`domain/elo_curve.build_elo_curve`) : filtre cadence, fenêtre temporelle, pseudo insensible à la casse des deux côtés, DERNIÈRE partie de chaque jour, entrées inexploitables ignorées, ordre chronologique.
+
+**Validation** : backend 916/916 pytest (inchangé), frontend **371/371 Jest** (7 nouveaux TUs sur `buildEloCurvePoints` : rating du bon côté, casse, cadence, fenêtre, dernier du jour, tri, résilience aux entrées corrompues).
