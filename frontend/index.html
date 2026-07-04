@@ -4,6 +4,10 @@
   <meta charset="UTF-8"/>
   <meta name="viewport" content="width=device-width,initial-scale=1.0,viewport-fit=cover"/>
   <meta name="theme-color" content="#0d0d0d"/>
+  <!-- Déclare la page comme DÉJÀ sombre : sans ça, le « mode nuit » forcé de
+       Chrome/Brave Android réécrit les couleurs — pièces noires inversées en
+       blanc, échiquier classique repeint en bleu sombre (bug mobile 04/07). -->
+  <meta name="color-scheme" content="dark"/>
   <meta name="description" content="Chess Improver – Analyse gratuite coup par coup"/>
   <title>Chess Improver</title>
   <link href="assets/css/fonts.css" rel="stylesheet"/>
@@ -497,9 +501,31 @@
               <span class="player-name" id="name-top">Adversaire</span>
               <span class="player-clock" id="clock-top">—</span>
             </div>
-            <div class="board-area">
-              <div id="board" class="board-container"></div>
-              <div id="move-badge" class="move-badge"></div>
+            <div class="board-row">
+              <!-- Barre d'évaluation façon chess.com : part blanche = probabilité
+                   de gain des Blancs, score affiché côté perdant (POC v0) -->
+              <div class="eval-bar" id="eval-bar" title="Évaluation moteur" aria-label="Évaluation moteur">
+                <div id="eval-bar-white" class="eval-bar-white" style="height:50%"></div>
+                <span id="eval-bar-value" class="eval-bar-value on-black">0.0</span>
+              </div>
+              <div class="board-area">
+                <div id="board" class="board-container"></div>
+                <svg id="board-arrows" class="board-arrows" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
+                  <defs>
+                    <marker id="arrow-head-played" viewBox="0 0 10 10" refX="6" refY="5" markerWidth="3.2" markerHeight="3.2" orient="auto-start-reverse">
+                      <path d="M 0 0 L 10 5 L 0 10 z" fill="#e8a33d"/>
+                    </marker>
+                    <marker id="arrow-head-best" viewBox="0 0 10 10" refX="6" refY="5" markerWidth="3.2" markerHeight="3.2" orient="auto-start-reverse">
+                      <path d="M 0 0 L 10 5 L 0 10 z" fill="#81b64c"/>
+                    </marker>
+                  </defs>
+                </svg>
+                <div id="move-badge" class="move-badge"></div>
+              </div>
+            </div>
+            <div class="arrow-legend" id="arrow-legend" hidden>
+              <span class="arrow-key arrow-key--played"></span> Coup joué
+              <span class="arrow-key arrow-key--best"></span> Suggestion moteur
             </div>
             <div class="player-bar" id="bar-bottom">
               <div class="player-piece-indicator" id="piece-bottom"></div>

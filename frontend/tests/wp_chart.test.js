@@ -150,3 +150,22 @@ test("destroy supprime l'instance du graphique", () => {
   // après destroy, updateMove ne plante pas (graphique null)
   expect(() => WPChart.updateMove(0, 50)).not.toThrow();
 });
+
+describe("formatEval (EPIC 31 — libellé de la barre d'évaluation)", () => {
+  test("centipions → pions signés à une décimale", () => {
+    expect(WPChart.formatEval(30)).toBe("+0.3");
+    expect(WPChart.formatEval(-120)).toBe("-1.2");
+    expect(WPChart.formatEval(0)).toBe("+0.0");
+  });
+
+  test("évals de mat plafonnées en M signé", () => {
+    expect(WPChart.formatEval(10000)).toBe("+M");
+    expect(WPChart.formatEval(-99999)).toBe("-M");
+  });
+
+  test("entrées invalides → 0.0 (barre neutre, jamais NaN affiché)", () => {
+    expect(WPChart.formatEval(null)).toBe("0.0");
+    expect(WPChart.formatEval(undefined)).toBe("0.0");
+    expect(WPChart.formatEval(NaN)).toBe("0.0");
+  });
+});

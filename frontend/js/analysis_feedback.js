@@ -94,9 +94,62 @@ const AnalysisFeedback = (() => {
     return !!(playedFromTo && playedFromTo === expected.slice(0, 4));
   }
 
+  // ── EPIC 31 — Commentaires pédagogiques par coup (retour du POC v0) ──
+
+  const PIECE_NAMES_FR = { K: "Roi", Q: "Dame", R: "Tour", B: "Fou", N: "Cavalier" };
+
+  /**
+   * Description humaine d'un coup en français (POC v0 : « Queen f3xd5 » →
+   * « Dame f3 → d5 (prise) ») depuis le SAN et, si connues, les cases
+   * départ/arrivée. Roques et promotions gérés ; entrées invalides → null.
+   */
+  function describeMoveFr(san, from, to) {
+    if (!san || typeof san !== "string") return null;
+    if (san.startsWith("O-O-O")) return "Grand roque";
+    if (san.startsWith("O-O"))   return "Petit roque";
+    const piece = PIECE_NAMES_FR[san[0]] || "Pion";
+    const capture = san.includes("x") ? " (prise)" : "";
+    const promo = /=([QRBN])/.exec(san);
+    const promoTxt = promo ? ` — promotion ${PIECE_NAMES_FR[promo[1]] || "Dame"}` : "";
+    const path = from && to ? `${from} → ${to}` : `→ ${san.replace(/[+#]$/, "").replace(/=[QRBN]/, "").slice(-2)}`;
+    return `${piece} ${path}${capture}${promoTxt}`;
+  }
+
+  /**
+   * Explication pédagogique en français selon la classification du coup —
+   * l'esprit du POC v0 (« The capture gave too much back… ») : comprendre
+   * QUOI faire la prochaine fois, pas seulement voir un badge. Fonction
+   * pure ; classification inconnue → null (pas de texte vide affiché).
+   */
+  function explainMoveFr(classification, { isCapture = false, cpLoss = null } = {}) {
+    const pawns = typeof cpLoss === "number" ? (cpLoss / 100).toFixed(1) : null;
+    switch (classification) {
+      case "blunder":
+        if (isCapture) {
+          return "Cette prise rend trop de matériel. Avant de prendre, comptez toute la séquence d'échanges : votre prise, la reprise adverse, votre suite — et le bilan matériel final.";
+        }
+        return `Ce coup perd environ ${pawns ?? "plusieurs"} pion${pawns && parseFloat(pawns) < 2 ? "" : "s"} d'avantage. Avant de jouer, cherchez les pièces laissées en prise et les ripostes forcées (échecs, prises, menaces).`;
+      case "mistake":
+        return `Ce coup dégrade nettement votre position${pawns ? ` (−${pawns} pion${parseFloat(pawns) < 2 ? "" : "s"})` : ""}. Comparez avec la suggestion du moteur pour repérer l'idée manquée.`;
+      case "inaccuracy":
+        return "Imprécision : un coup plus actif conservait un meilleur contrôle de la position.";
+      case "good":
+        return "Bon choix — ce coup garde l'évaluation stable.";
+      case "excellent":
+        return "Excellent — pratiquement le meilleur coup de la position.";
+      case "brilliant":
+        return "Brillant ! Le meilleur coup du moteur, difficile à trouver.";
+      case "book":
+        return "Coup de théorie : cette position fait partie des ouvertures connues.";
+      default:
+        return null;
+    }
+  }
+
   return {
     createState, shouldDispatch, shouldAlert,
     evalForPlayer, exerciseQuality, isExerciseMoveCorrect,
+    describeMoveFr, explainMoveFr,
   };
 })();
 

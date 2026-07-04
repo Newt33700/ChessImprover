@@ -172,3 +172,64 @@ describe("AnalysisFeedback.isExerciseMoveCorrect (EPIC 26, US 26.1)", () => {
     expect(AnalysisFeedback.isExerciseMoveCorrect("Ra8#", null, null)).toBe(false);
   });
 });
+
+describe("AnalysisFeedback.describeMoveFr (EPIC 31 — coup en langage humain)", () => {
+  test("pièce + trajet depuis SAN et cases départ/arrivée", () => {
+    expect(AnalysisFeedback.describeMoveFr("Qxd5", "f3", "d5")).toBe("Dame f3 → d5 (prise)");
+    expect(AnalysisFeedback.describeMoveFr("Be4", "d3", "e4")).toBe("Fou d3 → e4");
+    expect(AnalysisFeedback.describeMoveFr("Nf3", "g1", "f3")).toBe("Cavalier g1 → f3");
+  });
+
+  test("pion (pas de lettre de pièce dans le SAN)", () => {
+    expect(AnalysisFeedback.describeMoveFr("d5", "d7", "d5")).toBe("Pion d7 → d5");
+    expect(AnalysisFeedback.describeMoveFr("exd5", "e4", "d5")).toBe("Pion e4 → d5 (prise)");
+  });
+
+  test("roques", () => {
+    expect(AnalysisFeedback.describeMoveFr("O-O", "e1", "g1")).toBe("Petit roque");
+    expect(AnalysisFeedback.describeMoveFr("O-O-O", "e8", "c8")).toBe("Grand roque");
+  });
+
+  test("promotion mentionnée", () => {
+    expect(AnalysisFeedback.describeMoveFr("e8=Q", "e7", "e8")).toContain("promotion Dame");
+  });
+
+  test("cases inconnues : repli sur la destination du SAN", () => {
+    expect(AnalysisFeedback.describeMoveFr("Qxd5")).toBe("Dame → d5 (prise)");
+  });
+
+  test("entrées invalides → null", () => {
+    expect(AnalysisFeedback.describeMoveFr(null)).toBeNull();
+    expect(AnalysisFeedback.describeMoveFr(42)).toBeNull();
+  });
+});
+
+describe("AnalysisFeedback.explainMoveFr (EPIC 31 — explication pédagogique)", () => {
+  test("gaffe sur une prise : conseil de comptage des échanges (POC v0)", () => {
+    const txt = AnalysisFeedback.explainMoveFr("blunder", { isCapture: true, cpLoss: 470 });
+    expect(txt).toContain("séquence d'échanges");
+  });
+
+  test("gaffe hors prise : perte chiffrée en pions + pièces en prise", () => {
+    const txt = AnalysisFeedback.explainMoveFr("blunder", { isCapture: false, cpLoss: 300 });
+    expect(txt).toContain("3.0 pions");
+    expect(txt).toContain("ripostes forcées");
+  });
+
+  test("erreur : perte chiffrée + renvoi vers la suggestion moteur", () => {
+    const txt = AnalysisFeedback.explainMoveFr("mistake", { cpLoss: 150 });
+    expect(txt).toContain("−1.5 pion");
+    expect(txt).toContain("suggestion du moteur");
+  });
+
+  test("chaque classification connue produit un texte non vide", () => {
+    for (const cls of ["inaccuracy", "good", "excellent", "brilliant", "book"]) {
+      expect(AnalysisFeedback.explainMoveFr(cls)).toBeTruthy();
+    }
+  });
+
+  test("classification inconnue ou absente → null (pas de texte vide affiché)", () => {
+    expect(AnalysisFeedback.explainMoveFr("unknown")).toBeNull();
+    expect(AnalysisFeedback.explainMoveFr(undefined)).toBeNull();
+  });
+});
