@@ -104,19 +104,6 @@
   </div>
 </div>
 
-<!-- ══════════════════ PGN MODAL ══════════════════ -->
-<div id="pgn-modal" class="pgn-modal-overlay" hidden aria-modal="true" role="dialog" aria-label="Analyser un PGN">
-  <div class="pgn-modal-card card">
-    <div class="pgn-modal-header">
-      <h2 class="pgn-modal-title">Analyser un PGN</h2>
-      <button id="btn-close-pgn" class="btn-icon" aria-label="Fermer">✕</button>
-    </div>
-    <textarea id="pgn-input" class="pgn-textarea" rows="10" spellcheck="false"
-      placeholder="Collez votre PGN ici…&#10;[Event &quot;Live Chess&quot;]&#10;[White &quot;VotreNom&quot;]&#10;..."></textarea>
-    <button id="btn-analyze" class="btn btn--primary btn--full">Analyser</button>
-  </div>
-</div>
-
 <!-- Loading -->
 <div id="loading-overlay" hidden role="status">
   <div class="loading-spinner"></div>
@@ -162,6 +149,23 @@
   <div id="current-user"></div>
 </header>
 
+<!-- ══════════════════ APP SHELL (EPIC 27, US 27.1) — sidebar fixe + contenu ══════════════════ -->
+<div class="app-shell">
+  <nav class="sidebar" id="app-sidebar" aria-label="Navigation principale">
+    <button class="sidebar-link active" data-nav="accueil" onclick="window.app?._navigateTo('accueil')">
+      <span class="sidebar-link-icon">🏠</span> Accueil
+    </button>
+    <button class="sidebar-link" data-nav="parties" onclick="window.app?._navigateTo('parties')">
+      <span class="sidebar-link-icon">📋</span> Mes Parties
+    </button>
+    <button class="sidebar-link" data-nav="entrainement" onclick="window.app?._navigateTo('entrainement')">
+      <span class="sidebar-link-icon">🎯</span> Entraînement
+    </button>
+    <button class="sidebar-link" data-nav="stats" onclick="window.app?._navigateTo('stats')">
+      <span class="sidebar-link-icon">📊</span> Statistiques
+    </button>
+  </nav>
+
 <!-- ══════════════════ MAIN ══════════════════ -->
 <main class="app-main">
 
@@ -184,14 +188,11 @@
           <div class="db-card-body" id="db-body-review">
             <!-- Connect prompt (default state) -->
             <div id="connect-prompt" class="connect-prompt">
-              <p>Entrez votre pseudo Chess.com ou collez un PGN pour analyser votre dernière partie.</p>
+              <p>Entrez votre pseudo Chess.com pour analyser votre dernière partie.</p>
               <div class="input-row">
                 <input id="username-input" type="text" placeholder="Pseudo Chess.com"
                        autocomplete="off" autocapitalize="none" spellcheck="false" aria-label="Pseudo"/>
                 <button id="btn-connect" class="btn btn--primary">Charger</button>
-              </div>
-              <div class="db-link-row">
-                <button id="btn-to-pgn" class="db-link">Coller un PGN</button>
               </div>
             </div>
             <!-- Last game preview (shown after loading) -->
@@ -228,9 +229,6 @@
               </div>
 
               <button id="btn-launch-review" class="btn btn--primary btn--full btn--lg">Lancer la Révision</button>
-              <div class="db-link-row">
-                <button id="btn-to-pgn-2" class="db-link">Coller un PGN</button>
-              </div>
             </div>
           </div>
         </div>
@@ -807,6 +805,15 @@
       <h2 class="tactics-title">Entraîneur d'Ouvertures</h2>
     </div>
 
+    <div class="db-card ot-grid-card">
+      <div class="db-card-body">
+        <h3 class="ot-section-title">Choisir une ouverture populaire</h3>
+        <div class="openings-grid" id="ot-openings-grid">
+          <p class="empty-state">Chargement des ouvertures…</p>
+        </div>
+      </div>
+    </div>
+
     <div class="db-card ot-add-card">
       <div class="db-card-body">
         <h3 class="ot-section-title">Ajouter une ligne</h3>
@@ -891,7 +898,50 @@
     <div id="btn-back-dashboard" hidden></div>
   </section>
 
+  <!-- ── MES PARTIES (EPIC 27, US 27.3 — bibliothèque de parties) ── -->
+  <section id="section-library" class="section" hidden>
+    <div class="library-header">
+      <h2 class="library-title">Mes Parties</h2>
+      <button class="btn btn--accent btn--sm" id="btn-library-sync" onclick="window.app?._triggerManualSync()">🔄 Synchroniser</button>
+    </div>
+    <div id="library-table-container">
+      <p class="empty-state">Chargement…</p>
+    </div>
+  </section>
+
+  <!-- ── ENTRAÎNEMENT (EPIC 27, US 27.1 — hub regroupant les modules dédiés) ── -->
+  <section id="section-training-hub" class="section" hidden>
+    <h2 class="library-title">Entraînement</h2>
+    <div class="training-hub-grid">
+      <button class="training-hub-card" onclick="window.app?._showExercise()">
+        <span class="training-hub-icon">♟</span>
+        <span class="training-hub-label">Exercice SRS</span>
+      </button>
+      <button class="training-hub-card" onclick="window.app?._showTactics()">
+        <span class="training-hub-icon">🧩</span>
+        <span class="training-hub-label">Coach Tactique</span>
+      </button>
+      <button class="training-hub-card" onclick="window.app?._showOpeningsTrainer()">
+        <span class="training-hub-icon">📖</span>
+        <span class="training-hub-label">Ouvertures</span>
+      </button>
+      <button class="training-hub-card" onclick="window.app?._showEndgameTrainer()">
+        <span class="training-hub-icon">👑</span>
+        <span class="training-hub-label">Technique de Mat</span>
+      </button>
+      <button class="training-hub-card" onclick="window.app?._showSprint()">
+        <span class="training-hub-icon">⚡</span>
+        <span class="training-hub-label">Tactical Sprint</span>
+      </button>
+      <button class="training-hub-card" onclick="window.app?._showFlashcards()">
+        <span class="training-hub-icon">💀</span>
+        <span class="training-hub-label">Cimetière des Erreurs</span>
+      </button>
+    </div>
+  </section>
+
 </main>
+</div><!-- /.app-shell -->
 
 <!-- Scripts -->
 <script src="assets/js/jquery-3.7.1.min.js"></script>

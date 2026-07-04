@@ -227,14 +227,142 @@ input, textarea { font-family: inherit; }
 }
 
 /* --------------------------------------------------------------------------
+   App Shell (EPIC 27, US 27.1) — sidebar fixe + zone de contenu
+-------------------------------------------------------------------------- */
+.app-shell {
+  display: flex;
+  align-items: flex-start;
+  min-height: calc(100dvh - 52px); /* 52px = hauteur .app-header */
+}
+
+.sidebar {
+  flex: 0 0 auto;
+  width: 200px;
+  position: sticky;
+  top: 52px;
+  height: calc(100dvh - 52px);
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: var(--space-md) var(--space-sm);
+  background: var(--bg-800);
+  border-right: 1px solid var(--border);
+}
+
+.sidebar-link {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 10px 12px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: none;
+  color: var(--text-secondary);
+  font-size: 0.85rem;
+  font-weight: 600;
+  text-align: left;
+  transition: background var(--t-fast), color var(--t-fast);
+}
+.sidebar-link:hover { background: var(--bg-700); color: var(--text-primary); }
+.sidebar-link.active { background: var(--green); color: #fff; }
+.sidebar-link-icon { font-size: 1.05rem; line-height: 1; }
+
+@media (max-width: 860px) {
+  .app-shell { flex-direction: column; }
+  .sidebar {
+    width: 100%;
+    height: auto;
+    position: static;
+    flex-direction: row;
+    overflow-x: auto;
+    border-right: none;
+    border-bottom: 1px solid var(--border);
+  }
+  .sidebar-link { flex: 0 0 auto; white-space: nowrap; }
+}
+
+/* --------------------------------------------------------------------------
    Main layout
 -------------------------------------------------------------------------- */
 .app-main {
   width: 100%;
+  min-width: 0;
+  flex: 1;
   /* Inner containers (.dash-grid, .board-col) handle their own max-width/padding */
 }
 
 .section { display: block; }
+
+/* --------------------------------------------------------------------------
+   Mes Parties (EPIC 27, US 27.3) — bibliothèque de parties synchronisées
+-------------------------------------------------------------------------- */
+.library-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-md);
+  margin-bottom: var(--space-md);
+}
+.library-title { font-size: 1.1rem; font-weight: 700; margin: 0; }
+
+.library-table { width: 100%; border-collapse: collapse; }
+.library-table td { padding: 10px 8px; border-bottom: 1px solid var(--border); vertical-align: middle; }
+.library-table td:first-child { width: 32px; }
+.library-table td:last-child { text-align: right; }
+.game-result-badge.processing { background: rgba(122,118,112,0.15); color: var(--text-muted); border: 1.5px solid var(--border); }
+.library-status { font-size: 0.78rem; color: var(--text-muted); font-style: italic; }
+
+/* --------------------------------------------------------------------------
+   Entraînement (EPIC 27, US 27.1) — hub regroupant les modules dédiés
+-------------------------------------------------------------------------- */
+.training-hub-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+  gap: var(--space-md);
+  margin-top: var(--space-md);
+}
+.training-hub-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding: var(--space-lg) var(--space-md);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--bg-800);
+  color: var(--text-primary);
+  transition: border-color var(--t-fast), transform var(--t-fast);
+}
+.training-hub-card:hover { border-color: var(--green); transform: translateY(-2px); }
+.training-hub-icon { font-size: 1.8rem; }
+.training-hub-label { font-size: 0.85rem; font-weight: 600; text-align: center; }
+
+/* --------------------------------------------------------------------------
+   Grille visuelle d'ouvertures (EPIC 27, US 27.4)
+-------------------------------------------------------------------------- */
+.openings-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(110px, 1fr));
+  gap: var(--space-md);
+  margin-top: var(--space-sm);
+}
+.opening-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: var(--space-sm);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--bg-800);
+  color: var(--text-primary);
+  transition: border-color var(--t-fast);
+}
+.opening-card:hover { border-color: var(--green); }
+.opening-card-board { width: 100%; aspect-ratio: 1 / 1; pointer-events: none; }
+.opening-card-name { font-size: 0.72rem; font-weight: 600; text-align: center; }
 
 /* --------------------------------------------------------------------------
    Cards
@@ -426,44 +554,6 @@ input[type="text"]:focus {
   box-shadow: 0 0 0 3px var(--green-glow);
 }
 input[type="text"]::placeholder { color: var(--text-muted); }
-
-.or-divider {
-  text-align: center;
-  color: var(--text-muted);
-  font-size: 0.78rem;
-  margin: var(--space-sm) 0;
-  position: relative;
-}
-.or-divider::before, .or-divider::after {
-  content: "";
-  position: absolute;
-  top: 50%;
-  width: calc(50% - 24px);
-  height: 1px;
-  background: var(--border);
-}
-.or-divider::before { left: 0; }
-.or-divider::after  { right: 0; }
-
-.pgn-textarea {
-  width: 100%;
-  background: var(--bg-900);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  color: var(--text-primary);
-  font-family: var(--font-data);
-  font-size: 0.76rem;
-  line-height: 1.7;
-  padding: var(--space-sm) var(--space-md);
-  resize: vertical;
-  outline: none;
-  margin-bottom: var(--space-sm);
-  transition: border-color var(--t-fast), box-shadow var(--t-fast);
-}
-.pgn-textarea:focus {
-  border-color: var(--green);
-  box-shadow: 0 0 0 3px var(--green-glow);
-}
 
 /* --------------------------------------------------------------------------
    Dashboard Stats – chess.com style
@@ -1312,24 +1402,6 @@ body.board-active .dash-grid { display: none; }
   line-height: 1.5;
 }
 
-.db-link-row {
-  text-align: center;
-  margin-top: var(--space-sm);
-}
-
-.db-link {
-  background: none;
-  border: none;
-  color: var(--accent);
-  font-size: 0.85rem;
-  cursor: pointer;
-  padding: 4px 0;
-  text-decoration: underline;
-  text-underline-offset: 2px;
-}
-
-.db-link:hover { color: var(--accent-hover); }
-
 /* --------------------------------------------------------------------------
    Match card (last game preview)
 -------------------------------------------------------------------------- */
@@ -1748,46 +1820,6 @@ body.board-active .board-col { display: flex; }
 /* Back arrow – visible on the Review page (desktop + mobile) */
 .board-back-mobile {
   display: flex;
-}
-
-/* --------------------------------------------------------------------------
-   PGN modal overlay
--------------------------------------------------------------------------- */
-.pgn-modal-overlay {
-  position: fixed;
-  inset: 0;
-  background: rgba(0, 0, 0, 0.75);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  z-index: 200;
-  padding: var(--space-md);
-}
-
-.pgn-modal-overlay[hidden] { display: none; }
-
-.pgn-modal-card {
-  width: 100%;
-  max-width: 560px;
-  background: var(--bg-800);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  padding: var(--space-lg);
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-md);
-}
-
-.pgn-modal-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-}
-
-.pgn-modal-title {
-  font-size: 1.1rem;
-  font-weight: 700;
-  color: var(--text);
 }
 
 /* --------------------------------------------------------------------------
