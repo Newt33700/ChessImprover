@@ -1121,3 +1121,44 @@ En tant qu'équipe, nous voulons que chaque modification de `supabase/migrations
 - Le badge discret d'en-tête (`#sync-indicator`, EPIC 23) et le polling de fond 15 s (`_pollSyncStatus`, silencieux — sync à la connexion) restent inchangés et coexistent avec l'overlay ; la finalisation (toast + rafraîchissement Stats/Mes Parties) est désormais factorisée dans `_onSyncCompleted()`, appelée par les deux pollers pour éviter la duplication et le double toast.
 
 **Validation EPIC 28 :** backend 850/850 pytest (9 nouveaux), frontend 355/355 Jest (inchangé — plomberie DOM dans `app.js`, cf. EPIC 27), couverture ≥ 80 % maintenue.
+
+## EPIC 29 : Gamification serveur — XP authoritatif, Quêtes, Cosmétiques
+
+**Contexte :** demande PO — migrer l'XP/Niveau vers Postgres (+50 XP/analyse, +15 XP/problème résolu), jauge circulaire d'en-tête, quêtes quotidiennes (3 missions générées serveur), cosmétiques débloqués par niveau.
+
+**Note de méthode :** un appel `AskUserQuestion` (arbitrage de périmètre US 29.1, cf. ci-dessous) a échoué techniquement (« Tool permission stream closed ») sans jamais atteindre l'utilisateur. Conformément à la consigne « enchaîne tant que tu as des tokens », la décision a été prise de façon autonome plutôt que de rester bloqué, en choisissant systématiquement l'option la plus sûre (zéro régression sur l'existant) — documentée ci-dessous à chaque fois qu'un arbitrage a été nécessaire.
+
+### US 29.1 : XP/Niveau authoritatif serveur + jauge circulaire
+
+**Arbitrage de périmètre (assumé, documenté)** : le système XP existant (`app.js:XPSystem`, localStorage) crédite 6 actions différentes (analyse, tactique, finale, sprint, flashcard, ouverture). Migrer les 6 vers le serveur en une passe implique de modifier 6 endpoints + de rendre la jauge d'en-tête 100 % serveur — si fait à moitié (ex. seule l'analyse migrée), la jauge afficherait une valeur incohérente selon l'action qui vient d'être effectuée (elle pourrait même reculer). Plutôt que de risquer cette incohérence visible par tout utilisateur connecté, le choix a été : livrer un **ledger serveur réel et testé**, câblé sur l'action explicitement citée par le PO en premier (l'analyse de partie), **sans** migrer les 5 autres actions ni basculer la jauge affichée sur cette nouvelle source — la jauge continue d'afficher l'XP local historique (toutes actions confondues, comportement inchangé), pendant que le nouveau compteur serveur s'accumule silencieusement en arrière-plan pour les analyses. Un futur EPIC pourra migrer les 5 endpoints restants d'un coup et alors seulement basculer l'affichage.
+
+**Statut :** ✅ Implémenté (périmètre ci-dessus) :
+- `profiles.xp`/`profiles.level` (migration `20260704150000_profiles_xp_level_epic29.sql`, défaut 0/1) ; `domain/gamification.py` (module pur) : `xp_required_for_level(n) = n × 100` (identique à la formule client historique), `apply_xp_gain(xp, level, amount)` (gère les montées de niveau multiples en un seul gain).
+- `db_client.get_xp_level`/`add_xp` (délégation Postgres si `DATABASE_URL`, sinon in-memory) ; `routers/games.py:run_analysis` crédite `XP_PER_ANALYSIS = 50` à la complétion d'une analyse (best-effort, même garde-fou que les blocs snapshot/erreurs/flashcards).
+- `UserProfile` (+ `_to_profile`) expose désormais `xp`/`level` — visible via `/auth/me`, `/auth/signup`, `/auth/login`.
+- Purge : le modèle `GlobalDashboard` (mort, zéro référence, un `total_xp` jamais câblé) est supprimé — évite un second concept d'XP concurrent et confus à côté du nouveau ledger réel.
+- **Jauge circulaire** (US 29.1, partie visuelle) : `#xp-gauge` remplace l'ancienne barre linéaire par un anneau SVG (`stroke-dashoffset` proportionnel à la progression) — amélioration purement visuelle, toujours sourcée depuis `XPSystem` local (aucun changement de données, cf. arbitrage ci-dessus).
+- Tests : `test_gamification.py` (13 TUs : formule, montées de niveau simples/multiples, clamps, persistance in-memory), `test_games_api.py::TestAnalysisXpReward` (3 TUs : +50 XP après analyse, profil à jour, cumul + montée de niveau), `test_auth.py` (défauts 0/1 à l'inscription).
+
+### US 29.2 : Quêtes quotidiennes (sans état)
+
+**Décision d'architecture (conforme à la piste déjà notée avant cette session) :** pas de table `daily_quests` mutable à peupler/purger chaque jour pour chaque utilisateur. Les 3 quêtes du jour sont **dérivées** d'un hash déterministe `(date, user_id)` — même joueur, même jour → mêmes quêtes, sans jamais rien persister — et leur progression est calculée à la volée depuis des données déjà existantes (parties analysées, tentatives tactiques réussies, sprints terminés aujourd'hui).
+
+**Statut :** ✅ Implémenté :
+- `domain/daily_quests.py` : catalogue de 5 quêtes possibles (`QUEST_POOL`, 2 sur les parties analysées, 2 sur les tactiques, 1 sur les sprints — les 3 seules métriques disposant déjà d'un horodatage exploitable côté serveur, sans ajouter de nouvelle table de suivi), `select_daily_quests` (seed SHA-256, tirage déterministe de 3 quêtes), `compute_quest_progress` (fusion définition + compteur réel, clampé au `target`).
+- `GET /api/v1/quests/daily` (nouveau routeur `quests.py`) : calcule les compteurs du jour depuis `get_games_for_user`/`get_tactical_attempts`/`get_sprints_for_user` (cette dernière méthode ajoutée à `db_client`/`PgRepository`, absente jusqu'ici), filtrés sur la date UTC courante.
+- **Limite assumée** : la récompense XP affichée (`xp_reward`) n'est **pas** auto-créditée à la complétion — sans mémoriser qu'elle a déjà été payée un jour donné, rejouer l'appel la recréditerait à l'infini, ce qui réintroduirait exactement l'état qu'on cherche à éviter avec l'approche sans-état. Non traité dans cette itération, documenté plutôt que fait à moitié silencieusement.
+- Widget Accueil (`#card-daily-quests`) : 3 lignes avec barre de progression, rafraîchi à la connexion et à chaque retour sur Accueil.
+- Tests : `test_daily_quests.py` (12 TUs : déterminisme, absence de doublons, variabilité par utilisateur/jour, clamp de progression), `test_quests_api.py` (13 TUs : comptage par métrique, filtre « aujourd'hui seulement », stabilité de la sélection, 401 sans token).
+
+### US 29.3 : Cosmétiques débloqués par niveau
+
+**Décision d'architecture (conforme à la piste déjà notée avant cette session) :** pas de nouveaux assets d'avatar à fabriquer (hors de portée d'un agent sans capacité de génération d'art) — réutilisation des thèmes de pièces/plateau déjà implémentés (EPIC 18) comme catalogue de déblocages.
+
+**Statut :** ✅ Implémenté :
+- `ThemeService.UNLOCK_LEVELS` (piece : cburnett=1, cyber-tactics=3 ; board : classic/slate=1, ocean=4, cyber=7) + `getUnlockLevel`/`isUnlocked` (fonctions pures).
+- Gate **côté sélection uniquement** (pas d'enforcement serveur) : un choix cosmétique n'a aucun enjeu de sécurité ou d'équilibrage de jeu à faire respecter côté API — `app.js:_applyThemeUnlockGates` désactive/relabellise (« 🔒 Niveau N ») les `<option>` non débloquées à l'ouverture de la modale Thème, et `_saveThemeSettings` revalide au moment de la soumission (refuse un cosmétique verrouillé même si l'utilisateur a bypassé l'UI).
+- Utilisateur anonyme : aucune restriction (niveau serveur non disponible sans compte) — comportement inchangé par rapport à avant cette US.
+- Tests : `theme_service.test.js` (5 nouveaux TUs : niveaux par défaut, seuils, thème inconnu, bornes `isUnlocked`).
+
+**Validation EPIC 29 :** backend 896/896 pytest (46 nouveaux), frontend 362/362 Jest (7 nouveaux), couverture ≥ 80 % maintenue.
