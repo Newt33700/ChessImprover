@@ -333,6 +333,27 @@ const ChessComClient = {
       return res.ok ? res.json() : {};
     } catch { return {}; }
   },
+
+  /**
+   * Parties de tous les mois couvrant les `days` derniers jours (repli
+   * navigateur de la courbe d'Elo, EPIC 24) — un mois sans archive est
+   * silencieusement ignoré, comme côté serveur.
+   */
+  async getGamesForMonths(username, days) {
+    const now = new Date();
+    const start = new Date(now.getTime() - days * 86400000);
+    const games = [];
+    let y = start.getFullYear(), m = start.getMonth();
+    while (y < now.getFullYear() || (y === now.getFullYear() && m <= now.getMonth())) {
+      try {
+        const mm = String(m + 1).padStart(2, "0");
+        const res = await fetch(`${CHESS_COM_API}/player/${username}/games/${y}/${mm}`);
+        if (res.ok) games.push(...((await res.json()).games || []));
+      } catch { /* mois indisponible : ignoré */ }
+      m++; if (m > 11) { m = 0; y++; }
+    }
+    return games;
+  },
 };
 
 // ═══════════════════════════════════════════════════════════════════
@@ -550,6 +571,19 @@ class ChessImproverApp {
       this._renderGamesList(games);
       this._renderReviewCard(games);
       this._toast(`${games.length} parties chargées ✓`, "success");
+      // Les données viennent d'être récupérées pour l'affichage : on les
+      // pousse aussi au backend (silencieux, badge + polling seulement —
+      // pas d'overlay au login), au lieu de demander à Render de refaire le
+      // même fetch Chess.com (bloqué par Cloudflare en prod). Hash PGN
+      // US 7.2 = zéro doublon même si la sync serveur EPIC 23 est passée.
+      if (window.ApiClient && ApiClient.isConfigured() && window.Auth?.isLoggedIn()) {
+        this._submitGamesToBackend(games, username).then((queued) => {
+          if (!queued || this._syncPolling) return;
+          this._renderSyncIndicator(queued);
+          this._syncPollCount = 0;
+          this._syncPolling = setInterval(() => this._pollSyncStatus(), 15000);
+        }).catch(() => {});
+      }
     } catch (err) {
       this._toast("Impossible de contacter Chess.com", "error");
     } finally {
@@ -1674,17 +1708,20 @@ class ChessImproverApp {
 
   /**
    * Déclenche la synchronisation Chess.com à la demande (bouton « 🔄
-   * Synchroniser » de Mes Parties), remplace le champ PGN retiré (US 27.2).
-   * Réutilise le même pipeline serveur que la sync de fond (US 23.1) :
-   * idempotent (hash PGN), donc aucun risque de doublon.
+   * Synchroniser » de Mes Parties, remplace le champ PGN retiré — US 27.2).
    *
-   * Résilience (bug prod 04/07) : Chess.com (Cloudflare) bloque parfois les
-   * requêtes sortantes des IP datacenter (Render) → le backend répond 502
-   * alors que le NAVIGATEUR, lui, joint api.chess.com sans problème (l'app
-   * le fait déjà pour charger les parties récentes). Dans ce cas on bascule
-   * sur une sync côté client : fetch des parties dans le navigateur, puis
-   * soumission des PGN au backend via /games/analyze (déduplication par
-   * hash PGN, US 7.2 — zéro doublon possible).
+   * Voie PRINCIPALE = navigateur (évolution du hotfix 04/07) : le frontend
+   * détient déjà les parties (chargées pour l'affichage du dashboard, ou un
+   * seul fetch api.chess.com sinon — CORS ouvert, jamais bloqué par
+   * Cloudflare contrairement aux IP datacenter de Render). Il les POUSSE au
+   * backend via `/games/analyze` : déduplication par hash PGN (US 7.2) côté
+   * serveur, donc zéro doublon et zéro re-fetch Chess.com côté serveur —
+   * les données ne sont récupérées qu'UNE fois, dans le navigateur.
+   *
+   * La voie serveur (`POST /games/sync`, EPIC 23) ne sert plus que de repli
+   * quand le navigateur lui-même ne peut pas joindre Chess.com (proxy
+   * d'entreprise, etc.) — elle garde aussi son rôle de re-enfilage des
+   * analyses orphelines via la sync silencieuse à la connexion.
    */
   async _triggerManualSync() {
     if (!window.ApiClient || !ApiClient.isConfigured() || !window.Auth?.isLoggedIn()) {
@@ -1694,10 +1731,15 @@ class ChessImproverApp {
     const btn = document.getElementById("btn-library-sync");
     if (btn) { btn.disabled = true; btn.textContent = "🔄 Synchronisation…"; }
     try {
-      const result = await ApiClient.syncGames();
-      const inFlight = (result?.queued || 0) + (result?.requeued || 0);
-      if (inFlight) {
-        this._startSyncWatch(inFlight);
+      const queued = await this._clientSideSync();
+      if (queued === null) {
+        // Le navigateur n'a pas pu récupérer les parties — repli serveur.
+        const result = await ApiClient.syncGames();
+        const inFlight = (result?.queued || 0) + (result?.requeued || 0);
+        if (inFlight) this._startSyncWatch(inFlight);
+        else this._toast("Aucune nouvelle partie à synchroniser", "info");
+      } else if (queued > 0) {
+        this._startSyncWatch(queued);
       } else {
         this._toast("Aucune nouvelle partie à synchroniser", "info");
       }
@@ -1706,8 +1748,7 @@ class ChessImproverApp {
         // Pas un problème réseau : aucun pseudo Chess.com lié au profil.
         this._toast("Liez votre pseudo Chess.com via le bouton Profil pour synchroniser", "error");
       } else {
-        // 502/réseau : le serveur ne joint pas Chess.com — repli navigateur.
-        await this._clientSideSync();
+        this._toast("Impossible de contacter Chess.com pour le moment", "error");
       }
     } finally {
       if (btn) { btn.disabled = false; btn.textContent = "🔄 Synchroniser"; }
@@ -1725,31 +1766,41 @@ class ChessImproverApp {
   }
 
   /**
-   * Sync de repli 100 % navigateur : les parties récentes sont récupérées
-   * directement depuis api.chess.com (CORS ouvert — fonctionne même quand
-   * Render est bloqué par Cloudflare), puis chaque PGN est soumis au backend
-   * via `/games/analyze`. Le serveur écarte les parties déjà connues (hash
-   * PGN, US 7.2) et lance l'analyse Stockfish des nouvelles. Plafond de 5
-   * nouvelles analyses par sync, comme la voie serveur (instance modeste).
+   * Sync 100 % navigateur : réutilise `this.recentGames` (déjà chargées pour
+   * le dashboard — zéro fetch en double) ou fait UN fetch api.chess.com,
+   * puis soumet les nouveaux PGN au backend. Renvoie le nombre d'analyses
+   * mises en file, ou `null` si le navigateur n'a pas pu obtenir de parties
+   * (pas de pseudo, Chess.com injoignable depuis le client) — signal pour
+   * l'appelant de tenter la voie serveur.
    */
   async _clientSideSync() {
     const username = window.Auth?.getUser()?.chess_username || this.username;
-    if (!username) {
-      this._toast("Liez votre pseudo Chess.com via le bouton Profil pour synchroniser", "error");
-      return;
+    if (!username) return null;
+    let games = this.recentGames;
+    if (!games?.length) {
+      try {
+        games = await ChessComClient.getRecentGames(username, 10);
+      } catch { games = []; }
     }
-    let games = [];
-    try {
-      games = await ChessComClient.getRecentGames(username, 10);
-    } catch { /* getRecentGames est déjà best-effort par mois */ }
-    if (!games.length) {
-      this._toast("Impossible de contacter Chess.com pour le moment", "error");
-      return;
-    }
+    if (!games.length) return null;
+    return this._submitGamesToBackend(games, username);
+  }
+
+  /**
+   * Pousse au backend les parties Chess.com que le navigateur détient déjà :
+   * pré-filtre côté client (PGN déjà présents dans `serverGames` — évite des
+   * POST inutiles), puis `/games/analyze` par partie (le hash PGN US 7.2
+   * reste le garde-fou serveur). Plafond de `cap` nouvelles analyses par
+   * appel, comme la voie serveur (instance Render modeste). Renvoie le
+   * nombre d'analyses réellement mises en file.
+   */
+  async _submitGamesToBackend(games, username, cap = 5) {
+    const known = new Set((this.serverGames || []).map((g) => g.pgn));
+    const me = (username || "").toLowerCase();
     let queued = 0;
-    const me = username.toLowerCase();
     for (const g of games) {
-      if (queued >= 5 || !g.pgn) continue;
+      if (queued >= cap) break;
+      if (!g.pgn || known.has(g.pgn)) continue;
       const userColor = (g.white?.username || "").toLowerCase() === me ? "white" : "black";
       try {
         const data = await ApiClient.analyzeGame(g.pgn, {
@@ -1760,11 +1811,7 @@ class ChessImproverApp {
         if (data?.accepted?.[0]?.status === "processing") queued++;
       } catch { /* best-effort par partie : on tente les suivantes */ }
     }
-    if (queued) {
-      this._startSyncWatch(queued);
-    } else {
-      this._toast("Aucune nouvelle partie à synchroniser", "info");
-    }
+    return queued;
   }
 
   // ─── EPIC 28 (US 28.2/28.3) : Smart Loader — attente d'analyse Chess.com ──
@@ -3572,7 +3619,20 @@ class ChessImproverApp {
     if (this._eloChart) { this._eloChart.destroy(); this._eloChart = null; }
     wrap.innerHTML = '<p class="empty-state">Chargement…</p>';
 
-    const curve = await AdvancedStats.fetchEloCurve(this._advCadence, days);
+    let curve = await AdvancedStats.fetchEloCurve(this._advCadence, days);
+    if (!curve) {
+      // Repli navigateur (même principe que la sync) : le serveur ne joint
+      // pas Chess.com (Cloudflare bloque les IP Render) mais le client, si.
+      // Archives récupérées ici puis courbe reconstruite en JS pur — mêmes
+      // règles que le backend (buildEloCurvePoints, testé).
+      const username = window.Auth?.getUser()?.chess_username || this.username;
+      if (username) {
+        const games = await ChessComClient.getGamesForMonths(username, days);
+        if (games.length) {
+          curve = { points: AdvancedStats.buildEloCurvePoints(games, username, this._advCadence, days) };
+        }
+      }
+    }
     if (!curve) {
       wrap.innerHTML = '<p class="empty-state">Courbe indisponible — liez votre pseudo Chess.com via Profil pour voir votre Elo réel.</p>';
       return;

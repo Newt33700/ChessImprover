@@ -165,6 +165,38 @@ const AdvancedStats = (() => {
   }
 
   /**
+   * Reconstruit les points de la courbe d'Elo depuis des parties Chess.com
+   * BRUTES récupérées côté navigateur — repli quand le backend ne joint pas
+   * Chess.com (Cloudflare bloque les IP datacenter → 502). Mêmes règles que
+   * `domain/elo_curve.build_elo_curve` côté serveur : filtre par cadence,
+   * fenêtre temporelle, rating lu du bon côté (insensible à la casse),
+   * DERNIÈRE partie de chaque jour, entrées inexploitables ignorées.
+   * Fonction pure, testable sans réseau ni DOM.
+   * @returns {Array<{date:string, rating:number}>} ordre chronologique
+   */
+  function buildEloCurvePoints(games, username, cadence, days, now = new Date()) {
+    const u = (username || "").toLowerCase();
+    const list = Array.isArray(games) ? games : [];
+    const nowSec = Math.floor(now.getTime() / 1000);
+    const cutoff = nowSec - days * 86400;
+    const byDay = new Map(); // date ISO -> { end, rating } (dernière partie du jour)
+    for (const g of list) {
+      if (!g || g.time_class !== cadence) continue;
+      const end = Number(g.end_time);
+      if (!Number.isFinite(end) || end < cutoff || end > nowSec) continue;
+      let side = null;
+      if ((g.white?.username || "").toLowerCase() === u) side = g.white;
+      else if ((g.black?.username || "").toLowerCase() === u) side = g.black;
+      const rating = side?.rating;
+      if (typeof rating !== "number") continue;
+      const date = new Date(end * 1000).toISOString().slice(0, 10);
+      const prev = byDay.get(date);
+      if (!prev || end >= prev.end) byDay.set(date, { end, rating });
+    }
+    return [...byDay.keys()].sort().map((d) => ({ date: d, rating: byDay.get(d).rating }));
+  }
+
+  /**
    * Labels + valeurs prêts pour Chart.js depuis les points de la courbe
    * d'Elo (EPIC 24). Fonction pure, testable sans Chart.js ni DOM.
    * @param {Array<{date:string, rating:number}>} points
@@ -633,6 +665,7 @@ const AdvancedStats = (() => {
     fetchSummary,
     fetchHistory,
     fetchEloCurve,
+    buildEloCurvePoints,
     buildEloCurveData,
     renderEloCurve,
     isEmpty,
