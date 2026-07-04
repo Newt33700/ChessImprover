@@ -1308,3 +1308,11 @@ Reste à faire, consigné en Backlog (README §11) : migration complète des 5 a
 **Hors périmètre (dette technique pré-existante découverte, non corrigée ici)** : les specs E2E `cognitive_flashcards.spec.js` (Cimetière) et `endgames.spec.js` (Finales) attendaient encore l'ancien texte « Coup incorrect. Solution » remplacé par les flèches depuis l'EPIC 32 — jamais mis à jour à l'époque. Signalé au PO plutôt que corrigé silencieusement : hors du périmètre de cette US (Coach Tactique uniquement).
 
 **Validation EPIC 34 :** backend **964/964 pytest** (48 nouveaux : `test_lichess_puzzles.py` 22, `test_tactics.py` +17, `test_tactics_api.py` +9), frontend 405/405 Jest (inchangé — plomberie DOM côté Coach Tactique, sans nouvelle fonction pure), E2E `tactics.spec.js` mis à jour et stabilisé (3/3, 5 exécutions consécutives vérifiées), couverture ≥ 80 % maintenue.
+
+## Hotfix prod (04/07) : diagnostic « réponse Lichess inexploitable »
+
+**Constat en production** (logs Render, une fois EPIC 34 réellement déployé) : `tactics/next: réponse Lichess inexploitable (angle=None)` — l'appel réseau à Lichess réussit (aucune exception, pas de « Lichess injoignable »), mais `parse_puzzle_payload` rejette la réponse. La forme exacte du JSON de `GET /api/puzzle/next` n'a pas pu être vérifiée pendant le développement (réseau bloqué dans le bac à sable de développement) : l'implémentation s'est appuyée sur la documentation connue de l'API, qui ne correspond visiblement pas exactement (ou plus) à la réponse réelle.
+
+**Correctif (diagnostic, pas encore le fix définitif)** : le message de log en cas de rejet embarque désormais le payload brut reçu (tronqué à 2000 caractères) — `routers/tactics.py:_fetch_lichess_problem`. Le prochain appel en échec révèlera la forme exacte reçue, permettant de corriger `parse_puzzle_payload` avec certitude plutôt que par supposition. Le repli sur le seed local (variété par exclusion + mat en 2 corrigé) reste pleinement fonctionnel entre-temps — seul le bénéfice de la source Lichess (volume de puzzles) est indisponible tant que le parsing n'est pas corrigé.
+
+**Validation :** backend 964/964 pytest (inchangé, changement de log uniquement).
