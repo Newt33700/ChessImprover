@@ -943,6 +943,17 @@ Carte **PROGRESSION**, première carte de la colonne principale de la vue Stats 
 
 ---
 
+### 3.13 octies EPIC 31 — Review pédagogique (POC v0) + correctif couleurs mobile
+
+**Fichiers :** `index.html` (`color-scheme`, `#eval-bar`, `#board-arrows`, légende), `css/style.css`, `js/app.js` (`_renderMoveCoachCard`/`_drawReviewArrows`/`_updateEvalBar*`/`_bestMoveForIndex`), `js/wp_chart.js` (`formatEval`), `js/analysis_feedback.js` (`describeMoveFr`/`explainMoveFr`)
+
+- **Correctif couleurs mobile (US 31.1)** : `<meta name="color-scheme" content="dark">` + `:root{color-scheme:dark}` — le « mode nuit » forcé de Chrome/Brave Android inversait les pièces noires en blanc et repeignait l'échiquier ; la page se déclare désormais nativement sombre, le navigateur ne force plus rien.
+- **Barre d'évaluation (US 31.2)** : verticale noir/blanc à gauche du board de Review, part blanche = `WPChart.evalToWP` (formule US 1 réutilisée), score en pions dans la barre côté camp qui mène (`WPChart.formatEval`, pure + testée). Mise à jour à la navigation et à l'arrivée différée des évals moteur.
+- **Commentaire par coup (US 31.3)** : carte `#move-info` enrichie — badge FR + cp perdus, « Votre coup » / « Meilleur coup » en langage humain (`describeMoveFr`) avec SAN en rappel (PV Stockfish déjà en cache), explication pédagogique par classification (`explainMoveFr`), chip temps + bouton Ghost conservés.
+- **Flèches (US 31.4)** : overlay SVG — orange = coup joué, verte = suggestion moteur, légende sous le plateau, flip géré, nettoyées hors Review.
+
+---
+
 ### 3.14 Système XP / Niveaux / Streaks
 
 **Fichier :** `app.js` — `XPSystem`, `StreakSystem`
@@ -2011,6 +2022,7 @@ UNIQUE (user_id)
 | **Quêtes quotidiennes** (EPIC 29, US 29.2) | `domain/daily_quests.py` + `routers/quests.py:GET /api/v1/quests/daily` + `app.js:_renderDailyQuests` + `index.html:#card-daily-quests` | 3 missions/jour dérivées sans état (hash `date+user_id`), progression réelle calculée depuis parties/tactiques/sprints du jour ; récompense affichée mais non auto-créditée |
 | **Cosmétiques par niveau** (EPIC 29, US 29.3) | `js/theme_service.js:UNLOCK_LEVELS/getUnlockLevel/isUnlocked` + `app.js:_applyThemeUnlockGates` + `index.html:#theme-level-hint` | Thèmes de pièces/plateau existants (EPIC 18) verrouillés/déverrouillés selon le niveau serveur du joueur, gate côté sélection (pas d'enforcement serveur) |
 | **Moteur de saisons — bandeau FOMO** (EPIC 30) | `domain/seasons.py` + `routers/seasons.py:GET /api/v1/seasons/active` (public) + `app.js:_loadActiveSeason/_updateSeasonCountdown` + `index.html:#season-banner` | Catalogue statique (`app/data/seasons.json`) chargé au boot frontend, bandeau avec compte à rebours live + tease d'un cosmétique existant, masqué hors fenêtre de la saison |
+| **Review pédagogique + correctif mobile** (EPIC 31) | `index.html:color-scheme/#eval-bar/#board-arrows` + `app.js:_renderMoveCoachCard/_drawReviewArrows/_updateEvalBar` + `wp_chart.js:formatEval` + `analysis_feedback.js:describeMoveFr/explainMoveFr` | `color-scheme:dark` neutralise le mode nuit forcé Android (pièces noires inversées en blanc) ; barre d'éval noir/blanc avec score dedans, carte commentaire par coup (coup joué / meilleur coup en français + explication), flèches orange/verte sur le plateau — tout sur l'écran Review |
 | **Mobile / bascule Review** | CSS `body.board-active` | `.dash-grid` masquée / `.board-col` plein écran via classe `body` |
 | **Vue Statistiques Avancées** (US 4.1/4.2) | `advanced_stats.js` + `index.html` + `app.js` | Plein écran `body.advstats-active` : matrice colorée + gauge Héros + deep-dive + tuiles Finales + carte Tactiques (gauge circulaire `successRatio`) + top 3 ouvertures ECO (données réelles via `/stats/summary`, `MOCK_SUMMARY` en secours) |
 | **Validation email + erreurs UI inscription** (US 6.1) | `models.py:UserCreate` + `auth.js:_extractErrorMessage` | Format email validé (regex) en plus de la longueur ; erreurs 422 Pydantic (liste) affichées lisiblement au lieu de `[object Object]` |
