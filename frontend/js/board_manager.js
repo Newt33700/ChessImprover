@@ -72,6 +72,18 @@ class BoardManager {
     };
     this.board = Chessboard(this.containerId, config);
     window.addEventListener("resize", () => this.board.resize());
+
+    // EPIC 33 — Mode tap (clic pièce → clic case d'arrivée) en plus du
+    // glisser-déposer, réutilisant les mêmes règles que le drag (voir
+    // tap_move.js) pour ne jamais désynchroniser les deux modes de saisie.
+    if (window.TapMove) {
+      TapMove.attach(document.getElementById(this.containerId), {
+        getChess: () => this.chess,
+        canPick: (sq, piece) => this._onDragStart(sq, piece) !== false,
+        tryMove: (src, tgt) => this._onDrop(src, tgt),
+        onMoved: () => this._onSnapEnd(),
+      });
+    }
   }
 
   /**

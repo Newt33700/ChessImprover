@@ -2469,6 +2469,29 @@ body.exercise-active #exercise-col { display: block; }
   margin: var(--space-sm) auto 0;
 }
 
+/* EPIC 33 — surbrillance tap-to-move (case sélectionnée + destinations
+   légales), sur tous les échiquiers (board principal + 6 boards de
+   problèmes). Point pour un coup calme, anneau pour une prise, comme sur
+   chess.com/lichess. */
+.square-selected {
+  box-shadow: inset 0 0 0 4px rgba(129, 182, 76, 0.75);
+}
+.square-move-hint::after {
+  content: "";
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 28%;
+  height: 28%;
+  border-radius: 50%;
+  background: rgba(129, 182, 76, 0.55);
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+}
+.square-capture-hint {
+  box-shadow: inset 0 0 0 4px rgba(129, 182, 76, 0.55);
+}
+
 /* ==========================================================================
    Entraîneur d'Ouvertures — Répertoire + SRS (EPIC 9, fonctionnalité bonus)
    ========================================================================== */

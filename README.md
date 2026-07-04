@@ -113,6 +113,7 @@ ChessImprover/
 │   │   ├── coaching_voice.js           # EPIC 14 : alertes tactiques + synthèse vocale (Web Speech API)
 │   │   ├── theme_service.js            # EPIC 18 : thème pièces/plateau (chemins SVG, couleurs, résilience JSONB)
 │   │   ├── api_client.js               # Client HTTP backend (analyze, stats/summary, salvage EPIC 15, cognitive-load/flashcards EPIC 19/20) — EPIC 1
+│   │   ├── tap_move.js                 # EPIC 33 : mode tap (clic pièce → clic case) + surbrillance des coups légaux, tous échiquiers
 │   │   └── auth.js                     # Auth JWT frontend (US 7) — chargé dans index.html
 │   ├── assets/                         # Dépendances externes rapatriées localement (EPIC 13, §4.11)
 │   │   ├── js/                         # jquery-3.7.1.min.js, chess-0.10.3.js, chessboard-1.0.0.min.js, chart-4.4.0.umd.js
@@ -954,6 +955,17 @@ Carte **PROGRESSION**, première carte de la colonne principale de la vue Stats 
 
 ---
 
+### 3.13 novies EPIC 33 — Tap-to-move + surbrillance des coups légaux (tous les échiquiers)
+
+**Fichiers :** `js/tap_move.js` (nouveau module), `js/app.js` (`_createProblemBoard` — paramètre `getChess`), `js/board_manager.js` (`_initBoard`), `index.html` (`<script src="js/tap_move.js">`), `css/style.css` (`.square-selected`/`.square-move-hint`/`.square-capture-hint`)
+
+- **`TapMove.decide(selected, sq, {isOwnPickable, isLegalTarget})`** : machine à états pure (5 issues — `select`/`reselect`/`move`/`clear`/`ignore`), testée sans DOM, qui pilote le mode « clic pièce → clic case d'arrivée » en plus (pas à la place) du glisser-déposer.
+- **`TapMove.attach(container, {getChess, canPick, tryMove, onMoved})`** : un seul écouteur `click` par délégation par échiquier ; `canPick` réutilise `onDragStart` et `tryMove` réutilise `onDrop` déjà fournis par chaque module (contrat `"snapback"` inchangé) — drag et tap ne peuvent jamais autoriser des coups différents.
+- **Surbrillance (`TapMove.highlightMoves`)** : case sélectionnée (`.square-selected`), destinations légales en point vert (`.square-move-hint`, coup calme) ou anneau vert (`.square-capture-hint`, prise) — codes chess.com/lichess.
+- **Câblage** : `_createProblemBoard` (fabrique commune, EPIC 26) appelle `TapMove.attach` dès qu'un `getChess` est fourni — ajouté aux 6 échiquiers de problèmes (Exercice SRS, Coach Tactique, Cimetière des Erreurs, Entraîneur d'Ouvertures, Technique de Mat, Tactical Sprint). `BoardManager._initBoard()` fait de même pour le board principal (Review/Fantôme/Bac à sable) ; `refreshTheme()` (changement de thème de pièces) ré-attache sans dupliquer l'écouteur.
+
+---
+
 ### 3.14 Système XP / Niveaux / Streaks
 
 **Fichier :** `app.js` — `XPSystem`, `StreakSystem`
@@ -1778,8 +1790,11 @@ npm run test:mutation # Stryker
 | `coaching_voice.test.js` (EPIC 14) | CoachingVoice | `isSupported`, `setEnabled`/`isEnabled`/`loadPreference` (persistance localStorage), `alertFor` (blunder/mistake/aucune alerte, coup absent), `bestMoveNarration`, `beep` (no-op sans AudioContext, fréquence par gravité), `speak` (no-op désactivé/non supporté, appel réel `speechSynthesis`) |
 | `analysis_feedback.test.js` (EPIC 22/25) | AnalysisFeedback | `createState` (états indépendants), `shouldDispatch` (1er dispatch, 20 ré-émissions identiques bloquées, raffinement cpLoss autorisé, arrondi infra-centipion, bascule book→moteur, coups indépendants, entrées invalides), `shouldAlert` (une seule alerte par coup blunder/mistake, classifications non alertables, reset par nouvelle partie), **`evalForPlayer`/`exerciseQuality` (EPIC 25), `isExerciseMoveCorrect` (EPIC 26 : SAN strict, préfixe UCI, entrées invalides)** — **27 TUs, 100 % lignes/branches/fonctions** |
 | `theme_service.test.js` (EPIC 18) | ThemeService | `getPieceThemePath`/`getBoardColors` (thème valide/invalide/absent/état courant sans argument), `listPieceThemes`/`listBoardThemes`, `saveLocalCache`/`loadLocalCache` (JSON corrompu, valeur non-objet), `applySettings` (variables CSS, classe `<body>`, résilience totale : `null`/`undefined`/valeurs de mauvais type/`document` indisponible) |
+| `tap_move.test.js` (EPIC 33) | TapMove | `decide` (les 5 issues — select/reselect/move/clear/ignore — avec toutes les combinaisons `isOwnPickable`/`isLegalTarget`, options par défaut), `clearHighlights`/`highlightMoves` (dot vs anneau selon capture, résilience si `chess.moves` lève), `attach` (sélection → surbrillance → coup joué/refusé, non-duplication d'écouteur au second `attach`, `getChess` indisponible) — avec un faux conteneur/case minimal (pas de jsdom dans ce dépôt, cf. note ci-dessous) — **20 TUs** |
 
-> `advanced_stats.js` n'est pas dans `collectCoverageFrom` (comme `app.js`, `auth.js`, `board_manager.js`) : seules ses fonctions pures sont testées, les `render*` sont de la glue DOM. `cognitive_dashboard.js` y a été ajouté (EPIC 19, 87 % lignes/branches). `analysis_feedback.js` y a été ajouté (EPIC 22, 100 %).
+> `advanced_stats.js` n'est pas dans `collectCoverageFrom` (comme `app.js`, `auth.js`, `board_manager.js`, `tap_move.js`) : seules ses fonctions pures sont testées, les `render*` sont de la glue DOM. `cognitive_dashboard.js` y a été ajouté (EPIC 19, 87 % lignes/branches). `analysis_feedback.js` y a été ajouté (EPIC 22, 100 %).
+>
+> **`tap_move.test.js` (EPIC 33)** n'utilise pas `global.document` (l'environnement Jest est `node`, pas jsdom) : comme le reste de la suite, il construit un faux conteneur/case minimal (`querySelector`/`querySelectorAll`/`classList`/`addEventListener` réimplémentés à la main) plutôt que d'ajouter une dépendance `jest-environment-jsdom` pour un seul fichier.
 
 **Mocks globaux (`tests/setup.js`) :**
 - `global.indexedDB = new IDBFactory()` (fake-indexeddb, réinitialisé dans `beforeEach`)
@@ -2024,6 +2039,7 @@ UNIQUE (user_id)
 | **Moteur de saisons — bandeau FOMO** (EPIC 30) | `domain/seasons.py` + `routers/seasons.py:GET /api/v1/seasons/active` (public) + `app.js:_loadActiveSeason/_updateSeasonCountdown` + `index.html:#season-banner` | Catalogue statique (`app/data/seasons.json`) chargé au boot frontend, bandeau avec compte à rebours live + tease d'un cosmétique existant, masqué hors fenêtre de la saison |
 | **Review pédagogique + correctif mobile** (EPIC 31) | `index.html:color-scheme/#eval-bar/#board-arrows` + `app.js:_renderMoveCoachCard/_drawReviewArrows/_updateEvalBar` + `wp_chart.js:formatEval` + `analysis_feedback.js:describeMoveFr/explainMoveFr` | `color-scheme:dark` neutralise le mode nuit forcé Android (pièces noires inversées en blanc) ; barre d'éval noir/blanc avec score dedans, carte commentaire par coup (coup joué / meilleur coup en français + explication), flèches orange/verte sur le plateau — tout sur l'écran Review |
 | **Exercices sans timer + solution fléchée** (EPIC 32) | `app.js:_offerNextProblem/_showProblemSolution/_drawProblemArrows/_moveCoords` | Sur les 4 modules de problèmes (Exercice SRS, Tactique, Cimetière, Finales) : bouton « suivant » à la place de l'enchaînement automatique 1,6 s ; à l'échec, plateau restauré à la position de départ avec coup joué fléché orange et coup attendu fléché vert (plus de solution SAN en texte). Sprint et Ouvertures inchangés par design |
+| **Tap-to-move + surbrillance des coups légaux** (EPIC 33) | `js/tap_move.js:decide/attach/highlightMoves` + `app.js:_createProblemBoard(getChess)` + `board_manager.js:_initBoard` | Clic pièce → clic case d'arrivée en plus du glisser-déposer, sur les 7 échiquiers interactifs (board principal + 6 boards de problèmes) ; case sélectionnée + destinations légales surlignées (point vert = coup calme, anneau vert = prise) |
 | **Mobile / bascule Review** | CSS `body.board-active` | `.dash-grid` masquée / `.board-col` plein écran via classe `body` |
 | **Vue Statistiques Avancées** (US 4.1/4.2) | `advanced_stats.js` + `index.html` + `app.js` | Plein écran `body.advstats-active` : matrice colorée + gauge Héros + deep-dive + tuiles Finales + carte Tactiques (gauge circulaire `successRatio`) + top 3 ouvertures ECO (données réelles via `/stats/summary`, `MOCK_SUMMARY` en secours) |
 | **Validation email + erreurs UI inscription** (US 6.1) | `models.py:UserCreate` + `auth.js:_extractErrorMessage` | Format email validé (regex) en plus de la longueur ; erreurs 422 Pydantic (liste) affichées lisiblement au lieu de `[object Object]` |
