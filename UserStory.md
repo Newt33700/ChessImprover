@@ -1245,3 +1245,15 @@ Reste à faire, consigné en Backlog (README §11) : migration complète des 5 a
 **Statut :** ✅ Implémenté : overlay SVG `#board-arrows` au-dessus du plateau (mêmes coordonnées en % que le badge de coup existant, orientation/flip gérés) — flèche orange = coup joué, flèche verte = suggestion moteur (masquée si identique au coup joué), légende sous le plateau. Redessinées à chaque navigation, au flip, et à l'arrivée des évals ; nettoyées hors mode Review (Ghost/Sauvetage) via `_setModePill`.
 
 **Validation EPIC 31 :** backend 916/916 pytest (inchangé, aucun fichier backend touché), frontend **385/385 Jest** (14 nouveaux TUs), couverture ≥ 80 % maintenue.
+
+## EPIC 32 : Fin des timers dans les exercices — bouton « suivant » + solution fléchée
+
+**Contexte (retour PO avec capture)** : dans les exercices, réussite ou échec, la réponse s'affichait en texte en bas et l'exercice suivant s'enchaînait automatiquement au bout de ~1,6 s — pas le temps de comprendre le problème ni ce qu'il fallait jouer. Directives : remplacer le timer par un bouton « problème suivant », et montrer le coup attendu par une flèche colorée sur l'échiquier (comme la Review, EPIC 31) plutôt qu'en texte.
+
+**Statut :** ✅ Implémenté sur les 4 modules de problèmes (Exercice SRS, Coach Tactique, Cimetière des Erreurs, Technique de Mat) :
+- **Bouton au lieu du timer** (`_offerNextProblem`) : après chaque tentative, un bouton « Exercice suivant → » / « Problème suivant → » / « Carte suivante → » / « Position suivante → » apparaît sous le feedback — l'utilisateur avance quand IL est prêt. Sans zone de feedback (DOM absent), enchaînement direct : jamais bloqué.
+- **Solution fléchée** (`_showProblemSolution`) : à l'échec, le plateau REVIENT à la position de départ du problème, votre coup est fléché en **orange** et le coup attendu en **vert** — mêmes codes couleur que la Review (EPIC 31). Le texte n'affiche plus le SAN brut (« Solution : Bf6 ») mais renvoie aux flèches. Léger différé de 250 ms pour laisser passer le `onSnapEnd` de chessboard.js (qui re-projetterait la position d'après-coup par-dessus la restauration quand la validation est instantanée — cache moteur de l'Exercice SRS).
+- **Flèches génériques** (`_drawProblemArrows`) : overlay SVG recréé dans le conteneur du board, tête de flèche calculée en géométrie pure (pas de `<marker>` → aucun conflit d'id entre échiquiers multiples) ; `_moveCoords(fen, san|uci)` (chess.js) convertit la solution serveur en cases départ/arrivée. Orientation (joueur Noirs en bas) gérée via `board.orientation()`.
+- **Hors périmètre, inchangés par design** : Tactical Sprint (course contre la montre — l'enchaînement automatique EST le mode) et Entraîneur d'Ouvertures (rejeu de lignes enchaîné).
+
+**Validation EPIC 32 :** backend 916/916 pytest (inchangé), frontend 385/385 Jest (inchangé — plomberie DOM ; `_moveCoords` s'appuie sur chess.js déjà couvert, la géométrie des flèches réutilise `_squareCenter` de l'EPIC 31), couverture ≥ 80 % maintenue.

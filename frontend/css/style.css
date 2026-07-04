@@ -2433,6 +2433,7 @@ body.exercise-active #exercise-col { display: block; }
 }
 
 .tactics-board {
+  position: relative; /* EPIC 32 : ancre l'overlay de flèches .problem-arrows */
   width: 100%;
   max-width: 420px;
   margin: var(--space-md) auto;
@@ -2441,6 +2442,16 @@ body.exercise-active #exercise-col { display: block; }
 }
 .tactics-board--success { box-shadow: 0 0 0 4px rgba(129,182,76,0.6); }
 .tactics-board--error { box-shadow: 0 0 0 4px rgba(202,52,49,0.6); }
+
+/* EPIC 32 — flèches solution/coup joué sur les échiquiers de problèmes */
+.problem-arrows {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  z-index: 90;
+}
 
 .tactics-feedback {
   text-align: center;
@@ -2451,6 +2462,12 @@ body.exercise-active #exercise-col { display: block; }
 }
 .tactics-feedback--success { color: var(--green-light); }
 .tactics-feedback--error { color: var(--col-blunder, #ca3431); }
+
+/* EPIC 32 — bouton « suivant » qui remplace l'enchaînement automatique */
+.next-problem-btn {
+  display: block;
+  margin: var(--space-sm) auto 0;
+}
 
 /* ==========================================================================
    Entraîneur d'Ouvertures — Répertoire + SRS (EPIC 9, fonctionnalité bonus)

@@ -955,6 +955,101 @@ class ChessImproverApp {
     return { x: ((flipped ? 7 - f : f) + 0.5) * 12.5, y: ((flipped ? r : 7 - r) + 0.5) * 12.5 };
   }
 
+  /** `{from, to}` d'un coup exprimé en SAN ou UCI, joué depuis `fen`. */
+  _moveCoords(fen, moveStr) {
+    if (!moveStr || typeof moveStr !== "string") return null;
+    if (/^[a-h][1-8][a-h][1-8]/.test(moveStr)) {
+      return { from: moveStr.slice(0, 2), to: moveStr.slice(2, 4) };
+    }
+    try {
+      const tmp = new Chess(fen);
+      const mv = tmp.move(moveStr);
+      return mv ? { from: mv.from, to: mv.to } : null;
+    } catch { return null; }
+  }
+
+  /**
+   * EPIC 32 — Flèches sur un échiquier de PROBLÈME (Exercice, Tactique,
+   * Cimetière, Finales) : overlay SVG recréé dans le conteneur du board,
+   * tête de flèche calculée en géométrie pure (pas de <marker>, donc aucun
+   * conflit d'id entre plusieurs échiquiers). `arrows = [{from, to, color}]`.
+   */
+  _drawProblemArrows(containerId, arrows, flipped) {
+    const container = document.getElementById(containerId);
+    if (!container) return;
+    container.querySelector(".problem-arrows")?.remove();
+    if (!arrows?.length) return;
+    const NS = "http://www.w3.org/2000/svg";
+    const svg = document.createElementNS(NS, "svg");
+    svg.setAttribute("viewBox", "0 0 100 100");
+    svg.setAttribute("preserveAspectRatio", "none");
+    svg.classList.add("problem-arrows");
+    for (const { from, to, color } of arrows) {
+      if (!/^[a-h][1-8]$/.test(from || "") || !/^[a-h][1-8]$/.test(to || "")) continue;
+      const a = this._squareCenter(from, flipped);
+      const b = this._squareCenter(to, flipped);
+      const dx = b.x - a.x, dy = b.y - a.y;
+      const len = Math.hypot(dx, dy) || 1;
+      const ux = dx / len, uy = dy / len;      // direction
+      const px = -uy, py = ux;                 // perpendiculaire
+      const headLen = 4.5, headW = 2.6;
+      const baseX = b.x - ux * headLen, baseY = b.y - uy * headLen;
+      const line = document.createElementNS(NS, "line");
+      line.setAttribute("x1", a.x); line.setAttribute("y1", a.y);
+      line.setAttribute("x2", baseX); line.setAttribute("y2", baseY);
+      line.setAttribute("stroke", color);
+      line.setAttribute("stroke-width", "2.4");
+      line.setAttribute("stroke-linecap", "round");
+      line.setAttribute("opacity", "0.85");
+      svg.appendChild(line);
+      const head = document.createElementNS(NS, "polygon");
+      head.setAttribute("points",
+        `${b.x},${b.y} ${baseX + px * headW},${baseY + py * headW} ${baseX - px * headW},${baseY - py * headW}`);
+      head.setAttribute("fill", color);
+      head.setAttribute("opacity", "0.85");
+      svg.appendChild(head);
+    }
+    container.appendChild(svg);
+  }
+
+  /**
+   * EPIC 32 — Remplace l'enchaînement automatique (timer 1,6 s) par un
+   * bouton « suivant » : l'utilisateur prend le temps de comprendre son
+   * erreur (flèches + feedback) et avance quand IL est prêt. Sans zone de
+   * feedback (DOM absent), on enchaîne directement — jamais bloqué.
+   */
+  _offerNextProblem(feedbackEl, label, onNext) {
+    if (!feedbackEl) { onNext(); return; }
+    feedbackEl.parentElement?.querySelector(".next-problem-btn")?.remove();
+    const btn = document.createElement("button");
+    btn.className = "btn btn--accent next-problem-btn";
+    btn.textContent = label;
+    btn.addEventListener("click", onNext, { once: true });
+    feedbackEl.insertAdjacentElement("afterend", btn);
+  }
+
+  /**
+   * EPIC 32 — Affichage d'échec commun aux 4 modules de problèmes : le
+   * plateau REVIENT à la position de départ, votre coup est fléché en
+   * orange et le coup attendu en vert (mêmes codes que la Review) — plus
+   * de solution en texte à déchiffrer en 5 secondes.
+   */
+  _showProblemSolution(boardId, board, startFen, playedMove, solutionStr) {
+    // Léger différé : laisse passer le onSnapEnd de chessboard.js (qui
+    // re-projette la position APRÈS le coup joué) avant de restaurer la
+    // position de départ — sinon il écraserait la restauration quand la
+    // validation est instantanée (cache moteur de l'Exercice SRS).
+    setTimeout(() => {
+      try { board?.position(startFen, false); } catch { /* board détruit */ }
+      const flipped = board?.orientation?.() === "black";
+      const arrows = [];
+      if (playedMove) arrows.push({ ...playedMove, color: "#e8a33d" });
+      const sol = this._moveCoords(startFen, solutionStr);
+      if (sol) arrows.push({ ...sol, color: "#81b64c" });
+      this._drawProblemArrows(boardId, arrows, flipped);
+    }, 250);
+  }
+
   /** Flèches du POC v0 : coup joué (orange) + suggestion moteur (verte) si différente. */
   _drawReviewArrows(index) {
     const svg = document.getElementById("board-arrows");
@@ -1122,8 +1217,11 @@ class ChessImproverApp {
 
   _onExDrop(src, tgt) {
     if (this._exSolved) return "snapback";
+    const fenBefore = this._exChess.fen(); // EPIC 32 : pour rejouer la position à l'échec
     const move = this._exChess.move({ from: src, to: tgt, promotion: "q" });
     if (move === null) return "snapback";
+    this._exFenBefore = fenBefore;
+    this._exLastMove = { from: move.from, to: move.to };
 
     const expected = this._exPv[this._exStep];
     const correct = !expected || (window.AnalysisFeedback
@@ -1196,7 +1294,11 @@ class ChessImproverApp {
     this.boardMgr._queueAnalysis(fen);
   }
 
-  /** Feedback + SM-2 + XP, puis enchaînement automatique sur la carte suivante. */
+  /**
+   * Feedback + SM-2 + XP. EPIC 32 : à l'échec, le plateau revient à la
+   * position de départ avec votre coup fléché en orange et le coup attendu
+   * en vert ; on avance via le bouton « Exercice suivant » — plus de timer.
+   */
   _finishExercise(correct, quality, expected) {
     const boardEl = document.getElementById("exercise-board");
     const feedback = document.getElementById("exercise-feedback");
@@ -1211,13 +1313,15 @@ class ChessImproverApp {
       this._renderXP(xp, level);
       StreakSystem.record();
     } else if (quality >= 3) {
-      if (feedback) { feedback.textContent = `👌 Pas la solution (${solutionLabel}), mais votre coup reste bon !`; }
+      if (feedback) { feedback.textContent = "👌 Pas la solution attendue (flèche verte), mais votre coup reste bon !"; }
+      this._showProblemSolution("exercise-board", this._exBoard, this._exFenBefore, this._exLastMove, solutionLabel);
     } else {
       boardEl?.classList.add("tactics-board--error");
-      if (feedback) { feedback.classList.add("tactics-feedback--error"); feedback.textContent = `❌ Raté. La solution était ${solutionLabel}.`; }
+      if (feedback) { feedback.classList.add("tactics-feedback--error"); feedback.textContent = "❌ Raté — la flèche verte montre le coup attendu, l'orange votre coup."; }
+      this._showProblemSolution("exercise-board", this._exBoard, this._exFenBefore, this._exLastMove, solutionLabel);
     }
     if (this._exCard) SRS.saveCard(SRS.review(this._exCard, correct ? 5 : quality));
-    setTimeout(() => this._loadNextSrsCard(), 1600);
+    this._offerNextProblem(feedback, "Exercice suivant →", () => this._loadNextSrsCard());
   }
 
   // ─── Précision Stockfish ────────────────────────────────────────
@@ -2984,6 +3088,7 @@ class ChessImproverApp {
     const move = this._tacticsChess.move({ from: src, to: tgt, promotion: "q" });
     if (move === null) return "snapback";
     this._tacticsSolved = true;
+    this._tacticsLastMove = { from: move.from, to: move.to }; // EPIC 32 : flèche du coup joué
     this._submitTacticsAttempt(move.san);
   }
 
@@ -3003,14 +3108,18 @@ class ChessImproverApp {
         feedback.classList.add(result.success ? "tactics-feedback--success" : "tactics-feedback--error");
         feedback.textContent = result.success
           ? "Bravo, coup correct !"
-          : `Coup incorrect. Solution : ${result.solution}`;
+          : "❌ Raté — la flèche verte montre le coup attendu, l'orange votre coup.";
       }
       if (result.success) {
         const { xp, level } = XPSystem.add(XP_PER_EXERCISE);
         this._renderXP(xp, level);
         StreakSystem.record();
+      } else {
+        // EPIC 32 : position rejouée + flèches, le temps qu'il faut pour comprendre
+        this._showProblemSolution("tactics-board", this._tacticsBoard, problem.fen, this._tacticsLastMove, result.solution);
       }
-      setTimeout(() => this._loadTacticalProblem(this._currentTacticsTheme, this._customFocus), 1600);
+      this._offerNextProblem(feedback, "Problème suivant →",
+        () => this._loadTacticalProblem(this._currentTacticsTheme, this._customFocus));
     } catch {
       if (feedback) feedback.textContent = "Erreur lors de la validation du coup.";
       this._tacticsSolved = false;
@@ -3103,6 +3212,7 @@ class ChessImproverApp {
     const move = this._flashcardChess.move({ from: src, to: tgt, promotion: "q" });
     if (move === null) return "snapback";
     this._flashcardSolved = true;
+    this._flashcardLastMove = { from: move.from, to: move.to }; // EPIC 32
     this._submitFlashcardAttempt(move.san);
   }
 
@@ -3117,14 +3227,16 @@ class ChessImproverApp {
         feedback.classList.add(result.success ? "tactics-feedback--success" : "tactics-feedback--error");
         feedback.textContent = result.success
           ? `Bravo, tu t'en souvenais ! Prochaine révision dans ${result.interval_days} j.`
-          : `Raté. Solution : ${result.solution}. La carte revient bientôt.`;
+          : "❌ Raté — la flèche verte montre le coup attendu. La carte revient bientôt.";
       }
       if (result.success) {
         const { xp, level } = XPSystem.add(XP_PER_EXERCISE);
         this._renderXP(xp, level);
         StreakSystem.record();
+      } else {
+        this._showProblemSolution("flashcards-board", this._flashcardBoard, card.fen, this._flashcardLastMove, result.solution);
       }
-      setTimeout(() => this._loadNextFlashcard(), 1600);
+      this._offerNextProblem(feedback, "Carte suivante →", () => this._loadNextFlashcard());
     } catch {
       if (feedback) feedback.textContent = "Erreur lors de la validation du coup.";
       this._flashcardSolved = false;
@@ -3494,6 +3606,7 @@ class ChessImproverApp {
     const move = this._endgameChess.move({ from: src, to: tgt, promotion: "q" });
     if (move === null) return "snapback";
     this._endgameSolved = true;
+    this._endgameLastMove = { from: move.from, to: move.to }; // EPIC 32
     this._submitEndgameAttempt(move.san);
   }
 
@@ -3510,14 +3623,16 @@ class ChessImproverApp {
         feedback.classList.add(result.success ? "tactics-feedback--success" : "tactics-feedback--error");
         feedback.textContent = result.success
           ? "Bravo, mat trouvé !"
-          : `Coup incorrect. Solution : ${result.solution}`;
+          : "❌ Raté — la flèche verte montre le coup attendu, l'orange votre coup.";
       }
       if (result.success) {
         const { xp, level } = XPSystem.add(XP_PER_EXERCISE);
         this._renderXP(xp, level);
         StreakSystem.record();
+      } else {
+        this._showProblemSolution("endgame-board", this._endgameBoard, problem.fen, this._endgameLastMove, result.solution);
       }
-      setTimeout(() => this._loadEndgameProblem(this._currentEndgameTheme), 1600);
+      this._offerNextProblem(feedback, "Position suivante →", () => this._loadEndgameProblem(this._currentEndgameTheme));
     } catch {
       if (feedback) feedback.textContent = "Erreur lors de la validation du coup.";
       this._endgameSolved = false;
