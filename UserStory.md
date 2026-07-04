@@ -1189,3 +1189,16 @@ Les 4 EPICs demandés en une seule salve (04/07) ont tous été livrés, testés
 - **EPIC 30** : catalogue de saisons déplacé de `app/config/` vers `app/data/` (conflit de nommage évité).
 
 Reste à faire, consigné en Backlog (README §11) : migration complète des 5 actions XP restantes vers le serveur + bascule de la jauge sur cette source, auto-crédit des récompenses de quêtes (nécessite un nouveau mécanisme de suivi de paiement journalier), et tout évènement saisonnier au-delà de l'exemple Halloween (le moteur est générique — ajouter une saison = ajouter une entrée JSON).
+
+## Hotfix prod (04/07) : « Impossible de contacter Chess.com » sur Synchroniser
+
+**Bug utilisateur réel** : clic sur « 🔄 Synchroniser » (Mes Parties) → toast « Impossible de contacter Chess.com pour le moment ». Les logs Render montraient un `502 Bad Gateway` sur `GET /api/v1/stats/elo-curve` (seul endpoint des logs qui appelle Chess.com **depuis le serveur**) pendant que toutes les routes base de données répondaient 200.
+
+**Diagnostic** : Chess.com est derrière Cloudflare, qui bloque/challenge fréquemment les requêtes sortantes des IP de datacenters (Render) — alors que le **navigateur** de l'utilisateur joint `api.chess.com` sans problème (l'app le fait déjà pour charger les parties récentes, CORS ouvert). Le backend avalait de plus l'exception réelle (`except Exception` → 502 générique sans log), rendant le diagnostic impossible depuis les logs Render.
+
+**Correctifs** :
+- **Backend (observabilité)** : `games/sync` et `stats/elo-curve` loggent désormais la cause réelle (`logger.warning` avec le repr de l'exception — 403 Cloudflare vs. timeout vs. DNS) avant de renvoyer le 502 générique inchangé côté client. Aucun changement de contrat (tests 502 existants intacts).
+- **Frontend (résilience)** : `_triggerManualSync` distingue enfin le 422 (pseudo Chess.com non lié → message clair orientant vers Profil, au lieu du message réseau trompeur) du 502/réseau, qui déclenche un **repli navigateur** (`_clientSideSync`) : les 10 dernières parties sont récupérées directement depuis `api.chess.com` dans le navigateur, puis chaque PGN est soumis au backend via `POST /games/analyze` — la déduplication par hash PGN (US 7.2) garantit zéro doublon, et le plafond de 5 nouvelles analyses par sync (identique à la voie serveur) protège l'instance Render. Le Smart Loader et le polling EPIC 28 s'enclenchent ensuite normalement (factorisation `_startSyncWatch`).
+- La sync silencieuse à la connexion (EPIC 23) reste inchangée (best-effort discret par design — pas de repli intrusif au login).
+
+**Validation** : backend 916/916 pytest, frontend 364/364 Jest (inchangés — le repli est de la plomberie DOM/réseau dans `app.js`, le contrat `analyzeGame`/hash PGN qu'il exploite est déjà couvert par les tests US 7.2).

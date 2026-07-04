@@ -1677,6 +1677,14 @@ class ChessImproverApp {
    * Synchroniser » de Mes Parties), remplace le champ PGN retiré (US 27.2).
    * Réutilise le même pipeline serveur que la sync de fond (US 23.1) :
    * idempotent (hash PGN), donc aucun risque de doublon.
+   *
+   * Résilience (bug prod 04/07) : Chess.com (Cloudflare) bloque parfois les
+   * requêtes sortantes des IP datacenter (Render) → le backend répond 502
+   * alors que le NAVIGATEUR, lui, joint api.chess.com sans problème (l'app
+   * le fait déjà pour charger les parties récentes). Dans ce cas on bascule
+   * sur une sync côté client : fetch des parties dans le navigateur, puis
+   * soumission des PGN au backend via /games/analyze (déduplication par
+   * hash PGN, US 7.2 — zéro doublon possible).
    */
   async _triggerManualSync() {
     if (!window.ApiClient || !ApiClient.isConfigured() || !window.Auth?.isLoggedIn()) {
@@ -1689,19 +1697,73 @@ class ChessImproverApp {
       const result = await ApiClient.syncGames();
       const inFlight = (result?.queued || 0) + (result?.requeued || 0);
       if (inFlight) {
-        this._renderSyncIndicator(inFlight);
-        this._syncPollCount = 0;
-        if (this._syncPolling) clearInterval(this._syncPolling);
-        this._syncPolling = setInterval(() => this._pollSyncStatus(), 15000);
-        this._showSmartLoader();
+        this._startSyncWatch(inFlight);
       } else {
         this._toast("Aucune nouvelle partie à synchroniser", "info");
       }
-    } catch {
-      this._toast("Impossible de contacter Chess.com pour le moment", "error");
+    } catch (err) {
+      if (String(err?.message).includes("422")) {
+        // Pas un problème réseau : aucun pseudo Chess.com lié au profil.
+        this._toast("Liez votre pseudo Chess.com via le bouton Profil pour synchroniser", "error");
+      } else {
+        // 502/réseau : le serveur ne joint pas Chess.com — repli navigateur.
+        await this._clientSideSync();
+      }
     } finally {
       if (btn) { btn.disabled = false; btn.textContent = "🔄 Synchroniser"; }
       this._renderGamesLibrary();
+    }
+  }
+
+  /** Démarre le suivi d'une sync : badge en-tête + polling 15 s + Smart Loader. */
+  _startSyncWatch(inFlight) {
+    this._renderSyncIndicator(inFlight);
+    this._syncPollCount = 0;
+    if (this._syncPolling) clearInterval(this._syncPolling);
+    this._syncPolling = setInterval(() => this._pollSyncStatus(), 15000);
+    this._showSmartLoader();
+  }
+
+  /**
+   * Sync de repli 100 % navigateur : les parties récentes sont récupérées
+   * directement depuis api.chess.com (CORS ouvert — fonctionne même quand
+   * Render est bloqué par Cloudflare), puis chaque PGN est soumis au backend
+   * via `/games/analyze`. Le serveur écarte les parties déjà connues (hash
+   * PGN, US 7.2) et lance l'analyse Stockfish des nouvelles. Plafond de 5
+   * nouvelles analyses par sync, comme la voie serveur (instance modeste).
+   */
+  async _clientSideSync() {
+    const username = window.Auth?.getUser()?.chess_username || this.username;
+    if (!username) {
+      this._toast("Liez votre pseudo Chess.com via le bouton Profil pour synchroniser", "error");
+      return;
+    }
+    let games = [];
+    try {
+      games = await ChessComClient.getRecentGames(username, 10);
+    } catch { /* getRecentGames est déjà best-effort par mois */ }
+    if (!games.length) {
+      this._toast("Impossible de contacter Chess.com pour le moment", "error");
+      return;
+    }
+    let queued = 0;
+    const me = username.toLowerCase();
+    for (const g of games) {
+      if (queued >= 5 || !g.pgn) continue;
+      const userColor = (g.white?.username || "").toLowerCase() === me ? "white" : "black";
+      try {
+        const data = await ApiClient.analyzeGame(g.pgn, {
+          userColor, timeControl: g.time_control || null,
+        });
+        // Une partie déjà connue revient avec son statut réel (US 7.2) :
+        // seules les nouvelles (`processing`) comptent comme mises en file.
+        if (data?.accepted?.[0]?.status === "processing") queued++;
+      } catch { /* best-effort par partie : on tente les suivantes */ }
+    }
+    if (queued) {
+      this._startSyncWatch(queued);
+    } else {
+      this._toast("Aucune nouvelle partie à synchroniser", "info");
     }
   }
 
