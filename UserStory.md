@@ -1038,3 +1038,24 @@ En tant qu'équipe, nous voulons que chaque modification de `supabase/migrations
 **Documentation :** README §8 « ❌ Non câblé » → **Aucun** ; §9 « Code mort » → **Aucun** ; §10 → table de résolution (tout fermé) ; les pistes réellement optionnelles reclassées en §11.0 Backlog.
 
 **Validation EPIC 25 :** backend 841/841 pytest, frontend 350/350 Jest, couverture ≥ 80 % maintenue.
+
+## EPIC 26 : Séparation des Pages & UX Client (principe KISS)
+
+**Contexte :** retours PO — (1) depuis la Review, cliquer « Exercice » laissait les badges et le panneau de la revue affichés, avec un échiquier resté en mode review (pièces figées) ; (2) pièces non jouables sur les problèmes ; (3) « chaque page doit avoir sa propre logique et être indépendante ».
+
+### US 26.1 : Page Exercice SRS indépendante
+
+**Statut :** ✅ Implémenté :
+- Nouvelle page plein écran `#exercise-col` (`body.exercise-active`, modèle Coach Tactique) : échiquier dédié, compteur « N restantes », validation locale de la PV (`AnalysisFeedback.isExerciseMoveCorrect` — SAN strict ou préfixe UCI, fonction pure testée), réponses adverses de la PV auto-jouées, feedback vert/rouge, enchaînement automatique, état vide avec CTA [Analyser une partie] / [Coach Tactique →].
+- La Review ne fait plus QUE de la review : pill « Exercice » supprimé ; toutes les entrées (carte EXERCICE, bouton Résoudre, Coach Personnel, onglet puzzle) mènent à la page dédiée.
+- `BoardManager` : mode exercice entièrement retiré (reste review/ghost/sandbox, tous liés à la partie en cours) — la qualité SM-2 nuancée (US 25.3) est conservée via le moteur principal utilisé en headless (file d'analyse + `engine:eval`, timeout 2,5 s).
+
+### US 26.2 : Fiabilisation des échiquiers de problèmes
+
+**Statut :** ✅ Implémenté : fabrique commune `_createProblemBoard` partagée par les 6 échiquiers (Exercice, Tactique, Cimetière, Finales, Sprint, Ouvertures) — construction identique + `resize()` après stabilisation du layout. **Cause racine des pièces figées** : chessboard.js calcule la taille des cases à la construction ; quand la vue vient de passer `display:none → block`, le conteneur peut ne pas avoir sa taille finale → cases sans dimension → drag impossible. Le resize post-layout la neutralise partout.
+
+### US 26.3 : Hygiène UX
+
+**Statut :** ✅ Implémenté : Échap ferme toute modale ouverte (auth, profil, thème, PGN) ; CTA du Coach Personnel recâblé vers la page Exercice.
+
+**Validation EPIC 26 :** backend 841/841 pytest (inchangé), frontend 355/355 Jest (5 nouveaux TUs), couverture ≥ 80 % maintenue.

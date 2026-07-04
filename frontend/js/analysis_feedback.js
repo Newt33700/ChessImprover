@@ -81,7 +81,23 @@ const AnalysisFeedback = (() => {
     return 1;
   }
 
-  return { createState, shouldDispatch, shouldAlert, evalForPlayer, exerciseQuality };
+  /**
+   * EPIC 26 (US 26.1) — Un coup joué correspond-il au coup attendu de la
+   * solution ? Les cartes SRS stockent la PV soit en SAN (`"Ra8#"`), soit en
+   * UCI (`"a1a8"`) : on accepte l'égalité SAN stricte OU la correspondance
+   * des cases départ+arrivée (préfixe UCI, la promotion étant normalisée en
+   * dame des deux côtés). Fonction pure, partagée par la page Exercice.
+   */
+  function isExerciseMoveCorrect(expected, playedSan, playedFromTo) {
+    if (!expected || typeof expected !== "string") return false;
+    if (playedSan && playedSan === expected) return true;
+    return !!(playedFromTo && playedFromTo === expected.slice(0, 4));
+  }
+
+  return {
+    createState, shouldDispatch, shouldAlert,
+    evalForPlayer, exerciseQuality, isExerciseMoveCorrect,
+  };
 })();
 
 if (typeof window !== "undefined") window.AnalysisFeedback = AnalysisFeedback;

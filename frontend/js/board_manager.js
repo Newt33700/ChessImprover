@@ -2,7 +2,6 @@
  * Chess Improver – Gestionnaire d'échiquier
  * Gère chess.js + chessboard.js pour 3 modes :
  *   1. Mode Review  : relecture coup par coup avec colorisation
- *   2. Mode Exercice: tactique SRS
  *   3. Mode Ghost   : rejouer depuis la gaffe avec les coups adverses historiques
  */
 
@@ -19,7 +18,7 @@ class BoardManager {
 
     this.chess = new Chess();
     this.board = null;
-    this.mode = null;  // "review" | "exercise" | "ghost"
+    this.mode = null;  // "review" | "ghost" | "sandbox"
     this.flipped = false;
 
     // État Review
@@ -334,11 +333,6 @@ class BoardManager {
     // Déclencher l'analyse Stockfish
     this._requestAnalysis(fen);
 
-    // Mode Exercice : vérifier la solution
-    if (this.mode === "exercise") {
-      this._checkExerciseSolution(move);
-    }
-
     // Mode Ghost : répondre avec le coup historique adverse
     if (this.mode === "ghost") {
       setTimeout(() => this._ghostPlayOpponentMove(), 400);
@@ -429,112 +423,11 @@ class BoardManager {
   }
 
   // -------------------------------------------------------------------------
-  // Mode Exercice Tactique
+  // Mode Exercice : SUPPRIMÉ (EPIC 26, US 26.1) — l'Exercice SRS a désormais
+  // sa propre page plein écran (#exercise-col, logique dans app.js), 100 %
+  // indépendante du board partagé. Le BoardManager ne gère plus que les
+  // modes review / ghost / sandbox, tous liés à la partie en cours.
   // -------------------------------------------------------------------------
-
-  /**
-   * @param {string} fen          – position de départ de l'exercice
-   * @param {string|string[]} pv  – Principal Variation (tableau UCI ou SAN) ou coup unique
-   * @param {string} playerColor  – "w" | "b"
-   */
-  startExercise(fen, pv, playerColor = "w") {
-    this.mode = "exercise";
-    this.exercisePV        = Array.isArray(pv) ? pv : [pv];
-    this.exerciseSolution  = this.exercisePV[0] || "";  // compat ancien API
-    this.exercisePlayerColor = playerColor;
-    this.exerciseMoveStep  = 0;  // combien de coups PV ont été joués
-    this.chess.load(fen);
-    this.board.position(fen);
-    if (playerColor === "b") this.board.flip();
-  }
-
-  _checkExerciseSolution(playedMove) {
-    const expected = this.exercisePV[this.exerciseMoveStep];
-    if (!expected) {
-      document.dispatchEvent(new CustomEvent("exercise:result", {
-        detail: { correct: true, played: playedMove.san, solution: this.exerciseSolution, quality: 5 }
-      }));
-      return true;
-    }
-
-    // Comparer par SAN ou par case de destination (UCI)
-    const matchesSan  = playedMove.san === expected;
-    const matchesUCI  = (playedMove.from + playedMove.to) === expected.slice(0, 4);
-    const correct     = matchesSan || matchesUCI;
-
-    if (!correct) {
-      // US 25.3 (EPIC 25) : qualité nuancée — si le coup joué diffère de la
-      // solution mais laisse la position avantageuse (éval moteur > 0 côté
-      // joueur), la tentative vaut quality=3 (« correct mais non optimal »)
-      // au lieu d'un échec sec quality=1.
-      this._emitExerciseFail(playedMove, expected);
-      return false;
-    }
-
-    this.exerciseMoveStep++;
-
-    // Si c'est un coup impair (réponse de l'adversaire), on le joue automatiquement
-    const nextExpected = this.exercisePV[this.exerciseMoveStep];
-    if (nextExpected && this.exerciseMoveStep % 2 === 1) {
-      setTimeout(() => {
-        const oppMove = this.chess.move(nextExpected) || this.chess.move({ from: nextExpected.slice(0,2), to: nextExpected.slice(2,4), promotion: "q" });
-        if (oppMove) {
-          this.board.position(this.chess.fen(), false);
-          this.exerciseMoveStep++;
-        }
-      }, 400);
-      return true;
-    }
-
-    // Si on a joué tous les coups de la PV : succès complet
-    if (this.exerciseMoveStep >= this.exercisePV.length) {
-      document.dispatchEvent(new CustomEvent("exercise:result", {
-        detail: { correct: true, played: playedMove.san, solution: this.exerciseSolution, quality: 5 }
-      }));
-    }
-    return true;
-  }
-
-  /**
-   * US 25.3 — Émet le résultat d'un exercice raté avec la qualité SM-2
-   * nuancée : attend (brièvement) l'évaluation Stockfish de la position
-   * résultante — déjà demandée par `_onDrop` — pour créditer quality=3 si le
-   * coup joué reste avantageux. Repli quality=1 après 2,5 s sans évaluation.
-   */
-  _emitExerciseFail(playedMove, expected) {
-    const fen = this.chess.fen();
-    const emit = (evaluation) => {
-      const sideToMove = fen.split(" ")[1];
-      const playerEval = window.AnalysisFeedback
-        ? AnalysisFeedback.evalForPlayer(evaluation, sideToMove, this.exercisePlayerColor)
-        : null;
-      const quality = window.AnalysisFeedback
-        ? AnalysisFeedback.exerciseQuality(false, playerEval)
-        : 1;
-      document.dispatchEvent(new CustomEvent("exercise:result", {
-        detail: { correct: false, played: playedMove.san, solution: expected, quality },
-      }));
-    };
-
-    const cached = this.evalCache[fen];
-    if (cached && cached.evaluation !== undefined) { emit(cached.evaluation); return; }
-
-    let settled = false;
-    const handler = (e) => {
-      if (settled || e.detail.fen !== fen) return;
-      settled = true;
-      document.removeEventListener("engine:eval", handler);
-      clearTimeout(timer);
-      emit(e.detail.evaluation);
-    };
-    const timer = setTimeout(() => {
-      if (settled) return;
-      settled = true;
-      document.removeEventListener("engine:eval", handler);
-      emit(null); // pas de preuve moteur → pas de crédit partiel
-    }, 2500);
-    document.addEventListener("engine:eval", handler);
-  }
 
   // -------------------------------------------------------------------------
   // Mode Ghost

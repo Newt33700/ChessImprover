@@ -439,9 +439,10 @@
 
         <div class="board-topbar">
           <button id="btn-back-board" class="btn-icon board-back-mobile" aria-label="Retour" onclick="window.app?._goHome()">←</button>
+          <!-- US 26.1 : la page Review ne fait QUE de la review — l'Exercice
+               SRS a sa propre page plein écran (#exercise-col), principe KISS -->
           <div class="mode-pills">
             <button class="mode-pill active" data-mode="review" onclick="window.app?.currentGame && window.app._enterReviewMode(window.app.currentGame)">Review</button>
-            <button class="mode-pill" data-mode="exercise" onclick="window.app?._startExercise()">Exercice</button>
             <button class="mode-pill" data-mode="finales" onclick="window.app?._showEndgame()">Finales</button>
           </div>
           <button id="btn-mark-reviewed" class="btn btn--sm btn--secondary" hidden onclick="window.app?._toggleReviewed()">✓ Marquer étudiée</button>
@@ -764,6 +765,22 @@
     <div class="db-card tactics-problem-card">
       <div class="db-card-body" id="tactics-problem-body">
         <p class="empty-state">Connectez-vous pour accéder au Coach Tactique.</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── EXERCICE SRS (EPIC 26, US 26.1 — plein écran, body.exercise-active,
+       page 100 % indépendante de la Review : échiquier et logique dédiés) ── -->
+  <div class="tactics-col" id="exercise-col">
+    <div class="tactics-topbar">
+      <button class="btn-icon" aria-label="Retour" onclick="window.app?._hideExercise()">←</button>
+      <h2 class="tactics-title">Exercice SRS</h2>
+      <div class="tactics-elo-badge" id="exercise-remaining-badge">—</div>
+    </div>
+
+    <div class="db-card tactics-problem-card">
+      <div class="db-card-body" id="exercise-problem-body">
+        <p class="empty-state">Chargement…</p>
       </div>
     </div>
   </div>

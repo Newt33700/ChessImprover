@@ -146,3 +146,29 @@ describe("AnalysisFeedback.exerciseQuality (EPIC 25, US 25.3)", () => {
     expect(AnalysisFeedback.exerciseQuality(false, undefined)).toBe(1);
   });
 });
+
+describe("AnalysisFeedback.isExerciseMoveCorrect (EPIC 26, US 26.1)", () => {
+  test("égalité SAN stricte", () => {
+    expect(AnalysisFeedback.isExerciseMoveCorrect("Ra8#", "Ra8#", "a1a8")).toBe(true);
+  });
+
+  test("correspondance UCI départ+arrivée (PV Stockfish)", () => {
+    expect(AnalysisFeedback.isExerciseMoveCorrect("a1a8", "Ra8#", "a1a8")).toBe(true);
+    expect(AnalysisFeedback.isExerciseMoveCorrect("e7e8q", "e8=Q+", "e7e8")).toBe(true);
+  });
+
+  test("coup différent → faux", () => {
+    expect(AnalysisFeedback.isExerciseMoveCorrect("Ra8#", "Kg1", "h1g1")).toBe(false);
+    expect(AnalysisFeedback.isExerciseMoveCorrect("a1a8", "Kg1", "h1g1")).toBe(false);
+  });
+
+  test("solution absente ou invalide → faux (jamais de crédit par défaut)", () => {
+    expect(AnalysisFeedback.isExerciseMoveCorrect(null, "Ra8#", "a1a8")).toBe(false);
+    expect(AnalysisFeedback.isExerciseMoveCorrect("", "Ra8#", "a1a8")).toBe(false);
+    expect(AnalysisFeedback.isExerciseMoveCorrect(42, "Ra8#", "a1a8")).toBe(false);
+  });
+
+  test("coup joué manquant → faux", () => {
+    expect(AnalysisFeedback.isExerciseMoveCorrect("Ra8#", null, null)).toBe(false);
+  });
+});
