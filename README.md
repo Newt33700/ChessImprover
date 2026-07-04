@@ -896,7 +896,18 @@ Carte **PROGRESSION**, première carte de la colonne principale de la vue Stats 
 - **Page Exercice SRS indépendante (US 26.1)** : l'exercice ne s'incruste plus dans la page Review (qui laissait badges, liste de coups et panneau latéral affichés, avec un échiquier resté en mode review → pièces figées). Nouvelle page plein écran `body.exercise-active` sur le modèle du Coach Tactique : échiquier dédié, compteur « N restantes », feedback vert/rouge, enchaînement automatique, état vide avec CTA `[Analyser une partie]`/`[Coach Tactique →]`. Le pill « Exercice » a disparu de la Review (qui ne fait QUE de la review, principe KISS) ; toutes les entrées (carte EXERCICE, Coach Personnel, onglet puzzle) mènent à la page dédiée. `BoardManager` ne gère plus que review/ghost/sandbox — modes liés à la partie en cours.
 - **Qualité SM-2 nuancée conservée** : le moteur du BoardManager principal est réutilisé en « headless » (`_queueAnalysis` + écoute `engine:eval`, timeout 2,5 s) pour créditer quality=3 sur un échec avantageux (US 25.3).
 - **Fabrique commune `_createProblemBoard` (US 26.2)** : les 6 échiquiers de problèmes (Exercice, Tactique, Cimetière, Finales, Sprint, Ouvertures) partagent construction + `resize()` post-layout — chessboard.js fige les pièces si le conteneur n'avait pas sa taille finale à la construction (vue `display:none → block`), cause racine des « pièces non jouables ».
-- **Hygiène modales (US 26.3)** : la touche Échap ferme toute modale ouverte (auth, profil, thème, PGN).
+- **Hygiène modales (US 26.3)** : la touche Échap ferme toute modale ouverte (auth, profil, thème).
+
+---
+
+### 3.13 quater EPIC 27 — Refonte « Zero-Friction » : sidebar, Mes Parties, grille d'ouvertures
+
+**Fichiers :** `index.html` (`.app-shell`/`.sidebar`, `#section-library`, `#section-training-hub`, `#ot-openings-grid`), `js/app.js` (registre de navigation, `_renderGamesLibrary`, `_triggerManualSync`, `_renderOpeningsGrid`), `css/style.css`
+
+- **Sidebar + routage central (US 27.1)** : registre `VIEW_SECTIONS`/`VIEW_BODY_CLASSES`/`TOP_LEVEL_TO_VIEW` — une seule vue visible à la fois (`_setActiveView`), 4 destinations sidebar avec historique navigateur et deep-link `#!/<clé>` (`_navigateTo`), retour des sous-vues vers la bonne destination mémorisée (`_returnToLastTopLevelView`). Toutes les paires `_show*/_hide*` existantes déléguées à ce registre unique.
+- **Suppression du collage PGN (US 27.2)** : le modal `#pgn-modal` disparaît ; `_analyzePGN(pgn)` prend désormais le PGN en paramètre (bibliothèque ou liste Chess.com), plus jamais d'un champ de saisie. Nouveau bouton **🔄 Synchroniser** (`_triggerManualSync`) réutilisant le pipeline serveur idempotent de l'EPIC 23 avec retour utilisateur explicite (toast + badge).
+- **Vue Mes Parties (US 27.3)** : `_renderGamesLibrary` — table des parties serveur (badge V/L/½, adversaire extrait des en-têtes PGN, date, bouton **Analyser** qui rejoue `_analyzePGN` sans dupliquer le pipeline Review).
+- **Grille visuelle d'ouvertures (US 27.4)** : `_renderOpeningsGrid` — 10 ouvertures curatées, mini-échiquiers statiques (`_createProblemBoard(..., {draggable:false})`) construits depuis le livre ECO TSV déjà embarqué (US 25.2, zéro appel réseau externe) ; cliquer une carte pré-remplit le formulaire d'ajout au répertoire existant.
 
 ---
 
@@ -1935,7 +1946,7 @@ UNIQUE (user_id)
 | **Carte RÉVISION + match card** | `app.js:_renderReviewCard()` | Dernière partie avec barres de précision |
 | **Carte EXERCICE SRS** | `app.js:_renderExerciseCard()` | Count révisions en attente + bouton |
 | **Bilan Chart dashboard** | `app.js:_renderBilanChart()` | Graphe Progrès/Elo sur les 10 dernières parties |
-| **Modal PGN overlay** | `index.html` + `app.js` | Remplace section-pgn ; `_openPgnModal()/_closePgnModal()` |
+| **Sidebar de navigation + Mes Parties** (EPIC 27) | `index.html:.app-shell` + `app.js:_navigateTo/_setActiveView/_renderGamesLibrary/_triggerManualSync/_renderOpeningsGrid` | Remplace l'ancien modal PGN (collage manuel supprimé) : sidebar 4 destinations avec deep-link, bibliothèque Mes Parties (sync Chess.com à la demande, table V/L/½), grille visuelle de 10 ouvertures curatées (mini-échiquiers statiques) |
 | **Mobile / bascule Review** | CSS `body.board-active` | `.dash-grid` masquée / `.board-col` plein écran via classe `body` |
 | **Vue Statistiques Avancées** (US 4.1/4.2) | `advanced_stats.js` + `index.html` + `app.js` | Plein écran `body.advstats-active` : matrice colorée + gauge Héros + deep-dive + tuiles Finales + carte Tactiques (gauge circulaire `successRatio`) + top 3 ouvertures ECO (données réelles via `/stats/summary`, `MOCK_SUMMARY` en secours) |
 | **Validation email + erreurs UI inscription** (US 6.1) | `models.py:UserCreate` + `auth.js:_extractErrorMessage` | Format email validé (regex) en plus de la longueur ; erreurs 422 Pydantic (liste) affichées lisiblement au lieu de `[object Object]` |
@@ -2082,6 +2093,16 @@ Corrigé lors de l'audit : cf. §3 (échappement XSS `app.js`, base API `auth.js
 - ~~**`JWT_SECRET` par défaut = avertissement, pas d'arrêt**~~ → **✅ traité (PR de suite de l'audit)** : le démarrage échoue désormais (`RuntimeError`) hors debug si le secret n'a pas été changé (cf. §4.4).
 - **N+1 sur `/stats/summary` et `/stats/cognitive-load`** : une requête `get_moves_for_game` par partie analysée. Négligeable in-memory, mais en PostgreSQL une jointure unique (`game_moves JOIN games ON ... WHERE user_id = ...`) serait préférable dès que le volume de parties croît.
 - ~~**`backend/mutants/`**~~ → **✅ traité (PR de suite de l'audit)** : artefacts mutmut supprimés du dépôt et ajoutés au `.gitignore` (`backend/mutants/`, `.mutmut-cache`) — mutmut les régénère à l'exécution. Le symlink hérité `backend/src → app/domain` (ancien layout, plus référencé nulle part) a également été supprimé.
+
+### 11.14 EPIC 28-30 (Smart Loader, Gamification serveur, Saisons) — non commencés cette itération
+
+La demande PO du 04/07 couvrait 4 EPICs (27 à 30) en une seule salve. Seul l'EPIC 27 a été livré, testé et documenté cette itération ; les trois suivants restent **entièrement à faire**, consignés ici plutôt que déclarés « câblés » à tort :
+
+- **EPIC 28 — Smart Loader** : différer le rendu de la page Review tant que l'analyse n'est pas à 100 % (le board ne s'initialiserait qu'au 1ᵉʳ coup une fois complet), overlay plein écran avec polling `GET /api/v1/analysis/{id}/status` (« Coup X sur Y ») et messages d'attente rotatifs. Nécessite un nouvel endpoint de statut détaillé côté backend (l'actuel `GET /games/{id}` renvoie déjà `status`/`moves`, mais pas de compteur de progression coup-par-coup pendant l'analyse asynchrone) — à concevoir avant tout code frontend.
+- **EPIC 29 — Gamification serveur** : migrer l'XP/Niveau de `localStorage` (`XPSystem`, §3.14) vers des colonnes `profiles.xp`/`level` côté Postgres (+50 XP/analyse, +15 XP/problème résolu), jauge circulaire d'en-tête ; quêtes quotidiennes (probablement dérivées sans état d'une table existante plutôt qu'une nouvelle `daily_quests` mutable, à trancher) ; cosmétiques débloqués par niveau — piste naturelle : réutiliser `ThemeService` (thèmes de pièces/plateau déjà implémentés, EPIC 18, §4.16) comme catalogue de déblocages plutôt que fabriquer de nouveaux assets d'avatar.
+- **EPIC 30 — Moteur de saisons** : `backend/app/config/seasons.json` + endpoint renvoyant l'évènement actif (fenêtre UTC serveur), bandeau compte à rebours + cosmétiques exclusifs teasés. Dépend du catalogue de cosmétiques de l'EPIC 29 — à construire après, pas en parallèle.
+
+Aucun de ces trois chantiers ne doit apparaître en §8 « ✅ Fonctionnel et câblé » tant qu'il n'est pas implémenté, testé et documenté ici même.
 
 ---
 
