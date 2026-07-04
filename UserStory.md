@@ -1096,3 +1096,28 @@ En tant qu'équipe, nous voulons que chaque modification de `supabase/migrations
 - Résultat mis en cache mémoire (`_openingsGridCache`) : un seul parsing des TSV par session, même en rouvrant la vue plusieurs fois.
 
 **Validation EPIC 27 :** backend 841/841 pytest (inchangé, aucun fichier backend touché), frontend 355/355 Jest (inchangé — travail de plomberie DOM dans `app.js`, module historiquement non couvert directement par des TUs dédiés, comme les autres paires `_show*/_hide*`), couverture ≥ 80 % maintenue sur les modules testés.
+
+## EPIC 28 : Smart Loader — attente d'analyse Chess.com
+
+**Contexte :** demande PO — différer le rendu de la Review tant que l'analyse n'est pas à 100 %, overlay plein écran interrogeant `GET /api/v1/analysis/{id}/status` (« Coup X sur Y »), messages rotatifs toutes les 3 s.
+
+**Écart assumé par rapport à la demande littérale (transparence, principe déjà appliqué depuis l'EPIC 27) :** l'architecture existante rend la Review **instantanément** depuis le PGN brut (`PGNAnalyzer.analyze`, remplacement géométrique chess.js sans moteur, US 1.2 historique) — le classement/l'éval Stockfish s'affine ensuite en direct pendant la navigation. Il n'existe donc **aucun cas réel** où la Review doit attendre une analyse serveur avant de s'afficher : construire un écran de chargement bloquant à cet endroit aurait été une régression de confort artificielle, pas une fonctionnalité. Le seul moment où l'application attend réellement le serveur est la **synchronisation Chess.com** (US 23.1/27.2, analyse Stockfish native asynchrone) — c'est là qu'un Smart Loader a un sens réel et honnête. De même, l'endpoint est resté `GET /api/v1/games/{id}` (déjà existant, US 7.1) enrichi de deux colonnes plutôt qu'un nouveau `GET /api/v1/analysis/{id}/status` — éviter un doublon de route pour la même ressource (principe KISS déjà appliqué à l'EPIC 27).
+
+### US 28.1 : Progression coup-par-coup réelle (backend)
+
+**Statut :** ✅ Implémenté :
+- `games.progress_current`/`games.progress_total` (migration `20260704140000_games_progress_epic28.sql`, défaut 0) : ajoutés aux listes blanches `GAME_UPDATABLE_FIELDS` (`db_client.py`) et `_GAME_COLS` (`pg_repository.py`).
+- `analyze_pgn(..., on_progress=None)` (`analysis_pipeline.py`) : callback optionnel invoqué après **chaque coup réellement analysé** avec `(coups_traités, total_coups)` — paramètre par défaut `None`, donc **aucun changement de comportement** pour les appelants existants (rétro-compatible, zéro régression).
+- `games.py:run_analysis` câble ce callback vers `db_client.update_game(game_id, progress_current=..., progress_total=...)`, best-effort (ne doit jamais interrompre l'analyse elle-même).
+- Progression **réelle**, jamais simulée : chaque incrément correspond à un coup effectivement passé au moteur Stockfish (natif) ou au moteur client fourni.
+- Tests : `test_analysis_pipeline.py::TestOnProgressCallback` (5 TUs : un appel par coup, séquence 1→N, dernier appel = total, callback absent par défaut, PGN invalide = zéro appel), `test_games_api.py::TestAnalysisProgress` (progression = 100 % après complétion via `GET /games/{id}`), `test_db_games.py` (2 TUs whitelist + valeurs initiales à 0).
+
+### US 28.2/28.3 : Overlay plein écran + messages rotatifs (frontend)
+
+**Statut :** ✅ Implémenté (appliqué à la synchronisation Chess.com, cf. écart ci-dessus) :
+- `#smart-loader-overlay` (plein écran, dismissible — bouton « Continuer en arrière-plan » + Échap, US 26.3) affiché par `_triggerManualSync()` dès qu'au moins une analyse est mise en file.
+- `_pollSmartLoaderProgress()` : interroge `GET /api/v1/games` toutes les 1,5 s, agrège `progress_current`/`progress_total` de **toutes** les parties `processing` (barre de progression + texte « Coup X sur Y analysés »), et masque l'overlay dès que le compte revient à zéro.
+- `SMART_LOADER_MESSAGES` : 8 messages rotatifs (toutes les 3 s), 100 % statiques et embarqués (Zero-Proxy).
+- Le badge discret d'en-tête (`#sync-indicator`, EPIC 23) et le polling de fond 15 s (`_pollSyncStatus`, silencieux — sync à la connexion) restent inchangés et coexistent avec l'overlay ; la finalisation (toast + rafraîchissement Stats/Mes Parties) est désormais factorisée dans `_onSyncCompleted()`, appelée par les deux pollers pour éviter la duplication et le double toast.
+
+**Validation EPIC 28 :** backend 850/850 pytest (9 nouveaux), frontend 355/355 Jest (inchangé — plomberie DOM dans `app.js`, cf. EPIC 27), couverture ≥ 80 % maintenue.
