@@ -20,29 +20,42 @@ def reset_db():
     db_client._reset_store()
 
 
-def _is_mate_in_n(fen: str, san: str, n: int) -> bool:
+def _is_mate_in_1(fen: str, san: str) -> bool:
     board = chess.Board(fen)
     move = board.parse_san(san)
     if move not in board.legal_moves:
         return False
     board.push(move)
-    if n == 1:
-        return board.is_checkmate()
+    return board.is_checkmate()
+
+
+def _is_forced_mate_in_2(fen: str, solution) -> bool:
+    """EPIC 34 — vérifie une séquence ``[coup1, réplique_forcée, mat]`` (UCI) :
+    coup 1 légal et ne matant pas déjà seul (sinon c'est un mat en 1, pas en
+    2), réplique noire réellement FORCÉE (seul coup légal disponible — pas
+    seulement « toutes les répliques permettent un mat », qui tolérerait un
+    coup 1 imprécis), coup final légal et effectivement mat.
+    """
+    if not isinstance(solution, list) or len(solution) != 3:
+        return False
+    board = chess.Board(fen)
+    try:
+        move1, move2, move3 = (chess.Move.from_uci(m) for m in solution)
+    except ValueError:
+        return False
+    if move1 not in board.legal_moves:
+        return False
+    board.push(move1)
     if board.is_checkmate():
         return False
     replies = list(board.legal_moves)
-    if not replies:
+    if len(replies) != 1 or move2 != replies[0]:
         return False
-    for reply in replies:
-        board.push(reply)
-        found = any(
-            (board.push(mv2), board.is_checkmate(), board.pop())[1]
-            for mv2 in board.legal_moves
-        )
-        board.pop()
-        if not found:
-            return False
-    return True
+    board.push(move2)
+    if move3 not in board.legal_moves:
+        return False
+    board.push(move3)
+    return board.is_checkmate()
 
 
 def _is_undefended_capture(fen: str, san: str) -> bool:
@@ -65,9 +78,9 @@ class TestSeedIntegrity:
         for problem in db_client._tactical_problems.values():
             cat = problem["category"]
             if cat == "mate_in_1":
-                assert _is_mate_in_n(problem["fen"], problem["solution"], 1), problem
+                assert _is_mate_in_1(problem["fen"], problem["solution"]), problem
             elif cat == "mate_in_2":
-                assert _is_mate_in_n(problem["fen"], problem["solution"], 2), problem
+                assert _is_forced_mate_in_2(problem["fen"], problem["solution"]), problem
             elif cat == "hanging_piece":
                 assert _is_undefended_capture(problem["fen"], problem["solution"]), problem
             else:

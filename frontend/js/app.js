@@ -3000,11 +3000,18 @@ class ChessImproverApp {
       body.innerHTML = `<p class="empty-state">Connectez-vous pour accéder au Coach Tactique.</p>`;
       return;
     }
+    // EPIC 34 — garde anti-course : `_showTactics()` charge un problème
+    // « Aléatoire » avant même qu'un thème soit choisi ; si l'utilisateur
+    // clique un thème pendant que cette requête est encore en vol, la
+    // réponse la plus ANCIENNE ne doit jamais écraser l'affichage d'une
+    // requête plus récente qui a résolu entre-temps.
+    const loadToken = (this._tacticsLoadToken = (this._tacticsLoadToken || 0) + 1);
     body.innerHTML = `<p class="empty-state">Chargement…</p>`;
     try {
       const problem = customFocus
         ? await ApiClient.getCustomTacticalProblem(customFocus)
         : await ApiClient.getNextTacticalProblem(themeId || undefined);
+      if (loadToken !== this._tacticsLoadToken) return; // une requête plus récente a pris le relais
       const badge = document.getElementById("tactics-elo-badge");
       if (badge) badge.textContent = `Elo ${problem.difficulty_elo}`;
       body.innerHTML = `
@@ -3016,6 +3023,7 @@ class ChessImproverApp {
       this._tacticsSolved = false;
       this._initTacticsBoard(problem);
     } catch {
+      if (loadToken !== this._tacticsLoadToken) return;
       // US 22.4 : plus d'erreur brute qui fige l'interface — état vide propre
       // avec action de relance immédiate.
       body.innerHTML = this._emptyStateHtml(
@@ -3082,6 +3090,10 @@ class ChessImproverApp {
       getChess: () => this._tacticsChess,
     });
     this._tacticsStartTime = Date.now();
+    // EPIC 34 : position de départ de l'étape EN COURS (utile pour les
+    // problèmes multi-coups — ex. mat en 2 — dont la position à rejouer en
+    // cas d'échec n'est plus forcément celle du tout premier coup).
+    this._tacticsPlyFen = problem.fen;
   }
 
   _onTacticsDragStart(src, piece) {
@@ -3113,6 +3125,23 @@ class ChessImproverApp {
     const timeTaken = this._tacticsStartTime ? (Date.now() - this._tacticsStartTime) / 1000 : null;
     try {
       const result = await ApiClient.submitTacticalAttempt(problem.id, san, timeTaken);
+
+      // EPIC 34 — étape intermédiaire d'un problème multi-coups (ex. mat en
+      // 2) : le coup était juste, la réplique adverse est auto-jouée, on
+      // continue SUR LE MÊME problème sans toucher Elo/série/XP.
+      if (result.success && result.complete === false) {
+        if (result.opponent_move) this._tacticsChess.move(result.opponent_move);
+        if (result.fen) this._tacticsBoard.position(result.fen);
+        this._tacticsPlyFen = result.fen || this._tacticsChess.fen();
+        if (feedback) {
+          feedback.classList.remove("tactics-feedback--error");
+          feedback.classList.add("tactics-feedback--success");
+          feedback.textContent = "✓ Bien vu — trouvez la suite !";
+        }
+        this._tacticsSolved = false; // débloque le coup suivant
+        return;
+      }
+
       const badge = document.getElementById("tactics-elo-badge");
       if (badge) badge.textContent = `Elo ${result.new_elo}`;
       const streakBadge = document.getElementById("tactics-streak-badge");
@@ -3129,8 +3158,10 @@ class ChessImproverApp {
         this._renderXP(xp, level);
         StreakSystem.record();
       } else {
-        // EPIC 32 : position rejouée + flèches, le temps qu'il faut pour comprendre
-        this._showProblemSolution("tactics-board", this._tacticsBoard, problem.fen, this._tacticsLastMove, result.solution);
+        // EPIC 32 : position rejouée + flèches, le temps qu'il faut pour
+        // comprendre — EPIC 34 : rejoue depuis l'étape EN COURS (pas
+        // forcément la position de départ pour un problème multi-coups).
+        this._showProblemSolution("tactics-board", this._tacticsBoard, this._tacticsPlyFen, this._tacticsLastMove, result.solution);
       }
       this._offerNextProblem(feedback, "Problème suivant →",
         () => this._loadTacticalProblem(this._currentTacticsTheme, this._customFocus));

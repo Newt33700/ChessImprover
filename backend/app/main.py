@@ -23,6 +23,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import settings
 from app.infrastructure.chess_com_client import ChessComClient
+from app.infrastructure.lichess_client import LichessClient
 from app.routers import auth as auth_router
 from app.routers import endgames as endgames_router
 from app.routers import error_profile as error_profile_router
@@ -42,11 +43,12 @@ from app.routers import tactics as tactics_router
 logger = logging.getLogger(__name__)
 
 chess_com_client: ChessComClient | None = None
+lichess_client: LichessClient | None = None
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
-    global chess_com_client
+    global chess_com_client, lichess_client
     if not settings.debug and settings.jwt_secret == "dev-secret-change-in-production":
         # Fail-fast : mieux vaut un démarrage refusé qu'un backend en production
         # dont tous les tokens sont forgeables. En dev local, définir DEBUG=true
@@ -56,9 +58,12 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
             "forgeable. Définir JWT_SECRET dans l'environnement (ou DEBUG=true en dev)."
         )
     chess_com_client = ChessComClient()
+    lichess_client = LichessClient()
     yield
     if chess_com_client:
         await chess_com_client.close()
+    if lichess_client:
+        await lichess_client.close()
 
 
 # ---------------------------------------------------------------------------

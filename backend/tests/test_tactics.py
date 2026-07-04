@@ -6,14 +6,21 @@ from datetime import date, datetime, timedelta, timezone
 
 from app.domain.tactics import (
     TACTICAL_THEMES,
+    advance_tactical_attempt,
     compute_daily_streak,
     compute_stats_by_theme,
     is_correct_move,
     select_nearest_problem,
+    solution_sequence,
 )
 
 MATE_IN_1_FEN = "6k1/5ppp/8/8/8/8/5PPP/R5K1 w - - 0 1"
 MATE_IN_1_SOLUTION = "Ra8#"
+
+#: Positions et séquences EPIC 34 — vérifiées via python-chess (voir aussi
+#: tests/test_db_tactics.py) : coup 1, réplique noire FORCÉE, mat.
+MATE_IN_2_FEN = "8/8/8/8/8/8/8/k1KQ4 w - - 0 1"
+MATE_IN_2_SEQUENCE = ["d1d4", "a1a2", "d4b2"]
 
 
 class TestTacticalThemes:
@@ -37,6 +44,16 @@ class TestIsCorrectMove:
 
     def test_garbage_input_rejected_not_raised(self):
         assert is_correct_move(MATE_IN_1_FEN, MATE_IN_1_SOLUTION, "not a move") is False
+
+    def test_uci_solution_accepted(self):
+        # EPIC 34 — les séquences Lichess/mate_in_2 stockent l'UCI, pas le SAN.
+        assert is_correct_move(MATE_IN_2_FEN, "d1d4", "Qd4+") is True
+
+    def test_uci_solution_wrong_move_rejected(self):
+        assert is_correct_move(MATE_IN_2_FEN, "d1d4", "Kb1") is False
+
+    def test_garbage_uci_solution_rejected_not_raised(self):
+        assert is_correct_move(MATE_IN_2_FEN, "not-a-move", "Qd4+") is False
 
 
 class TestSelectNearestProblem:
@@ -63,6 +80,75 @@ class TestSelectNearestProblem:
         problems = [{"id": "low", "difficulty_elo": 900}, {"id": "high", "difficulty_elo": 1100}]
         picks = {select_nearest_problem(problems, 1000)["id"] for _ in range(30)}
         assert picks == {"low", "high"}
+
+    def test_exclude_ids_removes_recently_served_problem(self):
+        # EPIC 34 — corrige le bug « toujours le même exercice » : le
+        # problème exact le plus proche est écarté, le suivant plus proche
+        # est servi à la place.
+        assert select_nearest_problem(self._problems(), 1000, exclude_ids=["b"])["id"] == "a"
+
+    def test_exclude_ids_never_empties_the_pool(self):
+        # Si TOUS les candidats ont été récemment servis, on retombe sur le
+        # pool complet plutôt que de renvoyer None (jamais de 404 par ce biais).
+        problems = self._problems()
+        all_ids = [p["id"] for p in problems]
+        assert select_nearest_problem(problems, 1000, exclude_ids=all_ids)["id"] == "b"
+
+    def test_exclude_ids_none_or_empty_is_a_no_op(self):
+        assert select_nearest_problem(self._problems(), 1000, exclude_ids=None)["id"] == "b"
+        assert select_nearest_problem(self._problems(), 1000, exclude_ids=[])["id"] == "b"
+
+
+class TestAdvanceTacticalAttempt:
+    def test_single_move_solution_wrong_move(self):
+        assert advance_tactical_attempt(MATE_IN_1_FEN, [MATE_IN_1_SOLUTION], "Kg1") == {"result": "wrong"}
+
+    def test_single_move_solution_correct_completes_immediately(self):
+        step = advance_tactical_attempt(MATE_IN_1_FEN, [MATE_IN_1_SOLUTION], "Ra8#")
+        assert step["result"] == "correct_complete"
+        assert "fen" in step
+
+    def test_empty_remaining_is_always_wrong(self):
+        assert advance_tactical_attempt(MATE_IN_1_FEN, [], "Ra8#") == {"result": "wrong"}
+
+    def test_multi_ply_first_move_returns_partial_with_auto_played_reply(self):
+        step = advance_tactical_attempt(MATE_IN_2_FEN, MATE_IN_2_SEQUENCE, "Qd4+")
+        assert step["result"] == "correct_partial"
+        assert step["opponent_move"] == "Ka2"
+        assert step["remaining"] == ["d4b2"]
+        assert "fen" in step
+
+    def test_multi_ply_wrong_first_move(self):
+        assert advance_tactical_attempt(MATE_IN_2_FEN, MATE_IN_2_SEQUENCE, "Kb1") == {"result": "wrong"}
+
+    def test_multi_ply_alternate_faster_mate_is_still_rejected(self):
+        # Qa4# mate directement (mat en 1) mais n'est pas la solution
+        # ATTENDUE de ce problème — la régression exacte du bug rapporté.
+        assert advance_tactical_attempt(MATE_IN_2_FEN, MATE_IN_2_SEQUENCE, "Qa4#") == {"result": "wrong"}
+
+    def test_multi_ply_second_move_completes(self):
+        step1 = advance_tactical_attempt(MATE_IN_2_FEN, MATE_IN_2_SEQUENCE, "Qd4+")
+        step2 = advance_tactical_attempt(step1["fen"], step1["remaining"], "Qb2#")
+        assert step2["result"] == "correct_complete"
+
+    def test_multi_ply_wrong_second_move(self):
+        step1 = advance_tactical_attempt(MATE_IN_2_FEN, MATE_IN_2_SEQUENCE, "Qd4+")
+        step2 = advance_tactical_attempt(step1["fen"], step1["remaining"], "Qd1")
+        assert step2 == {"result": "wrong"}
+
+    def test_garbage_played_move_rejected_not_raised(self):
+        assert advance_tactical_attempt(MATE_IN_1_FEN, [MATE_IN_1_SOLUTION], "not a move") == {"result": "wrong"}
+
+
+class TestSolutionSequence:
+    def test_wraps_plain_string_in_a_list(self):
+        assert solution_sequence("Ra8#") == ["Ra8#"]
+
+    def test_leaves_a_list_untouched(self):
+        assert solution_sequence(["d1d4", "a1a2", "d4b2"]) == ["d1d4", "a1a2", "d4b2"]
+
+    def test_accepts_a_tuple(self):
+        assert solution_sequence(("d1d4", "a1a2")) == ["d1d4", "a1a2"]
 
 
 class TestComputeDailyStreak:

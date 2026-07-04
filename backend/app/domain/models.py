@@ -350,11 +350,24 @@ class TacticalAttemptRequest(BaseModel):
 
 
 class TacticalAttemptResult(BaseModel):
-    """Résultat d'une tentative : révèle la solution après coup."""
+    """Résultat d'une tentative : révèle la solution après coup.
+
+    EPIC 34 — un problème peut désormais compter plusieurs demi-coups (ex.
+    mat en 2 : coup du joueur, réplique adverse forcée, coup de mat) :
+    ``complete=False`` signale une étape intermédiaire correcte (le coup
+    était juste, ``opponent_move``/``fen`` donnent la réplique auto-jouée à
+    afficher, le problème continue sur le MÊME ``problem_id``) — Elo,
+    solution et série ne sont mis à jour qu'à la complétion finale
+    (``complete=True``, comportement historique inchangé pour un problème
+    à un seul coup).
+    """
     success: bool
-    new_elo: int
-    solution: str
-    streak: int = Field(0, description="Problèmes résolus d'affilée aujourd'hui (US 8.4)")
+    complete: bool = True
+    new_elo: Optional[int] = None
+    solution: Optional[str] = None
+    streak: Optional[int] = Field(None, description="Problèmes résolus d'affilée aujourd'hui (US 8.4)")
+    fen: Optional[str] = Field(None, description="Position après la réplique adverse auto-jouée (étape intermédiaire)")
+    opponent_move: Optional[str] = Field(None, description="Réplique adverse auto-jouée en SAN (étape intermédiaire)")
 
 
 class TacticalThemeStats(BaseModel):
