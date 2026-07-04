@@ -38,7 +38,7 @@ test("résout un problème mate_in_1 : Elo monte, série passe à 1", async ({ p
   await expect(page.locator("#tactics-streak-badge")).toHaveText("🔥 1");
 });
 
-test("coup incorrect : halo rouge, solution révélée, Elo baisse", async ({ page }) => {
+test("coup incorrect : halo rouge, flèche solution, Elo baisse", async ({ page }) => {
   await page.goto("/index.html");
   await signupFreshUser(page, "e2e_tactics");
 
@@ -51,22 +51,33 @@ test("coup incorrect : halo rouge, solution révélée, Elo baisse", async ({ pa
 
   await expect(page.locator("#tactics-board")).toHaveClass(/tactics-board--error/);
   await expect(page.locator("#tactics-elo-badge")).toHaveText("Elo 985");
-  await expect(page.locator("#tactics-feedback")).toContainText("Coup incorrect. Solution");
+  // EPIC 32 : plus de SAN en texte — la solution est fléchée sur l'échiquier.
+  await expect(page.locator("#tactics-feedback")).toContainText("la flèche verte montre le coup attendu");
 });
 
-test("après résolution, un nouveau problème s'enchaîne automatiquement", async ({ page }) => {
+test("après résolution, un bouton « Problème suivant » permet d'enchaîner (EPIC 32)", async ({ page }) => {
   await page.goto("/index.html");
   await signupFreshUser(page, "e2e_tactics");
 
   await page.click("#card-tactics button");
   await page.click('.tactics-theme-btn[data-theme="mate_in_1"]');
   await page.waitForSelector("#tactics-board", { state: "attached" });
+  // `_showTactics()` charge un problème "Aléatoire" avant même ce clic sur
+  // le thème (cf. app.js:_showTactics) : attendre que le badge Elo reflète
+  // bien LE PROBLÈME mate_in_1 (800, cf. seed) avant de jouer, pour ne pas
+  // droper sur un échiquier encore en cours de remplacement par cette
+  // requête concurrente plus ancienne.
+  await expect(page.locator("#tactics-elo-badge")).toHaveText("Elo 800");
 
   await page.evaluate(() => window.app._onTacticsDrop("a1", "a8"));
   await expect(page.locator("#tactics-board")).toHaveClass(/tactics-board--success/);
 
-  // Enchaînement auto après 1600ms (app.js:_submitTacticsAttempt) — un
-  // nouveau `#tactics-board` (sans classe success/error) est remonté.
+  // Plus d'enchaînement automatique (EPIC 32) : un bouton explicite attend
+  // que l'utilisateur soit prêt avant de charger le problème suivant.
+  const nextBtn = page.locator(".next-problem-btn");
+  await expect(nextBtn).toBeVisible();
+  await nextBtn.click();
+
   await expect(async () => {
     const cls = await page.locator("#tactics-board").getAttribute("class");
     expect(cls).toBe("tactics-board");

@@ -446,11 +446,19 @@ _TACTICAL_PROBLEMS_SEED = [
     {"fen": "4k3/8/8/4q3/8/8/4R3/4K3 w - - 0 1", "solution": "Rxe5+", "category": "hanging_piece", "difficulty_elo": 950},
     {"fen": "4k3/8/2n5/8/8/8/2R5/4K3 w - - 0 1", "solution": "Rxc6", "category": "hanging_piece", "difficulty_elo": 850},
     {"fen": "4k3/8/8/8/4n3/8/4Q3/4K3 w - - 0 1", "solution": "Qxe4+", "category": "hanging_piece", "difficulty_elo": 1000},
-    {"fen": "8/8/8/8/8/8/8/k1KQ4 w - - 0 1", "solution": "Qd4+", "category": "mate_in_2", "difficulty_elo": 1250},
-    {"fen": "8/8/8/8/8/8/8/k1K1Q3 w - - 0 1", "solution": "Qe5+", "category": "mate_in_2", "difficulty_elo": 1300},
-    {"fen": "8/8/8/8/8/8/8/k1K1Q3 w - - 0 1", "solution": "Qc3+", "category": "mate_in_2", "difficulty_elo": 1300},
-    {"fen": "8/8/8/8/8/8/8/k1K2Q2 w - - 0 1", "solution": "Qf6+", "category": "mate_in_2", "difficulty_elo": 1350},
-    {"fen": "8/8/8/8/8/8/8/k1K2Q2 w - - 0 1", "solution": "Kc2+", "category": "mate_in_2", "difficulty_elo": 1400},
+    # EPIC 34 — bug corrigé : ces 5 positions n'étaient auparavant validées
+    # QUE sur le premier coup (un simple échec, ex. "Qd4+"), alors qu'un
+    # coup de mat immédiat existe aussi sur la colonne a (ex. Qa4#) — ce
+    # "mat en 1" alternatif était donc à tort rejeté comme faux. `solution`
+    # est désormais la SÉQUENCE COMPLÈTE forcée (coup du joueur, réplique
+    # noire forcée, mat) — chaque ligne vérifiée programmatiquement avec
+    # python-chess (réplique unique après le 1er coup, mat effectif sur le
+    # 3ᵉ) avant d'être committée ; voir tests/test_db_tactics.py.
+    {"fen": "8/8/8/8/8/8/8/k1KQ4 w - - 0 1", "solution": ["d1d4", "a1a2", "d4b2"], "category": "mate_in_2", "difficulty_elo": 1250},
+    {"fen": "8/8/8/8/8/8/8/k1K1Q3 w - - 0 1", "solution": ["e1e5", "a1a2", "e5b2"], "category": "mate_in_2", "difficulty_elo": 1300},
+    {"fen": "8/8/8/8/8/8/8/k1K1Q3 w - - 0 1", "solution": ["e1c3", "a1a2", "c3b2"], "category": "mate_in_2", "difficulty_elo": 1300},
+    {"fen": "8/8/8/8/8/8/8/k1K2Q2 w - - 0 1", "solution": ["f1f6", "a1a2", "f6b2"], "category": "mate_in_2", "difficulty_elo": 1350},
+    {"fen": "8/8/8/8/8/8/8/k1K2Q2 w - - 0 1", "solution": ["c1c2", "a1a2", "f1a6"], "category": "mate_in_2", "difficulty_elo": 1400},
 ]
 
 _tactical_problems: Dict[str, Dict[str, Any]] = {}
@@ -476,7 +484,9 @@ def get_tactical_problem(problem_id: str) -> Optional[Dict[str, Any]]:
 
 
 def get_next_tactical_problem(
-    tactical_elo: int, category: Optional[str] = None
+    tactical_elo: int,
+    category: Optional[str] = None,
+    exclude_ids: Optional[List[str]] = None,
 ) -> Optional[Dict[str, Any]]:
     """US 8.1 — Problème le plus proche de l'Elo tactique du joueur.
 
@@ -488,6 +498,11 @@ def get_next_tactical_problem(
     set de problèmes par défaut in-memory ; et si le filtre de catégorie vide
     le pool, on élargit à toutes les catégories plutôt que de renvoyer None
     (donc 404 côté route, qui figeait l'interface).
+
+    ``exclude_ids`` (EPIC 34) écarte les derniers problèmes servis à cet
+    utilisateur (cf. ``get_recent_tactical_problem_ids``) — corrige le bug
+    « toujours le même exercice » d'un petit pool par catégorie où un seul
+    problème est numériquement le plus proche de l'Elo courant.
     """
     repo = _pg()
     if repo is not None:
@@ -501,7 +516,74 @@ def get_next_tactical_problem(
     if category is not None:
         filtered = [p for p in pool if p["category"] == category]
         pool = filtered or pool  # élargissement : jamais de pool vide
-    return select_nearest_problem(pool, tactical_elo)
+    return select_nearest_problem(pool, tactical_elo, exclude_ids=exclude_ids)
+
+
+# ---------------------------------------------------------------------------
+# EPIC 34 — Variété des exercices (anti-répétition) + puzzles Lichess éphémères
+# + sessions de tentative multi-coups. Purement en mémoire (comme le seed
+# tactique ci-dessus) : état transitoire, pas une donnée utilisateur à
+# persister — cohérent avec le choix déjà fait pour les finales (§ ci-dessus).
+# ---------------------------------------------------------------------------
+
+_RECENT_PROBLEM_IDS_PER_USER = 4  # nb de derniers problèmes exclus par variété
+_recent_tactical_problem_ids: Dict[str, List[str]] = {}  # user_id -> [ids récents]
+
+_MAX_LICHESS_PROBLEMS_CACHED = 200  # borne la croissance mémoire (FIFO)
+_lichess_problem_ids_fifo: List[str] = []
+
+_tactical_attempt_sessions: Dict[str, Dict[str, Any]] = {}  # "user_id:problem_id" -> {fen, remaining}
+
+
+def get_recent_tactical_problem_ids(user_id: str) -> List[str]:
+    """EPIC 34 — Derniers problèmes servis à cet utilisateur (le plus récent
+    en dernier), à exclure de la prochaine sélection pour varier les exercices."""
+    return list(_recent_tactical_problem_ids.get(user_id, []))
+
+
+def record_served_tactical_problem_id(user_id: str, problem_id: str) -> None:
+    """EPIC 34 — Mémorise ``problem_id`` comme servi, borné aux
+    ``_RECENT_PROBLEM_IDS_PER_USER`` derniers (FIFO)."""
+    recent = _recent_tactical_problem_ids.setdefault(user_id, [])
+    recent.append(problem_id)
+    del recent[: len(recent) - _RECENT_PROBLEM_IDS_PER_USER]
+
+
+def add_lichess_tactical_problem(problem: Dict[str, Any]) -> str:
+    """EPIC 34 — Enregistre un problème récupéré depuis l'API Puzzle Lichess
+    dans le même registre que le seed statique (même forme, ``solution`` en
+    liste de coups UCI — cf. ``advance_tactical_attempt``), pour que
+    ``get_tactical_problem``/``submit_attempt`` n'aient rien à distinguer.
+    Cache borné en FIFO pour ne pas grossir indéfiniment en mémoire."""
+    problem_id = str(uuid.uuid4())
+    _tactical_problems[problem_id] = {"id": problem_id, **problem}
+    _lichess_problem_ids_fifo.append(problem_id)
+    if len(_lichess_problem_ids_fifo) > _MAX_LICHESS_PROBLEMS_CACHED:
+        oldest = _lichess_problem_ids_fifo.pop(0)
+        _tactical_problems.pop(oldest, None)
+    return problem_id
+
+
+def _attempt_session_key(user_id: str, problem_id: str) -> str:
+    return f"{user_id}:{problem_id}"
+
+
+def get_tactical_attempt_session(user_id: str, problem_id: str) -> Optional[Dict[str, Any]]:
+    """EPIC 34 — État d'une tentative en cours sur un problème multi-coups
+    (position courante + coups restants) pour CET utilisateur."""
+    return _tactical_attempt_sessions.get(_attempt_session_key(user_id, problem_id))
+
+
+def set_tactical_attempt_session(
+    user_id: str, problem_id: str, fen: str, remaining: List[str]
+) -> None:
+    _tactical_attempt_sessions[_attempt_session_key(user_id, problem_id)] = {
+        "fen": fen, "remaining": list(remaining),
+    }
+
+
+def clear_tactical_attempt_session(user_id: str, problem_id: str) -> None:
+    _tactical_attempt_sessions.pop(_attempt_session_key(user_id, problem_id), None)
 
 
 # ---------------------------------------------------------------------------
@@ -895,3 +977,10 @@ def _reset_store() -> None:
     _error_profiles.clear()
     _tactical_sprints.clear()
     _srs_flashcards.clear()
+    # EPIC 34 : état éphémère du Coach Tactique — jamais le seed statique
+    # (_tactical_problems ne garde que les entrées ajoutées via Lichess).
+    _recent_tactical_problem_ids.clear()
+    _tactical_attempt_sessions.clear()
+    for _pid in _lichess_problem_ids_fifo:
+        _tactical_problems.pop(_pid, None)
+    _lichess_problem_ids_fifo.clear()
