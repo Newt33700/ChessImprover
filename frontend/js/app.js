@@ -1204,6 +1204,7 @@ class ChessImproverApp {
       onDragStart: (src, piece) => this._onExDragStart(src, piece),
       onDrop: (src, tgt) => this._onExDrop(src, tgt),
       onSnapEnd: () => this._exBoard.position(this._exChess.fen()),
+      getChess: () => this._exChess,
     });
   }
 
@@ -3037,7 +3038,7 @@ class ChessImproverApp {
    * n'avait pas encore sa taille finale au moment de la construction, ce qui
    * arrive quand la vue vient d'être affichée (`display:none → block`).
    */
-  _createProblemBoard(containerId, { position, orientation, onDragStart, onDrop, onSnapEnd, draggable = true }) {
+  _createProblemBoard(containerId, { position, orientation, onDragStart, onDrop, onSnapEnd, draggable = true, getChess }) {
     if (typeof Chessboard === "undefined") return null;
     const board = Chessboard(containerId, {
       draggable,
@@ -3049,6 +3050,18 @@ class ChessImproverApp {
       onSnapEnd,
     });
     requestAnimationFrame(() => board.resize());
+    // EPIC 33 — Mode tap (clic pièce → clic case d'arrivée) + surbrillance
+    // des coups légaux, en plus du glisser-déposer : réutilise exactement
+    // les mêmes règles (onDragStart = qui peut jouer, onDrop = validité du
+    // coup) pour ne jamais désynchroniser les deux modes de saisie.
+    if (draggable && getChess && window.TapMove) {
+      TapMove.attach(document.getElementById(containerId), {
+        getChess,
+        canPick: (sq, pieceStr) => onDragStart?.(sq, pieceStr) !== false,
+        tryMove: (src, tgt) => onDrop?.(src, tgt),
+        onMoved: () => onSnapEnd?.(),
+      });
+    }
     return board;
   }
 
@@ -3066,6 +3079,7 @@ class ChessImproverApp {
       onDragStart: (src, piece) => this._onTacticsDragStart(src, piece),
       onDrop: (src, tgt) => this._onTacticsDrop(src, tgt),
       onSnapEnd: () => this._tacticsBoard.position(this._tacticsChess.fen()),
+      getChess: () => this._tacticsChess,
     });
     this._tacticsStartTime = Date.now();
   }
@@ -3191,6 +3205,7 @@ class ChessImproverApp {
       onDragStart: (src, piece) => this._onFlashcardDragStart(src, piece),
       onDrop: (src, tgt) => this._onFlashcardDrop(src, tgt),
       onSnapEnd: () => this._flashcardBoard.position(this._flashcardChess.fen()),
+      getChess: () => this._flashcardChess,
     });
   }
 
@@ -3464,6 +3479,7 @@ class ChessImproverApp {
       onDragStart: (src, piece) => this._onOtDragStart(src, piece),
       onDrop: (src, tgt) => this._onOtDrop(src, tgt),
       onSnapEnd: () => this._otBoard.position(this._otChess.fen()),
+      getChess: () => this._otChess,
     });
     this._advanceOpeningLine();
   }
@@ -3591,6 +3607,7 @@ class ChessImproverApp {
       onDragStart: (src, piece) => this._onEndgameDragStart(src, piece),
       onDrop: (src, tgt) => this._onEndgameDrop(src, tgt),
       onSnapEnd: () => this._endgameBoard.position(this._endgameChess.fen()),
+      getChess: () => this._endgameChess,
     });
   }
 
@@ -3795,6 +3812,7 @@ class ChessImproverApp {
       onDragStart: (src, piece) => this._onSprintDragStart(src, piece),
       onDrop: (src, tgt) => this._onSprintDrop(src, tgt),
       onSnapEnd: () => this._sprintBoard.position(this._sprintChess.fen()),
+      getChess: () => this._sprintChess,
     });
   }
 
