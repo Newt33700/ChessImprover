@@ -110,6 +110,20 @@
   <p class="loading-message">Chargement…</p>
 </div>
 
+<!-- ══════════════════ SMART LOADER (EPIC 28, US 28.2/28.3) ══════════════════ -->
+<div id="smart-loader-overlay" hidden role="status" aria-live="polite">
+  <div class="smart-loader-card card">
+    <div class="loading-spinner"></div>
+    <p class="smart-loader-title">Analyse en cours…</p>
+    <p class="smart-loader-progress" id="smart-loader-progress">Préparation…</p>
+    <div class="smart-loader-bar-track">
+      <div class="smart-loader-bar-fill" id="smart-loader-bar-fill" style="width:0%"></div>
+    </div>
+    <p class="smart-loader-fun" id="smart-loader-fun"></p>
+    <button class="btn btn--secondary btn--sm" id="btn-smart-loader-dismiss">Continuer en arrière-plan</button>
+  </div>
+</div>
+
 <!-- ══════════════════ HEADER ══════════════════ -->
 <header class="app-header">
   <button class="logo-btn" onclick="window.app?._goHome()" aria-label="Accueil">

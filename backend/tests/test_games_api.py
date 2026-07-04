@@ -378,6 +378,26 @@ class TestGetGame:
         assert g.status_code == 404
 
 
+class TestAnalysisProgress:
+    """EPIC 28 (US 28.1) — progression coup-par-coup exposée via GET /games/{id}."""
+
+    def test_progress_reaches_total_after_completion(self):
+        token = _signup_and_token()
+        r = client.post(
+            "/api/v1/games/analyze", json={"pgn": PGN, "evals": _evals(PGN)}, headers=_auth(token),
+        )
+        gid = r.json()["accepted"][0]["game_id"]
+        g = client.get(f"/api/v1/games/{gid}", headers=_auth(token)).json()["game"]
+        assert g["progress_total"] == 6
+        assert g["progress_current"] == 6
+
+    def test_fresh_game_starts_at_zero(self):
+        # Avant toute exécution de tâche de fond (create_game seul).
+        game = db_client.create_game("[Result \"*\"]\n\n*", user_id="u1")
+        assert game["progress_current"] == 0
+        assert game["progress_total"] == 0
+
+
 class TestStatsSummary:
     def test_summary_after_analysis(self):
         token = _signup_and_token()

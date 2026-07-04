@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import hashlib
 import io as _io
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 import chess
 import chess.pgn
@@ -126,7 +126,10 @@ def _extract_opening(headers: Any) -> tuple:
 
 
 def analyze_pgn(
-    pgn: str, engine: Optional[EngineProvider] = None, time_control: Optional[str] = None
+    pgn: str,
+    engine: Optional[EngineProvider] = None,
+    time_control: Optional[str] = None,
+    on_progress: Optional[Callable[[int, int], None]] = None,
 ) -> Dict[str, Any]:
     """Analyse un PGN et renvoie ``{"result", "eco", "opening_name", "moves": [...]}``.
 
@@ -140,6 +143,12 @@ def analyze_pgn(
         Cadence Chess.com (``"180+2"``), pour corriger l'incrément dans le
         calcul du temps de réflexion (EPIC 19, US 19.1/19.2). Sans valeur
         explicite, l'en-tête PGN ``TimeControl`` sert de repli.
+    on_progress : callable, optional
+        EPIC 28 (US 28.1) — rappelé après chaque coup analysé avec
+        ``(coups_traités, total_coups)``, pour publier une progression
+        temps réel (Smart Loader) pendant l'analyse Stockfish en tâche de
+        fond. Absent par défaut : aucun changement de comportement pour les
+        appelants existants.
     """
     empty = {"result": None, "eco": None, "opening_name": None, "moves": []}
     try:
@@ -157,6 +166,7 @@ def analyze_pgn(
         result = None
     eco, opening_name = _extract_opening(game.headers)
 
+    total_moves = len(moves)
     records: List[Dict[str, Any]] = []
     cursor = board.copy(stack=False)
     for i, move in enumerate(moves):
@@ -170,6 +180,8 @@ def analyze_pgn(
         # position APRÈS le coup pour détecter une pièce laissée en prise.
         attach_move_alert(record, cursor, mover_color)
         records.append(record)
+        if on_progress is not None:
+            on_progress(i + 1, total_moves)
 
     tc = time_control or (game.headers.get("TimeControl") if game.headers else None)
     increment = parse_increment(tc)

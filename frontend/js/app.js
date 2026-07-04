@@ -56,6 +56,20 @@ const CURATED_OPENINGS = [
   "English Opening", "Scandinavian Defense", "London System",
 ];
 
+// EPIC 28 (US 28.3) — Messages rotatifs du Smart Loader (100% offline, aucune
+// dépendance externe) : dédramatise l'attente pendant l'analyse Stockfish
+// serveur, alternés toutes les 3 s tant que l'overlay reste affiché.
+const SMART_LOADER_MESSAGES = [
+  "Le moteur soupèse chaque case de l'échiquier…",
+  "Calcul des lignes tactiques en cours…",
+  "Le café du serveur infuse pendant que Stockfish réfléchit…",
+  "Recherche du meilleur coup à la profondeur maximale…",
+  "Patience — même Magnus prend le temps de réfléchir…",
+  "Analyse des sacrifices de pièces potentiels…",
+  "Le moteur évite soigneusement les gaffes que vous avez faites…",
+  "Encore quelques coups à passer au crible…",
+];
+
 // EPIC 11 (US 9.1/9.2) — libellés lisibles des error_type du profil comportemental.
 const ERROR_TYPE_LABELS = {
   hanging_piece: "Gaffe sur pièce non protégée",
@@ -377,6 +391,7 @@ class ChessImproverApp {
     document.getElementById("btn-connect")?.addEventListener("click",  () => this._connectUser());
     document.getElementById("username-input")?.addEventListener("keydown", (e) => { if (e.key === "Enter") this._connectUser(); });
     document.getElementById("btn-exercise")?.addEventListener("click", () => this._showExercise());
+    document.getElementById("btn-smart-loader-dismiss")?.addEventListener("click", () => this._hideSmartLoader());
 
     // US 26.3 : Échap ferme toute modale ouverte (auth, profil, thème)
     document.addEventListener("keydown", (e) => {
@@ -384,6 +399,7 @@ class ChessImproverApp {
       if (!document.getElementById("auth-modal")?.hidden)    this._closeAuthModal();
       if (!document.getElementById("profile-modal")?.hidden) this._closeProfileModal();
       if (!document.getElementById("theme-modal")?.hidden)   this._closeThemeModal();
+      if (!document.getElementById("smart-loader-overlay")?.hidden) this._hideSmartLoader();
     });
     document.getElementById("btn-prev")?.addEventListener("click",     () => this.boardMgr.prevMove());
     document.getElementById("btn-next")?.addEventListener("click",     () => this.boardMgr.nextMove());
@@ -1570,16 +1586,21 @@ class ChessImproverApp {
       return;
     }
     this._stopSyncPolling();
-    this.serverGames = games;
-    this._toast("✓ Analyses terminées — vos statistiques sont à jour", "success");
-    // Rafraîchir les vues serveur ouvertes (Stats Avancées + Cimetière + Mes Parties).
-    if (document.body.classList.contains("advstats-active")) this._loadAdvStats();
-    if (document.getElementById("section-library")?.hidden === false) this._renderGamesLibrary();
+    this._onSyncCompleted(games);
   }
 
   _stopSyncPolling() {
     if (this._syncPolling) { clearInterval(this._syncPolling); this._syncPolling = null; }
     this._renderSyncIndicator(0);
+  }
+
+  /** Finalisation commune (EPIC 23 + EPIC 28) une fois toutes les analyses terminées. */
+  _onSyncCompleted(games) {
+    this.serverGames = games;
+    this._toast("✓ Analyses terminées — vos statistiques sont à jour", "success");
+    // Rafraîchir les vues serveur ouvertes (Stats Avancées + Cimetière + Mes Parties).
+    if (document.body.classList.contains("advstats-active")) this._loadAdvStats();
+    if (document.getElementById("section-library")?.hidden === false) this._renderGamesLibrary();
   }
 
   /** Badge discret du header — jamais un toast par partie (règle US 22.1). */
@@ -1629,11 +1650,11 @@ class ChessImproverApp {
       const result = await ApiClient.syncGames();
       const inFlight = (result?.queued || 0) + (result?.requeued || 0);
       if (inFlight) {
-        this._toast(`${inFlight} nouvelle${inFlight > 1 ? "s" : ""} partie${inFlight > 1 ? "s" : ""} en cours d'analyse…`, "info");
         this._renderSyncIndicator(inFlight);
         this._syncPollCount = 0;
         if (this._syncPolling) clearInterval(this._syncPolling);
         this._syncPolling = setInterval(() => this._pollSyncStatus(), 15000);
+        this._showSmartLoader();
       } else {
         this._toast("Aucune nouvelle partie à synchroniser", "info");
       }
@@ -1643,6 +1664,71 @@ class ChessImproverApp {
       if (btn) { btn.disabled = false; btn.textContent = "🔄 Synchroniser"; }
       this._renderGamesLibrary();
     }
+  }
+
+  // ─── EPIC 28 (US 28.2/28.3) : Smart Loader — attente d'analyse Chess.com ──
+
+  /**
+   * Affiche l'overlay plein écran pendant qu'au moins une analyse Chess.com
+   * est en cours côté serveur : progression réelle « Coup X sur Y » (US
+   * 28.1, agrégée sur toutes les parties `processing`) + message rotatif
+   * toutes les 3 s (US 28.3). Dismissible : la synchronisation continue en
+   * arrière-plan (badge + toast existants, EPIC 23) même overlay fermé.
+   */
+  _showSmartLoader() {
+    const overlay = document.getElementById("smart-loader-overlay");
+    if (!overlay) return;
+    overlay.hidden = false;
+    this._setSmartLoaderProgress(0, 0);
+    this._smartLoaderMsgIndex = 0;
+    this._rotateSmartLoaderMessage();
+    if (this._smartLoaderMsgInterval) clearInterval(this._smartLoaderMsgInterval);
+    this._smartLoaderMsgInterval = setInterval(() => this._rotateSmartLoaderMessage(), 3000);
+    if (this._smartLoaderPolling) clearInterval(this._smartLoaderPolling);
+    this._pollSmartLoaderProgress();
+    this._smartLoaderPolling = setInterval(() => this._pollSmartLoaderProgress(), 1500);
+  }
+
+  /** Ferme l'overlay et arrête son polling rapide (la sync de fond continue). */
+  _hideSmartLoader() {
+    const overlay = document.getElementById("smart-loader-overlay");
+    if (overlay) overlay.hidden = true;
+    if (this._smartLoaderPolling) { clearInterval(this._smartLoaderPolling); this._smartLoaderPolling = null; }
+    if (this._smartLoaderMsgInterval) { clearInterval(this._smartLoaderMsgInterval); this._smartLoaderMsgInterval = null; }
+  }
+
+  _rotateSmartLoaderMessage() {
+    const el = document.getElementById("smart-loader-fun");
+    if (!el) return;
+    el.textContent = SMART_LOADER_MESSAGES[this._smartLoaderMsgIndex % SMART_LOADER_MESSAGES.length];
+    this._smartLoaderMsgIndex++;
+  }
+
+  _setSmartLoaderProgress(current, total) {
+    const text = document.getElementById("smart-loader-progress");
+    const bar = document.getElementById("smart-loader-bar-fill");
+    if (text) text.textContent = total > 0 ? `Coup ${current} sur ${total} analysé${current > 1 ? "s" : ""}` : "Préparation de l'analyse…";
+    if (bar) bar.style.width = `${total > 0 ? Math.min(100, Math.round((current / total) * 100)) : 0}%`;
+  }
+
+  /** Agrège la progression réelle (US 28.1) de toutes les parties encore `processing`. */
+  async _pollSmartLoaderProgress() {
+    let games = [];
+    try {
+      games = (await ApiClient.getGames())?.games || [];
+    } catch {
+      return; // erreur passagère : on retentera au prochain tick
+    }
+    const processing = games.filter((g) => g.status === "processing");
+    if (!processing.length) {
+      this._hideSmartLoader();
+      this._stopSyncPolling();
+      this._onSyncCompleted(games);
+      return;
+    }
+    const current = processing.reduce((s, g) => s + (g.progress_current || 0), 0);
+    const total   = processing.reduce((s, g) => s + (g.progress_total   || 0), 0);
+    this._setSmartLoaderProgress(current, total);
   }
 
   /** Extrait le nom de l'adversaire depuis les headers PGN (US 27.3). */

@@ -74,9 +74,18 @@ def run_analysis(
     time_control: Optional[str] = None,
 ) -> None:
     """Analyse une partie et persiste les métriques (bulk), puis met à jour le statut."""
+
+    def _on_progress(current: int, total: int) -> None:
+        # EPIC 28 (US 28.1) — Smart Loader : progression publiée en direct,
+        # best-effort (ne doit jamais interrompre l'analyse elle-même).
+        try:
+            db_client.update_game(game_id, progress_current=current, progress_total=total)
+        except Exception:  # pragma: no cover - garde-fou worker
+            pass
+
     try:
         engine = _select_engine(evals)
-        outcome = analyze_pgn(pgn, engine, time_control)
+        outcome = analyze_pgn(pgn, engine, time_control, on_progress=_on_progress)
         db_client.bulk_insert_moves(game_id, outcome["moves"])
         db_client.update_game(
             game_id,
