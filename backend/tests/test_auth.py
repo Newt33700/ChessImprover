@@ -158,6 +158,12 @@ class TestSignup:
         user = find_user_by_email("iris@ex.com")
         assert user["chess_username"] is None
 
+    def test_signup_response_includes_default_xp_and_level(self):
+        # EPIC 29 (US 29.1) : XP/niveau authoritatifs serveur, 0/1 par défaut.
+        r = client.post("/auth/signup", json={"email": "jules@ex.com", "username": "jules", "password": "pass123"})
+        assert r.json()["user"]["xp"] == 0
+        assert r.json()["user"]["level"] == 1
+
 
 # ── POST /auth/login ──────────────────────────────────────────────────────────
 

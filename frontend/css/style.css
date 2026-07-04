@@ -191,32 +191,38 @@ input, textarea { font-family: inherit; }
   min-width: 0;
 }
 
-.level-badge {
-  font-family: var(--font-data);
-  font-size: 0.68rem;
-  color: var(--gold);
-  white-space: nowrap;
-  background: rgba(246,197,73,0.1);
-  padding: 2px 7px;
-  border-radius: 20px;
-  border: 1px solid rgba(246,197,73,0.2);
-}
-
-.xp-bar-container {
-  width: 72px;
-  height: 3px;
-  background: var(--bg-600);
-  border-radius: 2px;
-  overflow: hidden;
+/* EPIC 29 (US 29.1) — Jauge circulaire XP/Niveau (remplace l'ancienne barre linéaire) */
+.xp-gauge {
+  position: relative;
+  width: 32px;
+  height: 32px;
   flex-shrink: 0;
 }
 
-.xp-bar-fill {
-  height: 100%;
-  background: linear-gradient(90deg, var(--gold-dim), var(--gold));
-  border-radius: 2px;
-  width: 0%;
-  transition: width 600ms ease;
+.xp-gauge-svg { width: 100%; height: 100%; transform: rotate(-90deg); }
+
+.xp-gauge-track { fill: none; stroke: var(--bg-600); stroke-width: 3; }
+
+.xp-gauge-fill {
+  fill: none;
+  stroke: var(--gold);
+  stroke-width: 3;
+  stroke-linecap: round;
+  stroke-dasharray: 97.39; /* 2π × r(15.5) */
+  stroke-dashoffset: 97.39;
+  transition: stroke-dashoffset 600ms ease;
+}
+
+.xp-gauge-level {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-family: var(--font-data);
+  font-size: 0.68rem;
+  font-weight: 700;
+  color: var(--gold);
 }
 
 .xp-label {
@@ -363,6 +369,43 @@ input, textarea { font-family: inherit; }
 .opening-card:hover { border-color: var(--green); }
 .opening-card-board { width: 100%; aspect-ratio: 1 / 1; pointer-events: none; }
 .opening-card-name { font-size: 0.72rem; font-weight: 600; text-align: center; }
+
+/* --------------------------------------------------------------------------
+   Quêtes du jour (EPIC 29, US 29.2)
+-------------------------------------------------------------------------- */
+.quest-row {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: var(--space-sm) 0;
+  border-bottom: 1px solid var(--border);
+}
+.quest-row:last-child { border-bottom: none; }
+.quest-row.is-complete { opacity: 0.7; }
+
+.quest-row-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-sm);
+}
+.quest-label { font-size: 0.82rem; font-weight: 600; }
+.quest-xp { font-size: 0.72rem; color: var(--gold); font-weight: 700; white-space: nowrap; }
+
+.quest-bar-track {
+  width: 100%;
+  height: 5px;
+  border-radius: 3px;
+  background: var(--bg-600);
+  overflow: hidden;
+}
+.quest-bar-fill {
+  height: 100%;
+  background: linear-gradient(90deg, var(--gold-dim), var(--gold));
+  border-radius: 3px;
+  transition: width 400ms ease;
+}
+.quest-progress { font-size: 0.68rem; color: var(--text-muted); align-self: flex-end; }
 
 /* --------------------------------------------------------------------------
    Cards

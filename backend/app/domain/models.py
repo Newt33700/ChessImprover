@@ -85,23 +85,6 @@ class GameAnalysis(BaseModel):
 
 
 # ---------------------------------------------------------------------------
-# Dashboard agrégé
-# ---------------------------------------------------------------------------
-
-class GlobalDashboard(BaseModel):
-    """Vue agrégée des statistiques du joueur."""
-    total_games: int = Field(0, ge=0)
-    average_accuracy: float = Field(0.0, ge=0.0, le=100.0)
-    total_blunders: int = Field(0, ge=0)
-    total_missed_forks: int = Field(0, ge=0)
-    total_time_panics: int = Field(0, ge=0)
-    white_ratio: float = Field(0.5, ge=0.0, le=1.0)
-    black_ratio: float = Field(0.5, ge=0.0, le=1.0)
-    current_streak: int = Field(0, ge=0)
-    total_xp: int = Field(0, ge=0)
-
-
-# ---------------------------------------------------------------------------
 # Carte SRS (répétition espacée SM-2)
 # ---------------------------------------------------------------------------
 
@@ -195,6 +178,8 @@ class UserProfile(BaseModel):
         default_factory=dict,
         description="EPIC 18 — préférences de personnalisation (thème pièces/plateau), JSONB libre",
     )
+    xp: int = Field(0, ge=0, description="EPIC 29 (US 29.1) — XP dans le niveau courant")
+    level: int = Field(1, ge=1, description="EPIC 29 (US 29.1) — niveau authoritatif serveur")
 
 
 class UserSettingsUpdate(BaseModel):
@@ -300,6 +285,26 @@ class GamesSyncResult(BaseModel):
     skipped: int = 0
     deferred: int = 0
     requeued: int = 0
+
+
+# ---------------------------------------------------------------------------
+# Quêtes quotidiennes (EPIC 29, US 29.2)
+# ---------------------------------------------------------------------------
+
+class DailyQuestItem(BaseModel):
+    """Une quête du jour, avec sa progression calculée à la volée (sans état)."""
+    id: str
+    label: str
+    target: int = Field(..., ge=1)
+    progress: int = Field(..., ge=0)
+    xp_reward: int = Field(..., ge=0)
+    completed: bool
+
+
+class DailyQuestsResponse(BaseModel):
+    """Réponse de GET /api/v1/quests/daily."""
+    date: str = Field(..., description="Date UTC du jour (YYYY-MM-DD)")
+    quests: List[DailyQuestItem] = Field(default_factory=list)
 
 
 # ---------------------------------------------------------------------------

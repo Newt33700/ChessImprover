@@ -13,6 +13,7 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
+from app.domain.gamification import apply_xp_gain
 from app.domain.tactical_elo import DEFAULT_TACTICAL_ELO
 from app.domain.tactics import select_nearest_problem
 
@@ -124,9 +125,38 @@ def create_user(email: str, username: str, password_hash: str) -> Dict[str, Any]
         "settings": {},
         "tactical_elo": DEFAULT_TACTICAL_ELO,
         "endgame_elo": DEFAULT_TACTICAL_ELO,
+        "xp": 0,
+        "level": 1,
     }
     _users[user_id] = user
     _user_data[user_id] = {"games": [], "srs_cards": []}
+    return user
+
+
+def get_xp_level(user_id: str) -> Dict[str, int]:
+    """EPIC 29 (US 29.1) — XP/niveau authoritatifs du profil (0/1 par défaut)."""
+    repo = _pg()
+    if repo is not None:  # pragma: no cover - nécessite DATABASE_URL
+        data = repo.get_user_xp(user_id)
+        return data if data is not None else {"xp": 0, "level": 1}
+    user = _users.get(user_id)
+    if user is None:
+        return {"xp": 0, "level": 1}
+    return {"xp": user.get("xp", 0), "level": user.get("level", 1)}
+
+
+def add_xp(user_id: str, amount: int) -> Optional[Dict[str, Any]]:
+    """EPIC 29 (US 29.1) — Ajoute de l'XP et fait monter de niveau si le seuil est atteint."""
+    current = get_xp_level(user_id)
+    result = apply_xp_gain(current["xp"], current["level"], amount)
+    repo = _pg()
+    if repo is not None:  # pragma: no cover - nécessite DATABASE_URL
+        return repo.update_user_xp(user_id, result["xp"], result["level"])
+    user = _users.get(user_id)
+    if user is None:
+        return None
+    user["xp"] = result["xp"]
+    user["level"] = result["level"]
     return user
 
 
@@ -746,6 +776,15 @@ def get_sprint(sprint_id: str) -> Optional[Dict[str, Any]]:
     if repo is not None:  # pragma: no cover - nécessite DATABASE_URL
         return repo.get_sprint(sprint_id)
     return _tactical_sprints.get(sprint_id)
+
+
+def get_sprints_for_user(user_id: str) -> List[Dict[str, Any]]:
+    """EPIC 29 (US 29.2) — Sprints de l'utilisateur, pour dériver la progression
+    de la quête « Terminer un Tactical Sprint » sans nouvelle table dédiée."""
+    repo = _pg()
+    if repo is not None:  # pragma: no cover - nécessite DATABASE_URL
+        return repo.get_sprints_for_user(user_id)
+    return [s for s in _tactical_sprints.values() if s.get("user_id") == user_id]
 
 
 def update_sprint(sprint_id: str, **fields: Any) -> Optional[Dict[str, Any]]:

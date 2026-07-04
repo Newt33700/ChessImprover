@@ -23,7 +23,7 @@ from app.config import settings
 from app.domain.analysis_pipeline import analyze_pgn, build_client_engine, compute_pgn_hash
 from app.domain.cognitive_load import build_decision_fluidity_report, build_time_allocation_report
 from app.domain.error_profile import ERROR_TYPES, detect_error_occurrences, update_frequency_score
-from app.domain import elo_curve, game_sync
+from app.domain import elo_curve, game_sync, gamification
 from app.domain.game_salvage import find_defeat_pivot, reconstruct_position_before_move
 from app.domain.models import (
     AnalyzeAccepted,
@@ -140,6 +140,14 @@ def run_analysis(
                 )
     except Exception:  # pragma: no cover - garde-fou worker
         logger.exception("run_analysis: échec de la génération des flashcards SRS")
+
+    # EPIC 29 (US 29.1) : XP serveur — même garde-fou que les blocs ci-dessus,
+    # ne doit jamais faire échouer l'analyse déjà persistée.
+    try:
+        if user_id:
+            db_client.add_xp(user_id, gamification.XP_PER_ANALYSIS)
+    except Exception:  # pragma: no cover - garde-fou worker
+        logger.exception("run_analysis: échec de l'attribution d'XP")
 
 
 # ---------------------------------------------------------------------------

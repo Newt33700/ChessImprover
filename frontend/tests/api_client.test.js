@@ -266,6 +266,23 @@ describe("getTacticsStats (US 8.4)", () => {
   });
 });
 
+describe("getDailyQuests (EPIC 29, US 29.2)", () => {
+  test("appelle GET /api/v1/quests/daily et renvoie le JSON", async () => {
+    global.fetch = jest.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ date: "2026-07-04", quests: [{ id: "analyze_1", progress: 0, target: 1, completed: false }] }),
+    });
+    const out = await ApiClient.getDailyQuests();
+    expect(global.fetch.mock.calls[0][0]).toBe("/api/v1/quests/daily");
+    expect(out.quests).toHaveLength(1);
+  });
+
+  test("rejette sur HTTP non-ok", async () => {
+    global.fetch = jest.fn().mockResolvedValue({ ok: false, status: 401 });
+    await expect(ApiClient.getDailyQuests()).rejects.toThrow("HTTP 401");
+  });
+});
+
 describe("getErrorProfile (EPIC 11, US 9.1)", () => {
   test("appelle GET /api/v1/error-profile et renvoie le JSON", async () => {
     global.fetch = jest.fn().mockResolvedValue({

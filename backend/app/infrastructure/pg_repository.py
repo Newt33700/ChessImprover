@@ -361,6 +361,12 @@ class PgRepository:
             row = cur.fetchone()
             return self._iso(dict(row)) if row else None
 
+    def get_sprints_for_user(self, user_id: str) -> List[Dict[str, Any]]:  # pragma: no cover
+        """EPIC 29 (US 29.2) — Sprints de l'utilisateur (quête quotidienne)."""
+        with self._connect() as conn, conn.cursor() as cur:
+            cur.execute("SELECT * FROM tactical_sprints WHERE user_id = %s::uuid", (user_id,))
+            return [self._iso(dict(r)) for r in cur.fetchall()]
+
     def update_sprint(
         self, sprint_id: str, **fields: Any
     ) -> Optional[Dict[str, Any]]:  # pragma: no cover - nécessite une base réelle
@@ -528,6 +534,23 @@ class PgRepository:
         sql = f"UPDATE profiles SET {column} = %s WHERE id = %s::uuid RETURNING *"
         with self._connect() as conn, conn.cursor() as cur:
             cur.execute(sql, (new_elo, user_id))
+            row = cur.fetchone()
+            conn.commit()
+        return self._user_row(dict(row) if row else None)
+
+    def get_user_xp(self, user_id: str) -> Optional[Dict[str, int]]:  # pragma: no cover
+        """EPIC 29 (US 29.1) : XP/niveau authoritatifs du profil."""
+        with self._connect() as conn, conn.cursor() as cur:
+            cur.execute("SELECT xp, level FROM profiles WHERE id = %s::uuid", (user_id,))
+            row = cur.fetchone()
+        return {"xp": row["xp"], "level": row["level"]} if row else None
+
+    def update_user_xp(
+        self, user_id: str, xp: int, level: int
+    ) -> Optional[Dict[str, Any]]:  # pragma: no cover - nécessite une base réelle
+        sql = "UPDATE profiles SET xp = %s, level = %s WHERE id = %s::uuid RETURNING *"
+        with self._connect() as conn, conn.cursor() as cur:
+            cur.execute(sql, (xp, level, user_id))
             row = cur.fetchone()
             conn.commit()
         return self._user_row(dict(row) if row else None)

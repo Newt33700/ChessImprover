@@ -39,6 +39,18 @@ const ThemeService = (() => {
   };
   const DEFAULT_BOARD_THEME = "classic";
 
+  //: EPIC 29 (US 29.3) — Cosmétiques débloqués par niveau : réutilise les
+  //: thèmes existants (aucun nouvel asset d'avatar à fabriquer) comme
+  //: catalogue de déblocages. Le thème par défaut de chaque catégorie reste
+  //: au niveau 1 (jamais rien de verrouillé au tout premier lancement).
+  //: Gate purement côté sélection (UI) : `applySettings` continue d'honorer
+  //: n'importe quelle valeur déjà enregistrée, aucun enjeu de sécurité/jeu
+  //: à verrouiller côté serveur un choix purement cosmétique.
+  const UNLOCK_LEVELS = {
+    piece: { cburnett: 1, "cyber-tactics": 3 },
+    board: { classic: 1, slate: 1, ocean: 4, cyber: 7 },
+  };
+
   //: Thème actuellement appliqué (mis à jour par `applySettings`) — permet à
   //: `getPieceThemePath()`/`getBoardColors()` sans argument de refléter le
   //: choix courant de l'utilisateur (utilisé par `board_manager.js` et les
@@ -134,10 +146,21 @@ const ThemeService = (() => {
     return { pieceTheme, boardTheme };
   }
 
+  /** EPIC 29 (US 29.3) — Niveau requis pour débloquer `name` (1 = toujours disponible). */
+  function getUnlockLevel(kind, name) {
+    return UNLOCK_LEVELS[kind]?.[name] ?? 1;
+  }
+
+  /** Vrai si `name` (thème pièces/plateau) est débloqué au niveau `level`. */
+  function isUnlocked(kind, name, level) {
+    return getUnlockLevel(kind, name) <= (level || 1);
+  }
+
   return {
     listPieceThemes, listBoardThemes,
     getPieceThemePath, getBoardColors,
     saveLocalCache, loadLocalCache, applySettings,
+    getUnlockLevel, isUnlocked,
     DEFAULT_PIECE_THEME, DEFAULT_BOARD_THEME,
   };
 })();

@@ -99,6 +99,8 @@
           <option value="cyber">Cyber (slate/cyan)</option>
         </select>
       </div>
+      <!-- EPIC 29 (US 29.3) : cosmétiques débloqués par niveau -->
+      <p class="form-label-hint" id="theme-level-hint"></p>
       <button type="submit" class="btn btn--primary btn--full">Appliquer</button>
     </form>
   </div>
@@ -151,8 +153,14 @@
   <div id="gamification-bar">
     <div id="streak-display" class="streak-badge">🔥 <strong>0</strong></div>
     <div class="xp-block">
-      <span id="level-display" class="level-badge">Niv. 1</span>
-      <div class="xp-bar-container"><div id="xp-bar" class="xp-bar-fill"></div></div>
+      <!-- EPIC 29 (US 29.1) : jauge circulaire (remplace l'ancienne barre linéaire) -->
+      <div class="xp-gauge" id="xp-gauge" title="0 XP">
+        <svg viewBox="0 0 36 36" class="xp-gauge-svg" aria-hidden="true">
+          <circle class="xp-gauge-track" cx="18" cy="18" r="15.5"></circle>
+          <circle class="xp-gauge-fill" id="xp-gauge-fill" cx="18" cy="18" r="15.5"></circle>
+        </svg>
+        <span class="xp-gauge-level" id="level-display">1</span>
+      </div>
       <span id="xp-display" class="xp-label">0 XP</span>
     </div>
   </div>
@@ -190,6 +198,19 @@
 
       <!-- ░░░ LEFT COLUMN ░░░ -->
       <div class="dash-col">
+
+        <!-- QUÊTES DU JOUR (EPIC 29, US 29.2) -->
+        <div class="db-card" id="card-daily-quests">
+          <div class="db-card-head">
+            <div class="db-card-heading">
+              <h2 class="db-card-title">QUÊTES DU JOUR</h2>
+              <p class="db-card-sub">3 missions renouvelées chaque jour</p>
+            </div>
+          </div>
+          <div class="db-card-body" id="db-body-daily-quests">
+            <p class="empty-state">Connectez-vous pour voir vos quêtes du jour.</p>
+          </div>
+        </div>
 
         <!-- REVIEW card -->
         <div class="db-card" id="card-review">

@@ -1476,8 +1476,37 @@ class ChessImproverApp {
     const boardSelect = document.getElementById("theme-board-select");
     if (pieceSelect) pieceSelect.value = current.piece_theme || ThemeService.DEFAULT_PIECE_THEME;
     if (boardSelect) boardSelect.value = current.board_theme || ThemeService.DEFAULT_BOARD_THEME;
+    this._applyThemeUnlockGates(pieceSelect, boardSelect);
     const modal = document.getElementById("theme-modal");
     if (modal) modal.hidden = false;
+  }
+
+  /**
+   * EPIC 29 (US 29.3) — Verrouille (visuellement) les options de thème que le
+   * niveau du joueur ne débloque pas encore. Gate purement côté sélection :
+   * un thème déjà enregistré reste appliqué normalement (`applySettings`) —
+   * aucun enjeu à faire respecter côté serveur un choix cosmétique.
+   */
+  _applyThemeUnlockGates(pieceSelect, boardSelect) {
+    const level = window.Auth?.isLoggedIn() ? (Auth.getUser()?.level || 1) : Infinity;
+    const gate = (select, kind) => {
+      if (!select) return;
+      select.querySelectorAll("option").forEach((opt) => {
+        const required = ThemeService.getUnlockLevel(kind, opt.value);
+        const unlocked = required <= level;
+        opt.disabled = !unlocked;
+        const label = opt.textContent.replace(/ \(🔒 Niveau \d+\)$/, "");
+        opt.textContent = unlocked ? label : `${label} (🔒 Niveau ${required})`;
+      });
+    };
+    gate(pieceSelect, "piece");
+    gate(boardSelect, "board");
+    const hint = document.getElementById("theme-level-hint");
+    if (hint) {
+      hint.textContent = window.Auth?.isLoggedIn()
+        ? `Niveau actuel : ${Auth.getUser()?.level || 1} — de nouveaux cosmétiques se débloquent en progressant.`
+        : "Connectez-vous pour débloquer des cosmétiques en progressant.";
+    }
   }
 
   _closeThemeModal() {
@@ -1490,6 +1519,14 @@ class ChessImproverApp {
     if (!window.ThemeService) return;
     const pieceTheme = document.getElementById("theme-piece-select")?.value;
     const boardTheme = document.getElementById("theme-board-select")?.value;
+
+    // EPIC 29 (US 29.3) : refuse un cosmétique pas encore débloqué au niveau courant.
+    const level = window.Auth?.isLoggedIn() ? (Auth.getUser()?.level || 1) : Infinity;
+    if (!ThemeService.isUnlocked("piece", pieceTheme, level) || !ThemeService.isUnlocked("board", boardTheme, level)) {
+      this._toast("Ce cosmétique n'est pas encore débloqué à votre niveau", "error");
+      return;
+    }
+
     const settings = { ...ThemeService.loadLocalCache(), piece_theme: pieceTheme, board_theme: boardTheme };
 
     const applied = ThemeService.applySettings(settings);
@@ -1536,6 +1573,7 @@ class ChessImproverApp {
     this._renderModulePlaceholders();
     this._applyServerTheme(user);
     this._loadServerGames();
+    this._renderDailyQuests(); // EPIC 29 (US 29.2) : quêtes du jour
     this._startBackgroundSync(); // EPIC 23 : analyse de fond des parties récentes
     // Auto-charger les parties Chess.com si un username est mémorisé
     if (this.username && !this.recentGames.length) {
@@ -1974,6 +2012,44 @@ class ChessImproverApp {
       </div>`;
   }
 
+  /**
+   * EPIC 29 (US 29.2) — Widget « Quêtes du jour » : 3 missions dérivées côté
+   * serveur (sans état, voir `domain.daily_quests`), rafraîchi à chaque
+   * connexion et à chaque retour sur Accueil. Purement informatif pour
+   * l'instant : la récompense affichée n'est pas encore auto-créditée (il
+   * faudrait mémoriser qu'elle l'a déjà été pour éviter un double crédit à
+   * chaque rafraîchissement — non traité dans cette itération).
+   */
+  async _renderDailyQuests() {
+    const container = document.getElementById("db-body-daily-quests");
+    if (!container) return;
+    if (!window.ApiClient || !ApiClient.isConfigured() || !window.Auth?.isLoggedIn()) {
+      container.innerHTML = `<p class="empty-state">Connectez-vous pour voir vos quêtes du jour.</p>`;
+      return;
+    }
+    try {
+      const { quests } = await ApiClient.getDailyQuests();
+      if (!quests?.length) {
+        container.innerHTML = `<p class="empty-state">Aucune quête disponible pour le moment.</p>`;
+        return;
+      }
+      container.innerHTML = quests.map((q) => `
+        <div class="quest-row ${q.completed ? "is-complete" : ""}">
+          <div class="quest-row-head">
+            <span class="quest-label">${q.completed ? "✅" : "🎯"} ${escapeHtml(q.label)}</span>
+            <span class="quest-xp">+${q.xp_reward} XP</span>
+          </div>
+          <div class="quest-bar-track">
+            <div class="quest-bar-fill" style="width:${Math.min(100, (q.progress / q.target) * 100)}%"></div>
+          </div>
+          <span class="quest-progress">${q.progress}/${q.target}</span>
+        </div>
+      `).join("");
+    } catch {
+      container.innerHTML = `<p class="empty-state">Impossible de charger les quêtes pour le moment.</p>`;
+    }
+  }
+
   _renderBilanChart(mode = "progress") {
     const canvas = document.getElementById("bilan-canvas");
     if (!canvas || !window.Chart) return;
@@ -2045,21 +2121,28 @@ class ChessImproverApp {
     this._renderAuthState();
     this._renderBilanChart("progress");
     this._renderExerciseCard();
+    this._renderDailyQuests();
     if (this.recentGames.length) {
       this._renderGamesList(this.recentGames);
       this._renderReviewCard(this.recentGames);
     }
   }
 
+  /** EPIC 29 (US 29.1) : jauge circulaire — anneau SVG (circonférence 97.39 = 2π×15.5). */
   _renderXP(xp, level) {
     const needed = XP_PER_LEVEL(level);
     const pct    = Math.min(100, (xp / needed) * 100);
     const xpEl   = document.getElementById("xp-display");
     const lvlEl  = document.getElementById("level-display");
-    const barEl  = document.getElementById("xp-bar");
+    const gauge  = document.getElementById("xp-gauge");
+    const fillEl = document.getElementById("xp-gauge-fill");
     if (xpEl)  xpEl.textContent  = `${xp} XP`;
-    if (lvlEl) lvlEl.textContent = `Niv. ${level}`;
-    if (barEl) barEl.style.width = `${pct}%`;
+    if (lvlEl) lvlEl.textContent = level;
+    if (gauge) gauge.title = `Niveau ${level} — ${xp}/${needed} XP`;
+    if (fillEl) {
+      const circumference = 97.39;
+      fillEl.style.strokeDashoffset = `${circumference * (1 - pct / 100)}`;
+    }
   }
 
   _renderStreak(streak) {
@@ -2226,6 +2309,7 @@ class ChessImproverApp {
     if (pushState) history.pushState({ view: key }, "", `#!/${key}`);
     if (key === "parties") this._renderGamesLibrary();
     if (key === "stats") this._loadAdvStats();
+    if (key === "accueil") this._renderDailyQuests();
   }
 
   /** Retour (←) des vues plein écran : revient à la dernière destination principale. */

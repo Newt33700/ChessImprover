@@ -143,6 +143,11 @@ const ApiClient = (() => {
     return _json(await fetch(url("/api/v1/tactics/stats"), { headers: _authHeaders() }));
   }
 
+  /** EPIC 29 (US 29.2) — Les 3 quêtes du jour + leur progression réelle. */
+  async function getDailyQuests() {
+    return _json(await fetch(url("/api/v1/quests/daily"), { headers: _authHeaders() }));
+  }
+
   /**
    * Profil d'erreurs comportementales (EPIC 11, US 9.1) : un score de
    * fréquence (0-100) par type d'erreur déjà observé, avec `is_recurring`
@@ -334,6 +339,7 @@ const ApiClient = (() => {
     startSprint, submitSprintAttempt, finishSprint, getGhostReplay,
     getStatsSummary, getStatsHistory, getEloCurve, isConfigured,
     getCognitiveLoad, getFlashcards, getDueFlashcards, reviewFlashcard,
+    getDailyQuests,
   };
 })();
 

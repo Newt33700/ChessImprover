@@ -922,6 +922,16 @@ Carte **PROGRESSION**, première carte de la colonne principale de la vue Stats 
 
 ---
 
+### 3.13 sexies EPIC 29 — Gamification serveur : XP authoritatif, Quêtes, Cosmétiques
+
+**Fichiers :** `domain/gamification.py`, `domain/daily_quests.py`, `routers/quests.py`, migration `20260704150000_profiles_xp_level_epic29.sql` ; `index.html` (`#xp-gauge`, `#card-daily-quests`, sélecteurs de thème), `js/app.js` (`_renderXP`, `_renderDailyQuests`, `_applyThemeUnlockGates`), `js/theme_service.js` (`UNLOCK_LEVELS`)
+
+- **Écart assumé (US 29.1, documenté en détail dans `UserStory.md`)** : le ledger XP serveur (`profiles.xp`/`level`, +50 XP/analyse) est réel et testé, mais la jauge d'en-tête affichée continue de lire l'XP local historique (`XPSystem`, inchangé) plutôt que ce nouveau compteur — migrer les 5 autres actions génératrices d'XP (tactique/finale/sprint/flashcard/ouverture) en une seule passe était hors du périmètre raisonnable de cette itération, et migrer une seule action aurait rendu la jauge visuellement incohérente. La jauge est en revanche devenue **circulaire** (`#xp-gauge`, anneau SVG), la partie visuelle demandée par le PO.
+- **Quêtes quotidiennes (US 29.2)** : `GET /api/v1/quests/daily` — 3 missions dérivées d'un hash déterministe `(date, user_id)` (aucune table `daily_quests`), progression calculée à la volée depuis les parties/tentatives tactiques/sprints du jour. Récompense affichée mais **non auto-créditée** (limite assumée — auto-créditer sans mémoriser le paiement du jour recréditerait à l'infini).
+- **Cosmétiques par niveau (US 29.3)** : réutilise les thèmes de pièces/plateau existants (EPIC 18) comme catalogue de déblocages (`ThemeService.UNLOCK_LEVELS`) — aucun nouvel asset d'avatar fabriqué. Gate côté sélection uniquement (pas d'enjeu serveur pour un choix cosmétique) ; utilisateur anonyme non restreint.
+
+---
+
 ### 3.14 Système XP / Niveaux / Streaks
 
 **Fichier :** `app.js` — `XPSystem`, `StreakSystem`
@@ -934,7 +944,8 @@ Carte **PROGRESSION**, première carte de la colonne principale de la vue Stats 
 
 - Niveau : `XP_PER_LEVEL(n) = n × 100` XP requis
 - Streak : jours consécutifs d'activité, persisté avec date de dernière activité
-- Affichage en-tête : `🔥 N` (streak) + `Niv. X ━━ N XP`
+- Affichage en-tête : `🔥 N` (streak) + jauge circulaire `Niv. X` (anneau SVG, EPIC 29) + `N XP`
+- **Distinct du ledger serveur** (EPIC 29, §3.13 sexies) : ce système reste la source d'affichage pour toutes les actions ; seule l'analyse de partie alimente *en plus*, silencieusement, un compteur serveur séparé (`profiles.xp`/`level`) non encore affiché.
 
 ---
 
@@ -1413,6 +1424,16 @@ Modules **purs** (couche domaine), entièrement testés, indépendants de l'infr
 **Fichiers :** `domain/analysis_pipeline.py` (`analyze_pgn(..., on_progress=None)`), `routers/games.py:run_analysis`, `infrastructure/db_client.py`/`pg_repository.py` (colonnes `progress_current`/`progress_total`), migration `20260704140000_games_progress_epic28.sql`
 
 `analyze_pgn` accepte désormais un callback optionnel `on_progress(current, total)`, invoqué après **chaque coup réellement passé au moteur** (Stockfish natif ou évaluations client). `run_analysis` le persiste à chaque appel sur la ligne `games` correspondante (best-effort, ne fait jamais échouer l'analyse). Paramètre par défaut `None` : aucun changement de comportement pour les appelants existants. Exposé gratuitement via `GET /api/v1/games/{id}` (déjà existant, US 7.1) — pas de nouvelle route. Consommé par le Smart Loader frontend (§3.13 quinquies) pour agréger une progression réelle sur toutes les parties `processing` en cours de synchronisation.
+
+---
+
+### 4.23 EPIC 29 — Gamification serveur : XP authoritatif, Quêtes quotidiennes, Cosmétiques
+
+**Fichiers :** `domain/gamification.py`, `domain/daily_quests.py`, `routers/quests.py` (nouveau, `GET /api/v1/quests/daily`), `routers/games.py:run_analysis` (+50 XP), `infrastructure/db_client.py`/`pg_repository.py` (`xp`/`level`, `get_sprints_for_user`), migration `20260704150000_profiles_xp_level_epic29.sql`
+
+- **XP/Niveau (US 29.1)** : `gamification.apply_xp_gain(xp, level, amount)` (formule identique au client historique, `n × 100`) ; `db_client.add_xp(user_id, amount)` persiste et gère les montées de niveau multiples en un seul gain. `run_analysis` crédite `XP_PER_ANALYSIS = 50` à la complétion (best-effort). `UserProfile` expose `xp`/`level` (visible via `/auth/me`, `/signup`, `/login`).
+- **Quêtes quotidiennes (US 29.2)** : `daily_quests.select_daily_quests(date, user_id)` — tirage déterministe (seed SHA-256) de 3 quêtes parmi un catalogue de 5 (`QUEST_POOL`), **sans aucune table dédiée**. `GET /api/v1/quests/daily` calcule la progression réelle du jour depuis `get_games_for_user`/`get_tactical_attempts`/`get_sprints_for_user` (cette dernière méthode ajoutée à `db_client`/`PgRepository` pour ce besoin). Limite assumée : `xp_reward` est indicatif, non auto-crédité (éviterait un double-crédit sans nouvel état de suivi).
+- **Cosmétiques (US 29.3)** : aucun nouveau code backend — réutilise `profiles.settings` (thème pièces/plateau, EPIC 18) déjà en place ; le seuil de déblocage par niveau est une donnée purement frontend (`ThemeService.UNLOCK_LEVELS`), sans enforcement serveur (choix cosmétique, pas d'enjeu de sécurité/jeu).
 
 ---
 
@@ -1967,6 +1988,9 @@ UNIQUE (user_id)
 | **Bilan Chart dashboard** | `app.js:_renderBilanChart()` | Graphe Progrès/Elo sur les 10 dernières parties |
 | **Sidebar de navigation + Mes Parties** (EPIC 27) | `index.html:.app-shell` + `app.js:_navigateTo/_setActiveView/_renderGamesLibrary/_triggerManualSync/_renderOpeningsGrid` | Remplace l'ancien modal PGN (collage manuel supprimé) : sidebar 4 destinations avec deep-link, bibliothèque Mes Parties (sync Chess.com à la demande, table V/L/½), grille visuelle de 10 ouvertures curatées (mini-échiquiers statiques) |
 | **Smart Loader — progression réelle de la sync Chess.com** (EPIC 28) | `analysis_pipeline.py:on_progress` + `routers/games.py:run_analysis` + `app.js:_showSmartLoader/_pollSmartLoaderProgress` + `index.html:#smart-loader-overlay` | Overlay plein écran dismissible pendant la synchronisation manuelle, barre de progression réelle (`games.progress_current`/`progress_total`, un incrément par coup effectivement analysé) agrégée sur toutes les parties en cours, 8 messages rotatifs (3 s) |
+| **XP serveur (analyse) + jauge circulaire** (EPIC 29, US 29.1) | `domain/gamification.py` + `routers/games.py:run_analysis` + `app.js:_renderXP` + `index.html:#xp-gauge` | +50 XP côté serveur (`profiles.xp`/`level`) crédité à chaque analyse complétée, exposé via `/auth/me` ; jauge d'en-tête devenue un anneau SVG (source d'affichage = XPSystem local, inchangée — écart assumé documenté §3.13 sexies) |
+| **Quêtes quotidiennes** (EPIC 29, US 29.2) | `domain/daily_quests.py` + `routers/quests.py:GET /api/v1/quests/daily` + `app.js:_renderDailyQuests` + `index.html:#card-daily-quests` | 3 missions/jour dérivées sans état (hash `date+user_id`), progression réelle calculée depuis parties/tactiques/sprints du jour ; récompense affichée mais non auto-créditée |
+| **Cosmétiques par niveau** (EPIC 29, US 29.3) | `js/theme_service.js:UNLOCK_LEVELS/getUnlockLevel/isUnlocked` + `app.js:_applyThemeUnlockGates` + `index.html:#theme-level-hint` | Thèmes de pièces/plateau existants (EPIC 18) verrouillés/déverrouillés selon le niveau serveur du joueur, gate côté sélection (pas d'enforcement serveur) |
 | **Mobile / bascule Review** | CSS `body.board-active` | `.dash-grid` masquée / `.board-col` plein écran via classe `body` |
 | **Vue Statistiques Avancées** (US 4.1/4.2) | `advanced_stats.js` + `index.html` + `app.js` | Plein écran `body.advstats-active` : matrice colorée + gauge Héros + deep-dive + tuiles Finales + carte Tactiques (gauge circulaire `successRatio`) + top 3 ouvertures ECO (données réelles via `/stats/summary`, `MOCK_SUMMARY` en secours) |
 | **Validation email + erreurs UI inscription** (US 6.1) | `models.py:UserCreate` + `auth.js:_extractErrorMessage` | Format email validé (regex) en plus de la longueur ; erreurs 422 Pydantic (liste) affichées lisiblement au lieu de `[object Object]` |
@@ -2114,16 +2138,18 @@ Corrigé lors de l'audit : cf. §3 (échappement XSS `app.js`, base API `auth.js
 - **N+1 sur `/stats/summary` et `/stats/cognitive-load`** : une requête `get_moves_for_game` par partie analysée. Négligeable in-memory, mais en PostgreSQL une jointure unique (`game_moves JOIN games ON ... WHERE user_id = ...`) serait préférable dès que le volume de parties croît.
 - ~~**`backend/mutants/`**~~ → **✅ traité (PR de suite de l'audit)** : artefacts mutmut supprimés du dépôt et ajoutés au `.gitignore` (`backend/mutants/`, `.mutmut-cache`) — mutmut les régénère à l'exécution. Le symlink hérité `backend/src → app/domain` (ancien layout, plus référencé nulle part) a également été supprimé.
 
-### 11.14 EPIC 29-30 (Gamification serveur, Saisons) — non commencés cette itération
+### 11.14 EPIC 30 (Moteur de saisons) — non commencé cette itération
 
-La demande PO du 04/07 couvrait 4 EPICs (27 à 30) en une seule salve. Les EPICs 27 (§3.13 quater) et 28 (§3.13 quinquies/§4.22) ont été livrés, testés et documentés ; les deux suivants restent **entièrement à faire**, consignés ici plutôt que déclarés « câblés » à tort :
+La demande PO du 04/07 couvrait 4 EPICs (27 à 30) en une seule salve. Les EPICs 27 (§3.13 quater), 28 (§3.13 quinquies/§4.22) et 29 (§3.13 sexies/§4.23) ont été livrés, testés et documentés ; le dernier reste **entièrement à faire**, consigné ici plutôt que déclaré « câblé » à tort :
 
-- **EPIC 29 — Gamification serveur** : migrer l'XP/Niveau de `localStorage` (`XPSystem`, §3.14) vers des colonnes `profiles.xp`/`level` côté Postgres (+50 XP/analyse, +15 XP/problème résolu), jauge circulaire d'en-tête ; quêtes quotidiennes (probablement dérivées sans état d'une table existante plutôt qu'une nouvelle `daily_quests` mutable, à trancher) ; cosmétiques débloqués par niveau — piste naturelle : réutiliser `ThemeService` (thèmes de pièces/plateau déjà implémentés, EPIC 18, §4.16) comme catalogue de déblocages plutôt que fabriquer de nouveaux assets d'avatar.
-- **EPIC 30 — Moteur de saisons** : `backend/app/config/seasons.json` + endpoint renvoyant l'évènement actif (fenêtre UTC serveur), bandeau compte à rebours + cosmétiques exclusifs teasés. Dépend du catalogue de cosmétiques de l'EPIC 29 — à construire après, pas en parallèle.
+- **EPIC 30 — Moteur de saisons** : `backend/app/config/seasons.json` + endpoint renvoyant l'évènement actif (fenêtre UTC serveur), bandeau compte à rebours + cosmétiques exclusifs teasés. Peut désormais s'appuyer sur le catalogue de cosmétiques de l'EPIC 29 (§3.13 sexies, `ThemeService.UNLOCK_LEVELS`) pour les récompenses saisonnières.
 
-**EPIC 28 — écart assumé documenté** (au lieu d'un chantier non fait) : la demande PO littérale (« différer le rendu de la Review tant que l'analyse n'est pas à 100 % ») ne correspondait à aucun besoin réel de l'architecture — la Review est déjà instantanée (analyse géométrique chess.js côté client, §3.6), jamais bloquée par le serveur. Le Smart Loader a donc été appliqué à l'endroit où l'attente est réelle : la synchronisation Chess.com (§3.13 quinquies), avec une progression **réellement mesurée** (`games.progress_current`/`progress_total`, §4.22) plutôt qu'une barre de progression décorative sur un écran qui n'attend rien.
+**Écarts assumés documentés (au lieu de chantiers non faits) :**
+- **EPIC 28** : la demande PO littérale (« différer le rendu de la Review tant que l'analyse n'est pas à 100 % ») ne correspondait à aucun besoin réel de l'architecture — la Review est déjà instantanée (analyse géométrique chess.js côté client, §3.6), jamais bloquée par le serveur. Le Smart Loader a donc été appliqué à l'endroit où l'attente est réelle : la synchronisation Chess.com (§3.13 quinquies), avec une progression **réellement mesurée** (`games.progress_current`/`progress_total`, §4.22) plutôt qu'une barre de progression décorative sur un écran qui n'attend rien.
+- **EPIC 29 (US 29.1)** : seule l'analyse de partie (+50 XP) alimente le nouveau ledger serveur ; les 5 autres actions génératrices d'XP restent sur le système local historique, et la jauge affichée continue de lire ce système local (inchangé) plutôt que le nouveau compteur serveur — migrer une seule des 6 actions vers le serveur tout en gardant les 5 autres locales aurait rendu la jauge visuellement incohérente selon l'action venant d'être effectuée. Détail complet en §3.13 sexies et `UserStory.md`.
+- **EPIC 29 (US 29.2)** : la récompense XP affichée par quête n'est pas auto-créditée à la complétion (limite assumée de l'approche sans-état — l'auto-créditer sans mémoriser le paiement du jour recréditerait à l'infini à chaque rafraîchissement).
 
-Aucun de ces deux chantiers ne doit apparaître en §8 « ✅ Fonctionnel et câblé » tant qu'il n'est pas implémenté, testé et documenté ici même.
+Aucun de ces chantiers ne doit apparaître en §8 « ✅ Fonctionnel et câblé » au-delà de ce qui est explicitement listé ci-dessus, tant qu'il n'est pas implémenté, testé et documenté ici même.
 
 ---
 
