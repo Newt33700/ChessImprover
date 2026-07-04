@@ -332,6 +332,63 @@ describe("buildEloCurveData (EPIC 24)", () => {
   });
 });
 
+describe("buildEloCurvePoints (repli navigateur — mêmes règles que le backend)", () => {
+  // `now` figé pour des fenêtres déterministes : 10/07/2026 12:00 UTC.
+  const NOW = new Date("2026-07-10T12:00:00Z");
+  const T = (iso) => Math.floor(new Date(iso).getTime() / 1000);
+  const game = (over = {}) => ({
+    time_class: "blitz",
+    end_time: T("2026-07-08T10:00:00Z"),
+    white: { username: "Alice", rating: 1200 },
+    black: { username: "bob", rating: 1100 },
+    ...over,
+  });
+
+  test("un point par jour joué, rating du bon côté", () => {
+    const points = AS.buildEloCurvePoints([game()], "alice", "blitz", 30, NOW);
+    expect(points).toEqual([{ date: "2026-07-08", rating: 1200 }]);
+  });
+
+  test("pseudo insensible à la casse, côté noir aussi", () => {
+    const points = AS.buildEloCurvePoints([game()], "BOB", "blitz", 30, NOW);
+    expect(points).toEqual([{ date: "2026-07-08", rating: 1100 }]);
+  });
+
+  test("filtre par cadence", () => {
+    expect(AS.buildEloCurvePoints([game({ time_class: "rapid" })], "alice", "blitz", 30, NOW)).toEqual([]);
+  });
+
+  test("hors fenêtre temporelle → exclu", () => {
+    const old = game({ end_time: T("2026-05-01T10:00:00Z") });
+    expect(AS.buildEloCurvePoints([old], "alice", "blitz", 30, NOW)).toEqual([]);
+  });
+
+  test("la DERNIÈRE partie du jour donne le rating du jour", () => {
+    const morning = game({ end_time: T("2026-07-08T08:00:00Z"), white: { username: "alice", rating: 1180 } });
+    const evening = game({ end_time: T("2026-07-08T20:00:00Z"), white: { username: "alice", rating: 1230 } });
+    const points = AS.buildEloCurvePoints([evening, morning], "alice", "blitz", 30, NOW);
+    expect(points).toEqual([{ date: "2026-07-08", rating: 1230 }]);
+  });
+
+  test("points triés chronologiquement sur plusieurs jours", () => {
+    const d1 = game({ end_time: T("2026-07-05T10:00:00Z"), white: { username: "alice", rating: 1150 } });
+    const d2 = game({ end_time: T("2026-07-08T10:00:00Z"), white: { username: "alice", rating: 1210 } });
+    const points = AS.buildEloCurvePoints([d2, d1], "alice", "blitz", 30, NOW);
+    expect(points.map((p) => p.date)).toEqual(["2026-07-05", "2026-07-08"]);
+  });
+
+  test("entrées inexploitables ignorées sans planter", () => {
+    const bad = [
+      null,
+      game({ end_time: "not-a-number" }),
+      game({ white: { username: "alice" } }),          // rating absent
+      game({ white: { username: "someone-else" }, black: { username: "other" } }),
+    ];
+    expect(AS.buildEloCurvePoints(bad, "alice", "blitz", 30, NOW)).toEqual([]);
+    expect(AS.buildEloCurvePoints(null, "alice", "blitz", 30, NOW)).toEqual([]);
+  });
+});
+
 describe("fetchEloCurve (EPIC 24)", () => {
   afterEach(() => { delete global.fetch; });
 
