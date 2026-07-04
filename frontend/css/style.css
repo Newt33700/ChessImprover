@@ -2029,6 +2029,11 @@ body.flashcards-active .dash-grid { display: none; }
 body.flashcards-active .board-col { display: none; }
 body.flashcards-active #flashcards-col { display: block; }
 
+/* Exercice SRS (EPIC 26, US 26.1) — page indépendante, réutilise `.tactics-col` */
+body.exercise-active .dash-grid { display: none; }
+body.exercise-active .board-col { display: none; }
+body.exercise-active #exercise-col { display: block; }
+
 .tactics-topbar {
   display: flex;
   align-items: center;

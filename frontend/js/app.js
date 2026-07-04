@@ -327,7 +327,6 @@ class ChessImproverApp {
       (evalData)  => this._onEngineEval(evalData),
     );
     document.addEventListener("review:move",    (e) => this._onReviewMove(e.detail));
-    document.addEventListener("exercise:result",(e) => this._onExerciseResult(e.detail));
     document.addEventListener("ghost:result",   (e) => this._onGhostResult(e.detail));
     document.addEventListener("move:accuracy",  (e) => this._onMoveAccuracy(e.detail));
     document.addEventListener("board:flip",     (e) => this._onBoardFlip(e.detail));
@@ -338,7 +337,16 @@ class ChessImproverApp {
     document.getElementById("btn-connect")?.addEventListener("click",  () => this._connectUser());
     document.getElementById("username-input")?.addEventListener("keydown", (e) => { if (e.key === "Enter") this._connectUser(); });
     document.getElementById("btn-analyze")?.addEventListener("click",  () => this._analyzePGN());
-    document.getElementById("btn-exercise")?.addEventListener("click", () => this._startExercise());
+    document.getElementById("btn-exercise")?.addEventListener("click", () => this._showExercise());
+
+    // US 26.3 : Échap ferme toute modale ouverte (auth, profil, thème, PGN)
+    document.addEventListener("keydown", (e) => {
+      if (e.key !== "Escape") return;
+      if (!document.getElementById("pgn-modal")?.hidden)     this._closePgnModal();
+      if (!document.getElementById("auth-modal")?.hidden)    this._closeAuthModal();
+      if (!document.getElementById("profile-modal")?.hidden) this._closeProfileModal();
+      if (!document.getElementById("theme-modal")?.hidden)   this._closeThemeModal();
+    });
     document.getElementById("btn-prev")?.addEventListener("click",     () => this.boardMgr.prevMove());
     document.getElementById("btn-next")?.addEventListener("click",     () => this.boardMgr.nextMove());
     document.getElementById("btn-flip")?.addEventListener("click",     () => this.boardMgr.flipBoard());
@@ -829,52 +837,174 @@ class ChessImproverApp {
     this._setPlayerClock("b", bClock);
   }
 
-  // ─── Mode Exercice ──────────────────────────────────────────────
+  // ─── Page Exercice SRS (EPIC 26, US 26.1) ────────────────────────
+  // Page plein écran 100 % INDÉPENDANTE de la Review (principe KISS) :
+  // échiquier dédié (chess.js/Chessboard directs, comme le Coach Tactique),
+  // aucune interaction avec le #board partagé ni ses badges/panneaux.
+  // Seul le moteur du BoardManager principal est réutilisé — en « headless »
+  // — pour nuancer la qualité SM-2 d'un échec (US 25.3, quality=3).
 
-  async _startExercise() {
+  async _showExercise() {
+    document.body.classList.add("exercise-active");
     let due = [];
-    if (window.ChessDB) {
-      due = await ChessDB.getDueCards().catch(() => []);
-    }
-    if (!due.length) {
-      due = SRS.getDue(SRS.load());
-    }
-    if (!due.length) { this._toast("✅ Aucune révision aujourd'hui !", "info"); return; }
-    const card = due[0];
-    this._hideBoardPanels();
-    this._showBoardActive();
-    this._setModePill("Exercice");
-
-    // PV peut être un tableau UCI (US 4) ou une chaîne SAN (ancien format)
-    const pv = card.solution;
-    const chess = new Chess();
-    let playerColor = "w";
-    try { chess.load(card.fen); playerColor = chess.turn(); } catch {}
-
-    this.boardMgr.startExercise(card.fen, pv, playerColor);
-    const prompt = document.getElementById("exercise-prompt");
-    if (prompt) { prompt.textContent = "🎯 Trouvez le meilleur coup !"; prompt.hidden = false; }
-    this._currentCard = card;
+    if (window.ChessDB) due = await ChessDB.getDueCards().catch(() => []);
+    if (!due.length) due = SRS.getDue(SRS.load());
+    this._exQueue = due;
+    this._renderExerciseRemaining();
+    this._loadNextSrsCard();
   }
 
-  _onExerciseResult({ correct, played, solution, quality }) {
-    const q = quality !== undefined ? quality : (correct ? 5 : 1);
-    if (correct) {
-      this._toast(q >= 5 ? "✅ Excellent !" : "👍 Bien joué !", "success");
-      const { xp, level } = XPSystem.add(q >= 5 ? XP_PER_EXERCISE : Math.round(XP_PER_EXERCISE / 2));
-      this._renderXP(xp, level);
-      if (this._currentCard) {
-        SRS.saveCard(SRS.review(this._currentCard, q));
-      }
-    } else if (q >= 3) {
-      // US 25.3 (EPIC 25) : coup différent de la solution mais position
-      // toujours avantageuse — SM-2 avance (q=3), sans le crédit XP du succès.
-      this._toast(`👌 Pas la solution (${solution}), mais votre coup reste bon !`, "info");
-      if (this._currentCard) SRS.saveCard(SRS.review(this._currentCard, q));
-    } else {
-      this._toast(`❌ Raté. La solution était ${solution}`, "error");
-      if (this._currentCard) SRS.saveCard(SRS.review(this._currentCard, q));
+  _hideExercise() {
+    document.body.classList.remove("exercise-active");
+  }
+
+  _renderExerciseRemaining() {
+    const badge = document.getElementById("exercise-remaining-badge");
+    if (badge) badge.textContent = `${this._exQueue?.length ?? 0} restante${(this._exQueue?.length ?? 0) > 1 ? "s" : ""}`;
+  }
+
+  /** Affiche la prochaine carte due, ou l'état vide avec actions directes. */
+  _loadNextSrsCard() {
+    const body = document.getElementById("exercise-problem-body");
+    if (!body) return;
+    const card = this._exQueue?.shift();
+    this._renderExerciseRemaining();
+    if (!card) {
+      body.innerHTML = `<div class="empty-state-box">
+        <p class="empty-state">✅ Aucune révision en attente ! Les exercices sont créés automatiquement à partir de vos gaffes.</p>
+        <button class="btn btn--accent btn--sm" onclick="window.app?._openPgnModal()">Analyser une partie</button>
+        <button class="btn btn--secondary btn--sm" onclick="window.app?._hideExercise(); window.app?._showTactics()">Coach Tactique →</button>
+      </div>`;
+      return;
     }
+    body.innerHTML = `
+      <p class="exercise-prompt">🎯 Trouvez le meilleur coup !</p>
+      <div class="tactics-board" id="exercise-board"></div>
+      <p class="tactics-feedback" id="exercise-feedback"></p>
+    `;
+    this._exCard = card;
+    this._exSolved = false;
+    // PV : tableau UCI (US 4) ou chaîne SAN unique (ancien format)
+    this._exPv = Array.isArray(card.solution) ? card.solution : [card.solution];
+    this._exStep = 0;
+    this._exChess = new Chess();
+    try { this._exChess.load(card.fen); } catch { this._loadNextSrsCard(); return; }
+    this._exPlayerColor = this._exChess.turn();
+    this._exBoard = this._createProblemBoard("exercise-board", {
+      position: card.fen,
+      orientation: this._exPlayerColor === "w" ? "white" : "black",
+      onDragStart: (src, piece) => this._onExDragStart(src, piece),
+      onDrop: (src, tgt) => this._onExDrop(src, tgt),
+      onSnapEnd: () => this._exBoard.position(this._exChess.fen()),
+    });
+  }
+
+  _onExDragStart(src, piece) {
+    if (this._exSolved || !this._exChess || this._exChess.game_over()) return false;
+    const turn = this._exChess.turn();
+    if (turn !== this._exPlayerColor) return false;
+    if ((turn === "w" && piece.startsWith("b")) || (turn === "b" && piece.startsWith("w"))) return false;
+    return true;
+  }
+
+  _onExDrop(src, tgt) {
+    if (this._exSolved) return "snapback";
+    const move = this._exChess.move({ from: src, to: tgt, promotion: "q" });
+    if (move === null) return "snapback";
+
+    const expected = this._exPv[this._exStep];
+    const correct = !expected || (window.AnalysisFeedback
+      ? AnalysisFeedback.isExerciseMoveCorrect(expected, move.san, move.from + move.to)
+      : move.san === expected);
+
+    if (!correct) {
+      this._exSolved = true;
+      this._gradeExerciseFail(expected);
+      return undefined;
+    }
+
+    this._exStep++;
+    // Réponse adverse de la PV jouée automatiquement (coups impairs)
+    const reply = this._exPv[this._exStep];
+    if (reply && this._exStep % 2 === 1) {
+      setTimeout(() => {
+        const opp = this._exChess.move(reply)
+          || this._exChess.move({ from: reply.slice(0, 2), to: reply.slice(2, 4), promotion: "q" });
+        if (opp) {
+          this._exBoard.position(this._exChess.fen(), false);
+          this._exStep++;
+        } else {
+          this._finishExercise(true, 5); // PV inapplicable : succès acquis
+        }
+      }, 400);
+      return undefined;
+    }
+    if (this._exStep >= this._exPv.length) {
+      this._exSolved = true;
+      this._finishExercise(true, 5);
+    }
+    return undefined;
+  }
+
+  /**
+   * Échec : qualité nuancée (US 25.3) via le moteur du BoardManager principal
+   * utilisé en headless — quality=3 si le coup joué laisse la position
+   * avantageuse, 1 sinon ou sans évaluation sous 2,5 s.
+   */
+  _gradeExerciseFail(expected) {
+    const fen = this._exChess.fen();
+    const finish = (evaluation) => {
+      const playerEval = window.AnalysisFeedback
+        ? AnalysisFeedback.evalForPlayer(evaluation, fen.split(" ")[1], this._exPlayerColor)
+        : null;
+      const quality = window.AnalysisFeedback
+        ? AnalysisFeedback.exerciseQuality(false, playerEval)
+        : 1;
+      this._finishExercise(false, quality, expected);
+    };
+    const cached = this.boardMgr?.evalCache?.[fen];
+    if (cached && cached.evaluation !== undefined) { finish(cached.evaluation); return; }
+    if (!this.boardMgr?.worker) { finish(null); return; }
+    let settled = false;
+    const handler = (e) => {
+      if (settled || e.detail.fen !== fen) return;
+      settled = true;
+      document.removeEventListener("engine:eval", handler);
+      clearTimeout(timer);
+      finish(e.detail.evaluation);
+    };
+    const timer = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      document.removeEventListener("engine:eval", handler);
+      finish(null);
+    }, 2500);
+    document.addEventListener("engine:eval", handler);
+    this.boardMgr._queueAnalysis(fen);
+  }
+
+  /** Feedback + SM-2 + XP, puis enchaînement automatique sur la carte suivante. */
+  _finishExercise(correct, quality, expected) {
+    const boardEl = document.getElementById("exercise-board");
+    const feedback = document.getElementById("exercise-feedback");
+    const solutionLabel = Array.isArray(this._exCard?.solution)
+      ? (expected || this._exCard.solution[0])
+      : this._exCard?.solution;
+
+    if (correct) {
+      boardEl?.classList.add("tactics-board--success");
+      if (feedback) { feedback.classList.add("tactics-feedback--success"); feedback.textContent = "✅ Excellent !"; }
+      const { xp, level } = XPSystem.add(XP_PER_EXERCISE);
+      this._renderXP(xp, level);
+      StreakSystem.record();
+    } else if (quality >= 3) {
+      if (feedback) { feedback.textContent = `👌 Pas la solution (${solutionLabel}), mais votre coup reste bon !`; }
+    } else {
+      boardEl?.classList.add("tactics-board--error");
+      if (feedback) { feedback.classList.add("tactics-feedback--error"); feedback.textContent = `❌ Raté. La solution était ${solutionLabel}.`; }
+    }
+    if (this._exCard) SRS.saveCard(SRS.review(this._exCard, correct ? 5 : quality));
+    setTimeout(() => this._loadNextSrsCard(), 1600);
   }
 
   // ─── Précision Stockfish ────────────────────────────────────────
@@ -1163,8 +1293,7 @@ class ChessImproverApp {
           </div>`).join("")}
       </div>`;
     document.getElementById("btn-start-puzzle")?.addEventListener("click", () => {
-      this._startExercise();
-      this._showSection("section-board");
+      this._showExercise(); // US 26.1 : page Exercice dédiée, plus de bascule board
     });
   }
 
@@ -1616,7 +1745,7 @@ class ChessImproverApp {
       <div class="exercise-preview-inner">
         <span class="exercise-theme-badge">SRS</span>
         <p class="exercise-preview-label"><strong>${due.length}</strong> révision${due.length > 1 ? "s" : ""} en attente</p>
-        <button class="btn btn--accent btn--full" onclick="window.app?._startExercise()">Résoudre</button>
+        <button class="btn btn--accent btn--full" onclick="window.app?._showExercise()">Résoudre</button>
       </div>`;
   }
 
@@ -2157,6 +2286,29 @@ class ChessImproverApp {
   }
 
   /**
+   * EPIC 26 (US 26.2) — Fabrique COMMUNE des échiquiers de problèmes
+   * (Exercice, Tactique, Cimetière, Finales, Sprint, Ouvertures) : mêmes
+   * options, et surtout un `resize()` après stabilisation du layout —
+   * chessboard.js fige les pièces (cases sans dimension) si le conteneur
+   * n'avait pas encore sa taille finale au moment de la construction, ce qui
+   * arrive quand la vue vient d'être affichée (`display:none → block`).
+   */
+  _createProblemBoard(containerId, { position, orientation, onDragStart, onDrop, onSnapEnd }) {
+    if (typeof Chessboard === "undefined") return null;
+    const board = Chessboard(containerId, {
+      draggable: true,
+      position,
+      orientation,
+      pieceTheme: window.ThemeService ? ThemeService.getPieceThemePath() : "assets/images/pieces/{piece}.svg",
+      onDragStart,
+      onDrop,
+      onSnapEnd,
+    });
+    requestAnimationFrame(() => board.resize());
+    return board;
+  }
+
+  /**
    * Crée un échiquier jouable indépendant du `BoardManager` (pas de moteur
    * Stockfish, pas de couplage au `#board` partagé) pour le problème donné.
    * Utilise chess.js/chessboard.js directement, déjà chargés globalement.
@@ -2164,12 +2316,9 @@ class ChessImproverApp {
   _initTacticsBoard(problem) {
     if (typeof Chess === "undefined" || typeof Chessboard === "undefined") return;
     this._tacticsChess = new Chess(problem.fen);
-    const orientation = this._tacticsChess.turn() === "w" ? "white" : "black";
-    this._tacticsBoard = Chessboard("tactics-board", {
-      draggable: true,
+    this._tacticsBoard = this._createProblemBoard("tactics-board", {
       position: problem.fen,
-      orientation,
-      pieceTheme: window.ThemeService ? ThemeService.getPieceThemePath() : "assets/images/pieces/{piece}.svg",
+      orientation: this._tacticsChess.turn() === "w" ? "white" : "black",
       onDragStart: (src, piece) => this._onTacticsDragStart(src, piece),
       onDrop: (src, tgt) => this._onTacticsDrop(src, tgt),
       onSnapEnd: () => this._tacticsBoard.position(this._tacticsChess.fen()),
@@ -2287,12 +2436,9 @@ class ChessImproverApp {
   _initFlashcardBoard(card) {
     if (typeof Chess === "undefined" || typeof Chessboard === "undefined") return;
     this._flashcardChess = new Chess(card.fen);
-    const orientation = this._flashcardChess.turn() === "w" ? "white" : "black";
-    this._flashcardBoard = Chessboard("flashcards-board", {
-      draggable: true,
+    this._flashcardBoard = this._createProblemBoard("flashcards-board", {
       position: card.fen,
-      orientation,
-      pieceTheme: "assets/images/pieces/{piece}.svg",
+      orientation: this._flashcardChess.turn() === "w" ? "white" : "black",
       onDragStart: (src, piece) => this._onFlashcardDragStart(src, piece),
       onDrop: (src, tgt) => this._onFlashcardDrop(src, tgt),
       onSnapEnd: () => this._flashcardBoard.position(this._flashcardChess.fen()),
@@ -2493,11 +2639,9 @@ class ChessImproverApp {
       <div class="tactics-board" id="ot-board"></div>
       <p class="tactics-feedback" id="ot-feedback"></p>
     `;
-    this._otBoard = Chessboard("ot-board", {
-      draggable: true,
+    this._otBoard = this._createProblemBoard("ot-board", {
       position: "start",
       orientation: line.color,
-      pieceTheme: window.ThemeService ? ThemeService.getPieceThemePath() : "assets/images/pieces/{piece}.svg",
       onDragStart: (src, piece) => this._onOtDragStart(src, piece),
       onDrop: (src, tgt) => this._onOtDrop(src, tgt),
       onSnapEnd: () => this._otBoard.position(this._otChess.fen()),
@@ -2622,12 +2766,9 @@ class ChessImproverApp {
   _initEndgameBoard(problem) {
     if (typeof Chess === "undefined" || typeof Chessboard === "undefined") return;
     this._endgameChess = new Chess(problem.fen);
-    const orientation = this._endgameChess.turn() === "w" ? "white" : "black";
-    this._endgameBoard = Chessboard("endgame-board", {
-      draggable: true,
+    this._endgameBoard = this._createProblemBoard("endgame-board", {
       position: problem.fen,
-      orientation,
-      pieceTheme: window.ThemeService ? ThemeService.getPieceThemePath() : "assets/images/pieces/{piece}.svg",
+      orientation: this._endgameChess.turn() === "w" ? "white" : "black",
       onDragStart: (src, piece) => this._onEndgameDragStart(src, piece),
       onDrop: (src, tgt) => this._onEndgameDrop(src, tgt),
       onSnapEnd: () => this._endgameBoard.position(this._endgameChess.fen()),
@@ -2826,12 +2967,9 @@ class ChessImproverApp {
   _initSprintBoard(problem) {
     if (typeof Chess === "undefined" || typeof Chessboard === "undefined") return;
     this._sprintChess = new Chess(problem.fen);
-    const orientation = this._sprintChess.turn() === "w" ? "white" : "black";
-    this._sprintBoard = Chessboard("sprint-board", {
-      draggable: true,
+    this._sprintBoard = this._createProblemBoard("sprint-board", {
       position: problem.fen,
-      orientation,
-      pieceTheme: window.ThemeService ? ThemeService.getPieceThemePath() : "assets/images/pieces/{piece}.svg",
+      orientation: this._sprintChess.turn() === "w" ? "white" : "black",
       onDragStart: (src, piece) => this._onSprintDragStart(src, piece),
       onDrop: (src, tgt) => this._onSprintDrop(src, tgt),
       onSnapEnd: () => this._sprintBoard.position(this._sprintChess.fen()),

@@ -242,7 +242,8 @@ const PersonalCoach = (() => {
       btn.addEventListener("click", () => {
         const target = btn.dataset.target;
         if (!target) return;
-        if (target === "exercise" && window.app) { window.app._startExercise(); return; }
+        // EPIC 26 (US 26.1) : l'Exercice SRS est une page dédiée désormais
+        if (target === "exercise" && window.app) { window.app._showExercise(); return; }
         if (target === "review"   && window.app?.currentGame) { window.app._enterReviewMode(window.app.currentGame); return; }
         if (target.startsWith("tab-") && window.app) { window.app._switchTab(target); return; }
       });
