@@ -1271,3 +1271,40 @@ Reste à faire, consigné en Backlog (README §11) : migration complète des 5 a
 - Tests : `tap_move.test.js` (20 nouveaux TUs : les 5 issues de `decide` avec toutes les combinaisons d'options, `clearHighlights`, `highlightMoves` — y compris résilience si `chess.moves` lève une exception — et `attach` avec un faux DOM minimal simulant sélection → surbrillance → coup joué/refusé, non-duplication d'écouteur au ré-attachement).
 
 **Validation EPIC 33 :** backend 916/916 pytest (inchangé, aucun fichier backend touché), frontend **405/405 Jest** (20 nouveaux TUs), couverture ≥ 80 % maintenue.
+
+## EPIC 34 : Coach Tactique — fin du « toujours le même exercice », mat en 2 corrigé, puzzles Lichess
+
+**Contexte (retour PO)** : « dans les exercices (mate en 1, mate en 2, pièce sans défenseur) y'a qu'un exercice de proposé, toujours le même par section. […] dans le mate en 2 en fait y'a un mat en 1 avec la dame colonne A directement ça fait mat. […] on avait parlé d'appeler des API Lichess pour récupérer les exercices par thèmes. » Trois bugs/demandes liés par la même cause racine : un pool statique de 5-6 problèmes par catégorie, où un seul est numériquement « le plus proche » de l'Elo tactique — et dont une entrée `mate_in_2` était mal modélisée.
+
+### US 34.1 : Diagnostic — pourquoi toujours le même exercice
+
+**Cause racine confirmée** (`select_nearest_problem`) : la sélection retourne le problème dont l'Elo de difficulté est **le plus proche** de l'Elo tactique du joueur ; avec un pool de 5-6 valeurs bien espacées et un Elo qui bouge peu (±15/tentative, 1000 par défaut), un **unique** problème est presque toujours strictement le plus proche — ex. `mate_in_1` : Elo 800 (le seul ≥ 750) reste le plus proche dès que l'Elo utilisateur dépasse ~775, pour toujours. Aucune notion d'historique ne faisait varier le tirage.
+
+### US 34.2 : Bug du « mat en 2 » — un mat en 1 rejeté à tort
+
+**Diagnostic exact** (vérifié programmatiquement avec python-chess, cf. `tests/test_db_tactics.py`) : les 5 positions `mate_in_2` du seed n'enregistraient que le **premier** coup (un simple échec, ex. `Qd4+`) comme unique `solution` validée côté serveur — alors qu'un mat **immédiat** existe aussi sur la colonne a (`Qa4#`, `Qa5#`, `Qa6#` selon la position). Le joueur qui trouvait ce mat en 1 plus rapide se le voyait injustement refusé (« faux ») puisqu'il ne correspondait pas au SAN unique attendu. Les 5 positions sont bien de véritables études de mat en 2 (réplique noire forcée vérifiée — un seul coup légal après le 1ᵉʳ coup — puis mat effectif), mais le moteur ne validait qu'un seul demi-coup.
+
+**Statut :** ✅ Implémenté :
+- **Moteur multi-coups** (`domain/tactics.py:advance_tactical_attempt`, fonction pure) : une solution est désormais une **séquence** de coups (`solution_sequence` normalise l'ancien format SAN unique en liste à un élément, rétrocompatible à 100 %) — coup du joueur, réplique adverse **auto-jouée** (jamais recalculée : la ligne est déterministe, fournie par la donnée), coup du joueur suivant, etc. `is_correct_move` accepte désormais aussi l'UCI (repli après le SAN) pour les séquences générées.
+- Les 5 entrées `mate_in_2` du seed sont corrigées : `solution` est la séquence complète `[coup1, réplique_forcée, mat]` en UCI, chacune re-vérifiée programmatiquement (réplique noire **unique**, mat effectif) — cf. `_is_forced_mate_in_2` dans `tests/test_db_tactics.py`.
+- **`POST /tactics/attempt`** gère l'état multi-coups via une session éphémère en mémoire (`db_client` : `get_tactical_attempt_session`/`set_tactical_attempt_session`/`clear_tactical_attempt_session`, clé `user_id:problem_id`) : un coup juste mais pas final répond `{success:true, complete:false, opponent_move, fen}` (Elo/série **pas encore** mis à jour) ; le dernier coup répond `complete:true` avec Elo/série comme avant. Un coup faux, à n'importe quelle étape, échoue et réinitialise la session (ré-essayer relance depuis le début).
+- **Frontend (`app.js:_submitTacticsAttempt`)** : sur `complete:false`, la réplique adverse est auto-jouée sur l'échiquier (`this._tacticsChess.move(result.opponent_move)`), le joueur enchaîne sur le **même** problème sans notification d'échec/Elo prématurée ; `_tacticsPlyFen` (nouvelle propriété) retient la position de l'étape en cours pour que la flèche de solution (en cas d'échec en cours de route) parte du bon endroit, pas systématiquement de la position de départ du problème.
+
+### US 34.3 : API Puzzle Lichess comme source primaire (variété + fiabilité)
+
+**Statut :** ✅ Implémenté :
+- **`domain/lichess_puzzles.py`** (module pur) : `angle_for_theme` (mappe `mate_in_1`/`mate_in_2`/`hanging_piece` → `mateIn1`/`mateIn2`/`hangingPiece`, thème Lichess), `replay_pgn_to_ply` (rejoue le PGN de la partie jusqu'à la position du puzzle via python-chess), `parse_puzzle_payload` (traduit la réponse Lichess — `game.pgn` + `puzzle.initialPly`/`solution`/`rating` — en un problème interne : le premier coup de `solution` — celui qui MÈNE au puzzle — est auto-joué pour obtenir le FEN de départ, le reste devient la séquence à résoudre ; `None` sur toute forme inattendue, jamais d'exception).
+- **`infrastructure/lichess_client.py`** (`LichessClient`, calqué sur `ChessComClient`) : `GET https://lichess.org/api/puzzle/next?angle=...`, partagé via le lifespan de `app.main` (fermé proprement à l'arrêt).
+- **`GET /tactics/next`** essaie désormais Lichess **en premier** (des millions de puzzles déjà vérifiés, par thème) ; toute panne (réseau, timeout, réponse inattendue) est loggée (cause réelle, même politique que Chess.com) et déclenche un repli **immédiat** sur le seed local — jamais d'erreur visible côté joueur.
+- **Variété du repli local** (`select_nearest_problem(..., exclude_ids=...)`) : les derniers problèmes servis à l'utilisateur (`db_client.get_recent_tactical_problem_ids`/`record_served_tactical_problem_id`, 4 derniers, en mémoire) sont écartés avant de chercher le plus proche — le pool n'est jamais vidé entièrement par ce filtre (repli sur le pool complet si tout a été récemment servi).
+- Les puzzles Lichess récupérés sont insérés dans le même registre que le seed statique (`db_client.add_lichess_tactical_problem`, cache borné à 200 entrées en FIFO pour ne pas grossir indéfiniment) : `GET /tactics/next`/`POST /tactics/attempt` n'ont rien à distinguer entre seed local et Lichess.
+
+### US 34.4 : Correctif incident — course entre le chargement « Aléatoire » et le clic sur un thème
+
+**Découvert pendant la validation E2E** : `_showTactics()` charge un problème « Aléatoire » dès l'ouverture du Coach Tactique, avant même qu'un thème soit choisi. L'ajout de l'appel Lichess (I/O réseau, même bref) à `GET /tactics/next` a suffisamment allongé le temps de réponse pour rendre visible une course latente : si la requête « Aléatoire » résolvait APRÈS celle du thème choisi par le joueur, elle écrasait silencieusement l'affichage avec le mauvais problème.
+
+**Statut :** ✅ Corrigé : `_loadTacticalProblem` (app.js) porte désormais un jeton de requête monotone (`_tacticsLoadToken`) — la réponse d'une requête devenue obsolète (une requête plus récente a démarré entre-temps) est purement et simplement ignorée, jamais appliquée au DOM/état.
+
+**Hors périmètre (dette technique pré-existante découverte, non corrigée ici)** : les specs E2E `cognitive_flashcards.spec.js` (Cimetière) et `endgames.spec.js` (Finales) attendaient encore l'ancien texte « Coup incorrect. Solution » remplacé par les flèches depuis l'EPIC 32 — jamais mis à jour à l'époque. Signalé au PO plutôt que corrigé silencieusement : hors du périmètre de cette US (Coach Tactique uniquement).
+
+**Validation EPIC 34 :** backend **964/964 pytest** (48 nouveaux : `test_lichess_puzzles.py` 22, `test_tactics.py` +17, `test_tactics_api.py` +9), frontend 405/405 Jest (inchangé — plomberie DOM côté Coach Tactique, sans nouvelle fonction pure), E2E `tactics.spec.js` mis à jour et stabilisé (3/3, 5 exécutions consécutives vérifiées), couverture ≥ 80 % maintenue.
