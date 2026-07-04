@@ -29,6 +29,8 @@ def _to_profile(user: dict) -> UserProfile:
         id=user["id"], email=user["email"], username=user["username"],
         chess_username=user.get("chess_username"),
         settings=user.get("settings") or {},
+        xp=user.get("xp") or 0,
+        level=user.get("level") or 1,
     )
 
 

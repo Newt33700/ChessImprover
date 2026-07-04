@@ -138,3 +138,30 @@ describe("applySettings (US 18.1/18.2/18.3 — résilience)", () => {
     global.document = savedDoc;
   });
 });
+
+describe("getUnlockLevel / isUnlocked (EPIC 29, US 29.3 — cosmétiques par niveau)", () => {
+  test("les thèmes par défaut sont débloqués dès le niveau 1", () => {
+    expect(ThemeService.getUnlockLevel("piece", "cburnett")).toBe(1);
+    expect(ThemeService.getUnlockLevel("board", "classic")).toBe(1);
+  });
+
+  test("un thème avancé requiert un niveau plus élevé", () => {
+    expect(ThemeService.getUnlockLevel("piece", "cyber-tactics")).toBeGreaterThan(1);
+    expect(ThemeService.getUnlockLevel("board", "cyber")).toBeGreaterThan(1);
+  });
+
+  test("un thème inconnu retombe sur le niveau 1 (jamais verrouillé par erreur)", () => {
+    expect(ThemeService.getUnlockLevel("piece", "does-not-exist")).toBe(1);
+  });
+
+  test("isUnlocked vrai quand le niveau du joueur atteint le seuil", () => {
+    const required = ThemeService.getUnlockLevel("piece", "cyber-tactics");
+    expect(ThemeService.isUnlocked("piece", "cyber-tactics", required)).toBe(true);
+    expect(ThemeService.isUnlocked("piece", "cyber-tactics", required - 1)).toBe(false);
+  });
+
+  test("isUnlocked sans niveau fourni traite l'utilisateur comme niveau 1", () => {
+    expect(ThemeService.isUnlocked("piece", "cburnett")).toBe(true);
+    expect(ThemeService.isUnlocked("piece", "cyber-tactics")).toBe(false);
+  });
+});

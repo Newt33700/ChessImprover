@@ -398,6 +398,44 @@ class TestAnalysisProgress:
         assert game["progress_total"] == 0
 
 
+class TestAnalysisXpReward:
+    """EPIC 29 (US 29.1) — +50 XP serveur à la complétion d'une analyse."""
+
+    def test_analysis_awards_fifty_xp(self):
+        token = _signup_and_token()
+        r = client.post(
+            "/api/v1/games/analyze", json={"pgn": PGN, "evals": _evals(PGN)}, headers=_auth(token),
+        )
+        gid = r.json()["accepted"][0]["game_id"]
+        user_id = db_client.get_game(gid)["user_id"]
+        assert db_client.get_xp_level(user_id) == {"xp": 50, "level": 1}
+
+    def test_profile_reflects_updated_xp(self):
+        token = _signup_and_token()
+        client.post(
+            "/api/v1/games/analyze", json={"pgn": PGN, "evals": _evals(PGN)}, headers=_auth(token),
+        )
+        me = client.get("/auth/me", headers=_auth(token))
+        assert me.json()["xp"] == 50
+
+    def test_two_analyses_accumulate_xp_and_level_up(self):
+        # Un 2e PGN distinct (le hash US 7.2 empêcherait toute ré-analyse du même texte).
+        # 2 x 50 XP = 100 = exactement le seuil du niveau 1 -> passage au niveau 2, xp=0.
+        other_pgn = '[Event "y"][Result "1-0"]\n\n1. d4 d5 2. c4 c6 3. Nf3 Nf6 1-0'
+        token = _signup_and_token()
+        client.post(
+            "/api/v1/games/analyze", json={"pgn": PGN, "evals": _evals(PGN)}, headers=_auth(token),
+        )
+        client.post(
+            "/api/v1/games/analyze",
+            json={"pgn": other_pgn, "evals": _evals(other_pgn)},
+            headers=_auth(token),
+        )
+        me = client.get("/auth/me", headers=_auth(token))
+        assert me.json()["xp"] == 0
+        assert me.json()["level"] == 2
+
+
 class TestStatsSummary:
     def test_summary_after_analysis(self):
         token = _signup_and_token()
