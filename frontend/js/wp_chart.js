@@ -21,6 +21,19 @@ const WPChart = (() => {
     return parseFloat(cpToWP(evalCp).toFixed(2));
   }
 
+  /**
+   * EPIC 31 — Libellé de la barre d'évaluation (POC v0) : centipions
+   * (point de vue Blancs) → pions signés à une décimale (« +0.3 »,
+   * « -1.2 »). Évals de mat (|cp| ≥ 10000) → « M » signé ; null → « 0.0 ».
+   */
+  function formatEval(evalCp) {
+    if (evalCp == null || Number.isNaN(evalCp)) return "0.0";
+    if (evalCp >= 10000)  return "+M";
+    if (evalCp <= -10000) return "-M";
+    const pawns = evalCp / 100;
+    return `${pawns >= 0 ? "+" : ""}${pawns.toFixed(1)}`;
+  }
+
   // ── Construire les données depuis game.moves[] ─────────────────────
 
   function buildDataset(moves) {
@@ -155,7 +168,7 @@ const WPChart = (() => {
     if (_chartInstance) { _chartInstance.destroy(); _chartInstance = null; }
   }
 
-  return { cpToWP, evalToWP, buildDataset, render, updateMove, highlightMove, destroy };
+  return { cpToWP, evalToWP, formatEval, buildDataset, render, updateMove, highlightMove, destroy };
 })();
 
 if (typeof window !== "undefined") window.WPChart = WPChart;

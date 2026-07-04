@@ -654,6 +654,7 @@ class ChessImproverApp {
 
     this._showBoardActive();
     this._setModePill("Review");
+    this._updateEvalBar(0); // EPIC 31 : barre neutre en attendant le moteur
     const prompt = document.getElementById("exercise-prompt");
     if (prompt) prompt.hidden = true;
     this._renderMovesList(analysis.moves);
@@ -767,6 +768,10 @@ class ChessImproverApp {
   _onBoardFlip({ flipped }) {
     this._updatePlayerBars(flipped);
     this._updateReviewClocks(this.boardMgr?.reviewIndex ?? -1);
+    // EPIC 31 : les flèches sont en coordonnées plateau → redessin après flip.
+    if (this.boardMgr?.mode === "review") {
+      this._drawReviewArrows(this.boardMgr.reviewIndex);
+    }
   }
 
   _updatePlayerBars(flipped) {
@@ -847,7 +852,7 @@ class ChessImproverApp {
     requestAnimationFrame(() => badge.classList.add("visible"));
   }
 
-  _onReviewMove({ index, move, color }) {
+  _onReviewMove({ index, move }) {
     document.querySelectorAll("[data-move-index]").forEach((el) =>
       el.classList.toggle("active", parseInt(el.dataset.moveIndex) === index));
 
@@ -855,26 +860,154 @@ class ChessImproverApp {
 
     this._showMoveBadge(move?.san, move?.classification, move?.color);
 
-    const info = document.getElementById("move-info");
-    if (!move) { if (info) info.innerHTML = ""; return; }
+    // EPIC 31 (POC v0) : carte commentaire + flèches + barre d'évaluation,
+    // tout sur le même écran — plus d'aller-retours entre vues.
+    this._renderMoveCoachCard(index);
+    this._drawReviewArrows(index);
+    this._updateEvalBarForIndex(index);
 
-    const gameMove = this.currentGame?.moves?.[index];
-    const timeSpent = gameMove?.timeSpent;
-    const timeChip = timeSpent != null
-      ? `<span class="move-time-chip">⏱ &minus;${this._formatClock(timeSpent)}</span>`
-      : "";
+    document.querySelector(`[data-move-index="${index}"]`)?.scrollIntoView({ block: "nearest" });
+  }
+
+  // ─── EPIC 31 : Review pédagogique (retour du POC v0) ────────────────
+
+  /** Meilleur coup connu pour la position AVANT le coup `index` (PV moteur). */
+  _bestMoveForIndex(index) {
+    const moves = this.currentGame?.moves || [];
+    const prevFen = index > 0
+      ? moves[index - 1]?.fen
+      : "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
+    const pv = this.boardMgr?.evalCache?.[prevFen]?.pv || [];
+    if (!prevFen || !pv.length) return null;
+    const uci = pv[0];
+    const san = this._sanFromUci(prevFen, uci);
+    return san ? { san, from: uci.slice(0, 2), to: uci.slice(2, 4) } : null;
+  }
+
+  /**
+   * Carte commentaire du coup (POC v0) : badge de classification + perte en
+   * centipions, coup joué et suggestion moteur en langage humain (SAN en
+   * rappel), explication pédagogique — pour comprendre quoi faire la
+   * prochaine fois. Conserve le chip temps et le bouton Ghost existants.
+   */
+  _renderMoveCoachCard(index) {
+    const info = document.getElementById("move-info");
+    if (!info) return;
+    const move = this.currentGame?.moves?.[index];
+    if (!move) { info.innerHTML = ""; return; }
 
     const cls = move.classification;
-    const isBlunder = cls === "blunder" || cls === "mistake";
-    const ghostBtn = isBlunder
-      ? `<button class="btn btn--sm" style="margin-left:8px;background:var(--bg-500);border:1px solid var(--border);color:var(--text-secondary)"
-           onclick="window.app?._startGhost(${index})">👻 Ghost</button>`
+    const cpLoss = move.cpLoss;
+    const BADGES = {
+      brilliant:  { color: "var(--col-brilliant)",  label: "Brillant" },
+      excellent:  { color: "#5b8dd9",               label: "Excellent" },
+      good:       { color: "var(--col-good)",       label: "Bon coup" },
+      inaccuracy: { color: "var(--col-inaccuracy)", label: "Imprécision" },
+      mistake:    { color: "var(--col-mistake)",    label: "Erreur" },
+      blunder:    { color: "var(--col-blunder)",    label: "Gaffe" },
+      book:       { color: "#8b7355",               label: "Théorie" },
+    };
+    const badgeDef = BADGES[cls];
+    const cpTxt = badgeDef && cls !== "book" && cpLoss != null ? ` · ${Math.round(cpLoss)} cp` : "";
+    const badge = badgeDef
+      ? `<span class="move-coach-badge" style="background:${badgeDef.color}">${badgeDef.label}${cpTxt}</span>`
       : "";
-    const clsLabel = cls && cls !== "unknown" && cls !== "book" ? `<span style="color:${color}">${cls.toUpperCase()}</span> &nbsp;` : "";
-    const accLabel = move.accuracy_score != null ? ` &nbsp;·&nbsp; Précision : ${move.accuracy_score}%` : "";
-    if (info) info.innerHTML =
-      `<div class="move-info-main">${clsLabel}<strong>${move.san}</strong>${accLabel}${ghostBtn}</div>${timeChip}`;
-    document.querySelector(`[data-move-index="${index}"]`)?.scrollIntoView({ block: "nearest" });
+
+    const timeChip = move.timeSpent != null
+      ? `<span class="move-time-chip">⏱ &minus;${this._formatClock(move.timeSpent)}</span>` : "";
+    const ghostBtn = (cls === "blunder" || cls === "mistake")
+      ? `<button class="btn btn--sm" style="background:var(--bg-500);border:1px solid var(--border);color:var(--text-secondary)"
+           onclick="window.app?._startGhost(${index})">👻 Rejouer ce moment</button>`
+      : "";
+    const accLabel = move.accuracy_score != null
+      ? `<span class="move-coach-san">Précision ${move.accuracy_score}%</span>` : "";
+
+    const playedTxt = AnalysisFeedback.describeMoveFr(move.san, move.from, move.to);
+    const playedBlock = playedTxt
+      ? `<div class="move-coach-block move-coach-block--played">
+           <span class="move-coach-label">Votre coup</span>
+           <span class="move-coach-move">${escapeHtml(playedTxt)}<span class="move-coach-san">${escapeHtml(move.san)}</span></span>
+         </div>` : "";
+
+    const best = this._bestMoveForIndex(index);
+    const bestIsPlayed = best
+      && (best.san === move.san || (move.from && best.from === move.from && best.to === move.to));
+    const bestBlock = best && !bestIsPlayed
+      ? `<div class="move-coach-block move-coach-block--best">
+           <span class="move-coach-label">Meilleur coup</span>
+           <span class="move-coach-move">${escapeHtml(AnalysisFeedback.describeMoveFr(best.san, best.from, best.to) || best.san)}<span class="move-coach-san">${escapeHtml(best.san)}</span></span>
+         </div>` : "";
+
+    const explainTxt = bestIsPlayed && (cls === "good" || cls === "excellent" || cls === "brilliant")
+      ? "Vous avez joué le coup recommandé par le moteur ✓"
+      : AnalysisFeedback.explainMoveFr(cls, { isCapture: !!move.san?.includes("x"), cpLoss });
+    const explain = explainTxt ? `<p class="move-coach-explain">${escapeHtml(explainTxt)}</p>` : "";
+
+    info.innerHTML = `
+      <div class="move-info-main">${badge}${accLabel}${ghostBtn}${timeChip}</div>
+      ${playedBlock}${bestBlock}${explain}`;
+  }
+
+  /** Centre d'une case (repère 0-100 du SVG), orientation du plateau comprise. */
+  _squareCenter(sq, flipped) {
+    const f = sq.charCodeAt(0) - 97;
+    const r = parseInt(sq[1], 10) - 1;
+    return { x: ((flipped ? 7 - f : f) + 0.5) * 12.5, y: ((flipped ? r : 7 - r) + 0.5) * 12.5 };
+  }
+
+  /** Flèches du POC v0 : coup joué (orange) + suggestion moteur (verte) si différente. */
+  _drawReviewArrows(index) {
+    const svg = document.getElementById("board-arrows");
+    if (!svg) return;
+    svg.querySelectorAll("line").forEach((l) => l.remove());
+    const move = this.currentGame?.moves?.[index];
+    if (!move?.from || !move?.to || !/^[a-h][1-8]$/.test(move.to)) return;
+    const flipped = this.boardMgr?.flipped || false;
+    const draw = (from, to, color, marker) => {
+      const a = this._squareCenter(from, flipped);
+      const b = this._squareCenter(to, flipped);
+      const line = document.createElementNS("http://www.w3.org/2000/svg", "line");
+      line.setAttribute("x1", a.x); line.setAttribute("y1", a.y);
+      line.setAttribute("x2", b.x); line.setAttribute("y2", b.y);
+      line.setAttribute("stroke", color);
+      line.setAttribute("stroke-width", "2.4");
+      line.setAttribute("stroke-linecap", "round");
+      line.setAttribute("opacity", "0.8");
+      line.setAttribute("marker-end", `url(#${marker})`);
+      svg.appendChild(line);
+    };
+    draw(move.from, move.to, "#e8a33d", "arrow-head-played");
+    const best = this._bestMoveForIndex(index);
+    if (best && !(best.from === move.from && best.to === move.to)) {
+      draw(best.from, best.to, "#81b64c", "arrow-head-best");
+    }
+  }
+
+  /** Barre d'évaluation (POC v0) : part blanche = probabilité de gain des Blancs. */
+  _updateEvalBar(whiteCp) {
+    const fill = document.getElementById("eval-bar-white");
+    const val  = document.getElementById("eval-bar-value");
+    if (!fill || !val || !window.WPChart) return;
+    fill.style.height = `${WPChart.evalToWP(whiteCp)}%`;
+    val.textContent = WPChart.formatEval(whiteCp);
+    // Score affiché dans la zone du camp qui mène (lisible sur son fond).
+    val.classList.toggle("on-white", whiteCp >= 0);
+    val.classList.toggle("on-black", whiteCp < 0);
+  }
+
+  _updateEvalBarForIndex(index) {
+    const m = this.currentGame?.moves?.[index];
+    if (!m) return;
+    let whiteCp = m.evalCp; // déjà point de vue Blancs (stocké par _onMoveAccuracy)
+    if (whiteCp == null && m.fen) {
+      const entry = this.boardMgr?.evalCache?.[m.fen];
+      if (entry?.evaluation !== undefined) {
+        whiteCp = m.fen.split(" ")[1] === "w" ? entry.evaluation : -entry.evaluation;
+      }
+    }
+    // Éval pas encore calculée : on garde la barre en l'état (le moteur la
+    // mettra à jour via engine:eval dès que la position est analysée).
+    if (whiteCp != null) this._updateEvalBar(whiteCp);
   }
 
   _formatClock(secs) {
@@ -1148,10 +1281,14 @@ class ChessImproverApp {
     if (this.boardMgr?.reviewMoves?.[moveIdx]) {
       this.boardMgr.reviewMoves[moveIdx].classification = classification;
     }
-    // Mettre à jour le badge si ce coup est actuellement affiché
+    // Coup actuellement affiché : rafraîchir badge + carte commentaire +
+    // flèches + barre d'éval (EPIC 31) avec les données moteur fraîches.
     if (this.boardMgr?.reviewIndex === moveIdx) {
       const m = this.boardMgr.reviewMoves[moveIdx];
       this._showMoveBadge(m?.san, classification, m?.color);
+      this._renderMoveCoachCard(moveIdx);
+      this._drawReviewArrows(moveIdx);
+      this._updateEvalBarForIndex(moveIdx);
     }
   }
 
@@ -2012,6 +2149,16 @@ class ChessImproverApp {
       el.className = `engine-eval ${cp >= 0 ? "positive" : "negative"}`;
     }
     document.dispatchEvent(new CustomEvent("engine:eval", { detail: { fen, evaluation } }));
+
+    // EPIC 31 : barre d'évaluation — l'éval moteur arrive en différé, on ne
+    // met à jour la barre que si elle concerne la position affichée.
+    if (this.boardMgr?.mode === "review") {
+      const displayedFen = this.boardMgr.reviewMoves?.[this.boardMgr.reviewIndex]?.fen;
+      if (displayedFen && displayedFen === fen) {
+        // L'éval moteur est du point de vue du camp au trait → point de vue Blancs.
+        this._updateEvalBar(fen.split(" ")[1] === "w" ? evaluation : -evaluation);
+      }
+    }
 
     // Mettre à jour la classification du coup correspondant à ce FEN
     if (this.currentGame) {
@@ -3700,6 +3847,14 @@ class ChessImproverApp {
     document.querySelectorAll(".mode-pill").forEach((el) => {
       el.classList.toggle("active", el.textContent.trim() === label);
     });
+    // EPIC 31 : flèches + légende réservées à la Review — hors review
+    // (Ghost, Sauvetage…) on nettoie pour ne pas polluer le plateau jouable.
+    const legend = document.getElementById("arrow-legend");
+    if (legend) legend.hidden = label !== "Review";
+    if (label !== "Review") {
+      document.getElementById("board-arrows")
+        ?.querySelectorAll("line").forEach((l) => l.remove());
+    }
   }
 
   _setLoading(on, msg = "") {

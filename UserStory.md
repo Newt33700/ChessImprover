@@ -1214,3 +1214,34 @@ Reste à faire, consigné en Backlog (README §11) : migration complète des 5 a
 - **Courbe d'Elo — même principe** (le 502 des logs Render) : si `GET /stats/elo-curve` échoue, `_loadEloCurve` récupère les archives mensuelles dans le navigateur (`ChessComClient.getGamesForMonths`, mois couvrant la fenêtre, 404 tolérés) et reconstruit la courbe en JS pur via **`AdvancedStats.buildEloCurvePoints`** — fonction pure répliquant exactement les règles du backend (`domain/elo_curve.build_elo_curve`) : filtre cadence, fenêtre temporelle, pseudo insensible à la casse des deux côtés, DERNIÈRE partie de chaque jour, entrées inexploitables ignorées, ordre chronologique.
 
 **Validation** : backend 916/916 pytest (inchangé), frontend **371/371 Jest** (7 nouveaux TUs sur `buildEloCurvePoints` : rating du bon côté, casse, cadence, fenêtre, dernier du jour, tri, résilience aux entrées corrompues).
+
+## EPIC 31 : Review pédagogique (retour du POC v0) + correctif couleurs mobile
+
+**Contexte (retours PO avec captures)** : (1) sur mobile, les pièces noires s'affichaient en blanc (« pièces blanches des 2 côtés ») et l'échiquier classique virait au bleu sombre ; (2) le POC v0 full-JS avait des éléments plus cohérents avec les habitudes des joueurs — barre d'évaluation verticale noir/blanc avec le score dedans (codes chess.com/lichess), commentaire à chaque coup, proposition du meilleur coup pour « comprendre quoi faire la prochaine fois » — mais éclatés sur des écrans séparés. Directive : intégrer tout ça dans la Review actuelle, sur le même écran.
+
+### US 31.1 : Correctif couleurs mobile (mode nuit forcé)
+
+**Diagnostic** : ni un bug d'assets ni de CSS — les SVG noirs sont corrects. C'est le « mode nuit » forcé de Chrome/Brave Android (auto-dark) qui réécrivait les couleurs de la page : pièces sombres inversées en blanc, cases claires repeintes en bleu sombre. La page ne déclarait pas son thème.
+
+**Statut :** ✅ Implémenté : `<meta name="color-scheme" content="dark">` + `:root { color-scheme: dark }` — la page se déclare nativement sombre, le navigateur n'a plus rien à « forcer » et ne touche plus ni aux pièces ni aux cases.
+
+### US 31.2 : Barre d'évaluation noir/blanc (même écran que le board)
+
+**Statut :** ✅ Implémenté :
+- `#eval-bar` à gauche de l'échiquier de Review (`.board-row` flex) : zone noire en haut, blanche en bas, part blanche = probabilité de gain des Blancs (`WPChart.evalToWP`, formule US 1 réutilisée — aucune nouvelle formule), score en pions affiché DANS la barre côté camp qui mène (`WPChart.formatEval`, nouvelle fonction pure : « +0.3 », « -1.2 », mats « ±M », null → « 0.0 »).
+- Alimentée en temps réel : à chaque navigation (`_updateEvalBarForIndex` — lit `evalCp` déjà stocké ou le cache moteur) et à l'arrivée différée des évals Stockfish (`_onEngineEval`, uniquement si l'éval concerne la position affichée ; conversion trait → point de vue Blancs).
+- Tests : `wp_chart.test.js` (3 nouveaux TUs `formatEval`).
+
+### US 31.3 : Commentaire par coup + meilleur coup (langage humain, POC v0)
+
+**Statut :** ✅ Implémenté :
+- La boîte `#move-info` devient une carte pédagogique : badge de classification en français (« Gaffe · 470 cp », « Bon coup »…), bloc **Votre coup** (bord orange, ex. « Dame f3 → d5 (prise) » + SAN en rappel), bloc **Meilleur coup** (bord vert, depuis la PV Stockfish de la position précédente — déjà en cache, zéro calcul supplémentaire), et une **explication pédagogique** par type d'erreur (ex. gaffe sur une prise : « comptez toute la séquence d'échanges… », l'esprit du POC). Chip temps et bouton 👻 Ghost conservés.
+- Nouvelles fonctions pures dans `analysis_feedback.js` (module 100 % couvert) : `describeMoveFr(san, from, to)` (pièces en français, roques, promotions, prises, repli sans cases) et `explainMoveFr(classification, {isCapture, cpLoss})` (texte par classification, perte chiffrée en pions, null si classification inconnue). Si le joueur a joué le coup du moteur : « Vous avez joué le coup recommandé ✓ » au lieu d'une suggestion redondante.
+- La carte se rafraîchit quand les évals moteur arrivent en différé (`_onMoveAccuracy` sur le coup affiché).
+- Tests : `analysis_feedback.test.js` (11 nouveaux TUs).
+
+### US 31.4 : Flèches coup joué / suggestion moteur sur l'échiquier
+
+**Statut :** ✅ Implémenté : overlay SVG `#board-arrows` au-dessus du plateau (mêmes coordonnées en % que le badge de coup existant, orientation/flip gérés) — flèche orange = coup joué, flèche verte = suggestion moteur (masquée si identique au coup joué), légende sous le plateau. Redessinées à chaque navigation, au flip, et à l'arrivée des évals ; nettoyées hors mode Review (Ghost/Sauvetage) via `_setModePill`.
+
+**Validation EPIC 31 :** backend 916/916 pytest (inchangé, aucun fichier backend touché), frontend **385/385 Jest** (14 nouveaux TUs), couverture ≥ 80 % maintenue.
