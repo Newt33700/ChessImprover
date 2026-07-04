@@ -247,9 +247,13 @@ async def sync_games(
         raw_games = await client.get_latest_games(
             chess_username, limit=game_sync.FETCH_LAST_GAMES
         )
-    except Exception:
+    except Exception as exc:
         # Chess.com injoignable : pas de sync ce coup-ci, sans fuite du détail
         # interne (même politique que routes /games/{username} de app.main).
+        # La cause réelle est loggée côté serveur : indispensable pour
+        # diagnostiquer un blocage Cloudflare des IP datacenter (403) vs. un
+        # simple timeout — invisible dans un 502 générique.
+        logger.warning("games/sync: Chess.com injoignable pour %r : %r", chess_username, exc)
         raise HTTPException(
             status_code=502, detail="Chess.com est indisponible pour le moment."
         )
@@ -437,7 +441,10 @@ async def stats_elo_curve(
         raw_games = await client.get_games_for_months(
             chess_username, elo_curve.months_covering(now, days)
         )
-    except Exception:
+    except Exception as exc:
+        # Même politique de log que games/sync : cause réelle côté serveur,
+        # 502 générique côté client.
+        logger.warning("stats/elo-curve: Chess.com injoignable pour %r : %r", chess_username, exc)
         raise HTTPException(
             status_code=502, detail="Chess.com est indisponible pour le moment."
         )
