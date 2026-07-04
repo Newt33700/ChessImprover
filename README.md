@@ -932,6 +932,17 @@ Carte **PROGRESSION**, première carte de la colonne principale de la vue Stats 
 
 ---
 
+### 3.13 septies EPIC 30 — Moteur de saisons (bandeau FOMO)
+
+**Fichiers :** `domain/seasons.py`, `app/data/seasons.json`, `routers/seasons.py` (`GET /api/v1/seasons/active`, public) ; `index.html:#season-banner`, `js/app.js` (`_loadActiveSeason`/`_renderSeasonBanner`/`_updateSeasonCountdown`)
+
+- **Écart assumé (chemin du fichier)** : `app/config.py` est déjà un module — un paquet `config/` du même nom entrerait en conflit d'import. Le catalogue vit dans `app/data/seasons.json` (documenté dans `domain/seasons.py`).
+- `get_active_season(seasons, now)` (module pur, testable sans dépendre de la date réelle) sélectionne l'évènement dont la fenêtre `[start, end]` couvre l'instant UTC courant ; entrées malformées ignorées plutôt que de faire planter la sélection.
+- Endpoint **public** (aucun JWT requis — donnée non liée à un utilisateur) chargé une fois au boot frontend, avant même toute connexion. Bandeau plein largeur avec message + tease du cosmétique exclusif de la saison (référence un thème déjà implémenté, EPIC 18/29) + compte à rebours live (`setInterval` 1 s), masqué automatiquement à expiration.
+- Catalogue d'exemple : 1 saison « Halloween Chess » (15/10 → 05/11) — ajouter une saison = ajouter une entrée JSON, aucun code à modifier.
+
+---
+
 ### 3.14 Système XP / Niveaux / Streaks
 
 **Fichier :** `app.js` — `XPSystem`, `StreakSystem`
@@ -1434,6 +1445,14 @@ Modules **purs** (couche domaine), entièrement testés, indépendants de l'infr
 - **XP/Niveau (US 29.1)** : `gamification.apply_xp_gain(xp, level, amount)` (formule identique au client historique, `n × 100`) ; `db_client.add_xp(user_id, amount)` persiste et gère les montées de niveau multiples en un seul gain. `run_analysis` crédite `XP_PER_ANALYSIS = 50` à la complétion (best-effort). `UserProfile` expose `xp`/`level` (visible via `/auth/me`, `/signup`, `/login`).
 - **Quêtes quotidiennes (US 29.2)** : `daily_quests.select_daily_quests(date, user_id)` — tirage déterministe (seed SHA-256) de 3 quêtes parmi un catalogue de 5 (`QUEST_POOL`), **sans aucune table dédiée**. `GET /api/v1/quests/daily` calcule la progression réelle du jour depuis `get_games_for_user`/`get_tactical_attempts`/`get_sprints_for_user` (cette dernière méthode ajoutée à `db_client`/`PgRepository` pour ce besoin). Limite assumée : `xp_reward` est indicatif, non auto-crédité (éviterait un double-crédit sans nouvel état de suivi).
 - **Cosmétiques (US 29.3)** : aucun nouveau code backend — réutilise `profiles.settings` (thème pièces/plateau, EPIC 18) déjà en place ; le seuil de déblocage par niveau est une donnée purement frontend (`ThemeService.UNLOCK_LEVELS`), sans enforcement serveur (choix cosmétique, pas d'enjeu de sécurité/jeu).
+
+---
+
+### 4.24 EPIC 30 — Moteur de saisons
+
+**Fichiers :** `domain/seasons.py`, `app/data/seasons.json` (écart de chemin assumé vs. `app/config/` — cf. §11.14), `routers/seasons.py` (nouveau, `GET /api/v1/seasons/active`, public)
+
+`get_active_season(seasons, now)` (module pur) sélectionne la première saison dont la fenêtre `[start, end]` (ISO 8601, timezone-aware) couvre l'instant fourni — jamais `datetime.now()` en interne, entièrement testable sans dépendre de la date réelle. `load_seasons()` lit `app/data/seasons.json` (absent/invalide → liste vide, jamais d'exception). L'endpoint est **public** (pas de `Depends(get_current_user_id)`) : la donnée n'est liée à aucun utilisateur, et la bannière FOMO doit s'afficher avant même la connexion. `SeasonPublic` n'expose jamais `start` (inutile côté client).
 
 ---
 
@@ -1991,6 +2010,7 @@ UNIQUE (user_id)
 | **XP serveur (analyse) + jauge circulaire** (EPIC 29, US 29.1) | `domain/gamification.py` + `routers/games.py:run_analysis` + `app.js:_renderXP` + `index.html:#xp-gauge` | +50 XP côté serveur (`profiles.xp`/`level`) crédité à chaque analyse complétée, exposé via `/auth/me` ; jauge d'en-tête devenue un anneau SVG (source d'affichage = XPSystem local, inchangée — écart assumé documenté §3.13 sexies) |
 | **Quêtes quotidiennes** (EPIC 29, US 29.2) | `domain/daily_quests.py` + `routers/quests.py:GET /api/v1/quests/daily` + `app.js:_renderDailyQuests` + `index.html:#card-daily-quests` | 3 missions/jour dérivées sans état (hash `date+user_id`), progression réelle calculée depuis parties/tactiques/sprints du jour ; récompense affichée mais non auto-créditée |
 | **Cosmétiques par niveau** (EPIC 29, US 29.3) | `js/theme_service.js:UNLOCK_LEVELS/getUnlockLevel/isUnlocked` + `app.js:_applyThemeUnlockGates` + `index.html:#theme-level-hint` | Thèmes de pièces/plateau existants (EPIC 18) verrouillés/déverrouillés selon le niveau serveur du joueur, gate côté sélection (pas d'enforcement serveur) |
+| **Moteur de saisons — bandeau FOMO** (EPIC 30) | `domain/seasons.py` + `routers/seasons.py:GET /api/v1/seasons/active` (public) + `app.js:_loadActiveSeason/_updateSeasonCountdown` + `index.html:#season-banner` | Catalogue statique (`app/data/seasons.json`) chargé au boot frontend, bandeau avec compte à rebours live + tease d'un cosmétique existant, masqué hors fenêtre de la saison |
 | **Mobile / bascule Review** | CSS `body.board-active` | `.dash-grid` masquée / `.board-col` plein écran via classe `body` |
 | **Vue Statistiques Avancées** (US 4.1/4.2) | `advanced_stats.js` + `index.html` + `app.js` | Plein écran `body.advstats-active` : matrice colorée + gauge Héros + deep-dive + tuiles Finales + carte Tactiques (gauge circulaire `successRatio`) + top 3 ouvertures ECO (données réelles via `/stats/summary`, `MOCK_SUMMARY` en secours) |
 | **Validation email + erreurs UI inscription** (US 6.1) | `models.py:UserCreate` + `auth.js:_extractErrorMessage` | Format email validé (regex) en plus de la longueur ; erreurs 422 Pydantic (liste) affichées lisiblement au lieu de `[object Object]` |
@@ -2138,18 +2158,18 @@ Corrigé lors de l'audit : cf. §3 (échappement XSS `app.js`, base API `auth.js
 - **N+1 sur `/stats/summary` et `/stats/cognitive-load`** : une requête `get_moves_for_game` par partie analysée. Négligeable in-memory, mais en PostgreSQL une jointure unique (`game_moves JOIN games ON ... WHERE user_id = ...`) serait préférable dès que le volume de parties croît.
 - ~~**`backend/mutants/`**~~ → **✅ traité (PR de suite de l'audit)** : artefacts mutmut supprimés du dépôt et ajoutés au `.gitignore` (`backend/mutants/`, `.mutmut-cache`) — mutmut les régénère à l'exécution. Le symlink hérité `backend/src → app/domain` (ancien layout, plus référencé nulle part) a également été supprimé.
 
-### 11.14 EPIC 30 (Moteur de saisons) — non commencé cette itération
+### 11.14 Bilan de la salve EPIC 27-30 — écarts assumés documentés
 
-La demande PO du 04/07 couvrait 4 EPICs (27 à 30) en une seule salve. Les EPICs 27 (§3.13 quater), 28 (§3.13 quinquies/§4.22) et 29 (§3.13 sexies/§4.23) ont été livrés, testés et documentés ; le dernier reste **entièrement à faire**, consigné ici plutôt que déclaré « câblé » à tort :
+La demande PO du 04/07 couvrait 4 EPICs (27 à 30) en une seule salve. **Les 4 ont été livrés, testés (backend 916/916 pytest, frontend 364/364 Jest) et documentés** (§3.13 quater/quinquies/sexies/septies, §4.22/4.23/4.24). Aucun chantier de cette salve ne reste à l'état « non commencé ». Plusieurs écarts assumés ont été pris par rapport à la demande littérale — consignés ici plutôt que silencieusement :
 
-- **EPIC 30 — Moteur de saisons** : `backend/app/config/seasons.json` + endpoint renvoyant l'évènement actif (fenêtre UTC serveur), bandeau compte à rebours + cosmétiques exclusifs teasés. Peut désormais s'appuyer sur le catalogue de cosmétiques de l'EPIC 29 (§3.13 sexies, `ThemeService.UNLOCK_LEVELS`) pour les récompenses saisonnières.
-
-**Écarts assumés documentés (au lieu de chantiers non faits) :**
 - **EPIC 28** : la demande PO littérale (« différer le rendu de la Review tant que l'analyse n'est pas à 100 % ») ne correspondait à aucun besoin réel de l'architecture — la Review est déjà instantanée (analyse géométrique chess.js côté client, §3.6), jamais bloquée par le serveur. Le Smart Loader a donc été appliqué à l'endroit où l'attente est réelle : la synchronisation Chess.com (§3.13 quinquies), avec une progression **réellement mesurée** (`games.progress_current`/`progress_total`, §4.22) plutôt qu'une barre de progression décorative sur un écran qui n'attend rien.
 - **EPIC 29 (US 29.1)** : seule l'analyse de partie (+50 XP) alimente le nouveau ledger serveur ; les 5 autres actions génératrices d'XP restent sur le système local historique, et la jauge affichée continue de lire ce système local (inchangé) plutôt que le nouveau compteur serveur — migrer une seule des 6 actions vers le serveur tout en gardant les 5 autres locales aurait rendu la jauge visuellement incohérente selon l'action venant d'être effectuée. Détail complet en §3.13 sexies et `UserStory.md`.
 - **EPIC 29 (US 29.2)** : la récompense XP affichée par quête n'est pas auto-créditée à la complétion (limite assumée de l'approche sans-état — l'auto-créditer sans mémoriser le paiement du jour recréditerait à l'infini à chaque rafraîchissement).
+- **EPIC 30** : catalogue déplacé de `backend/app/config/seasons.json` (demandé) vers `backend/app/data/seasons.json` — `app/config.py` existe déjà en tant que module Python, un paquet `config/` homonyme provoquerait un conflit d'import.
 
-Aucun de ces chantiers ne doit apparaître en §8 « ✅ Fonctionnel et câblé » au-delà de ce qui est explicitement listé ci-dessus, tant qu'il n'est pas implémenté, testé et documenté ici même.
+**Reste identifié pour une itération future** (non traité ici, cf. `UserStory.md` bilan de salve) : migration complète des 5 actions XP restantes vers le serveur + bascule de la jauge sur cette source ; mécanisme de suivi de paiement journalier pour auto-créditer les quêtes ; évènements saisonniers additionnels au-delà de l'exemple Halloween (le moteur est générique, ajouter une saison = ajouter une entrée JSON, zéro code).
+
+Aucun de ces points ne doit apparaître en §8 « ✅ Fonctionnel et câblé » au-delà de ce qui y est déjà explicitement listé, tant qu'il n'est pas implémenté, testé et documenté ici même.
 
 ---
 

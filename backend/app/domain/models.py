@@ -308,6 +308,27 @@ class DailyQuestsResponse(BaseModel):
 
 
 # ---------------------------------------------------------------------------
+# Moteur de saisons (EPIC 30)
+# ---------------------------------------------------------------------------
+
+class SeasonPublic(BaseModel):
+    """Évènement saisonnier tel qu'exposé au client."""
+    id: str
+    name: str
+    end: str
+    banner_message: str
+    cosmetic_piece_theme: Optional[str] = None
+    cosmetic_board_theme: Optional[str] = None
+
+
+class ActiveSeasonResponse(BaseModel):
+    """Réponse de GET /api/v1/seasons/active."""
+    active: bool
+    season: Optional[SeasonPublic] = None
+    seconds_remaining: int = 0
+
+
+# ---------------------------------------------------------------------------
 # Coaching Tactique Adaptatif (US 8.1, EPIC 8)
 # ---------------------------------------------------------------------------
 

@@ -148,6 +148,11 @@ const ApiClient = (() => {
     return _json(await fetch(url("/api/v1/quests/daily"), { headers: _authHeaders() }));
   }
 
+  /** EPIC 30 — Évènement saisonnier actif (public, aucune auth requise). */
+  async function getActiveSeason() {
+    return _json(await fetch(url("/api/v1/seasons/active")));
+  }
+
   /**
    * Profil d'erreurs comportementales (EPIC 11, US 9.1) : un score de
    * fréquence (0-100) par type d'erreur déjà observé, avec `is_recurring`
@@ -339,7 +344,7 @@ const ApiClient = (() => {
     startSprint, submitSprintAttempt, finishSprint, getGhostReplay,
     getStatsSummary, getStatsHistory, getEloCurve, isConfigured,
     getCognitiveLoad, getFlashcards, getDueFlashcards, reviewFlashcard,
-    getDailyQuests,
+    getDailyQuests, getActiveSeason,
   };
 })();
 

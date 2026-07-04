@@ -1,0 +1,11 @@
+[
+  {
+    "id": "halloween",
+    "name": "Halloween Chess",
+    "start": "2026-10-15T00:00:00+00:00",
+    "end": "2026-11-05T23:59:59+00:00",
+    "banner_message": "🎃 Événement Halloween — cosmétiques exclusifs à débloquer !",
+    "cosmetic_piece_theme": "cyber-tactics",
+    "cosmetic_board_theme": "cyber"
+  }
+]
