@@ -206,3 +206,34 @@ class TestTimeSpentSeconds:
         out = analyze_pgn(CLOCK_PGN, time_control="600+5")
         # incrément 5s retranché : 20s de chute d'horloge + 5s d'incrément = 25s réels
         assert out["moves"][2]["time_spent_seconds"] == 25.0
+
+
+class TestOnProgressCallback:
+    """EPIC 28 (US 28.1) — progression coup-par-coup pour le Smart Loader."""
+
+    def test_called_once_per_move(self):
+        calls = []
+        analyze_pgn(PGN, on_progress=lambda current, total: calls.append((current, total)))
+        assert len(calls) == 6  # PGN = 6 demi-coups (e4 e5 Nf3 Nc6 Bb5 a6)
+
+    def test_current_increments_from_one_to_total(self):
+        calls = []
+        analyze_pgn(PGN, on_progress=lambda current, total: calls.append((current, total)))
+        assert [c for c, _ in calls] == [1, 2, 3, 4, 5, 6]
+        assert all(total == 6 for _, total in calls)
+
+    def test_last_call_current_equals_total(self):
+        calls = []
+        analyze_pgn(PGN, on_progress=lambda current, total: calls.append((current, total)))
+        last_current, last_total = calls[-1]
+        assert last_current == last_total
+
+    def test_no_callback_by_default_does_not_raise(self):
+        # Comportement par défaut inchangé (aucun appelant existant ne casse).
+        out = analyze_pgn(PGN)
+        assert len(out["moves"]) == 6
+
+    def test_empty_pgn_never_calls_callback(self):
+        calls = []
+        analyze_pgn("not a pgn", on_progress=lambda current, total: calls.append((current, total)))
+        assert calls == []

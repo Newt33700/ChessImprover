@@ -78,6 +78,19 @@ class TestGames:
         with pytest.raises(ValueError):
             db_client.update_game(g["id"], user_id="autre-utilisateur")
 
+    def test_create_game_starts_progress_at_zero(self):
+        # EPIC 28 (US 28.1) : progression coup-par-coup pour le Smart Loader.
+        g = db_client.create_game(pgn="x")
+        assert g["progress_current"] == 0
+        assert g["progress_total"] == 0
+
+    def test_update_game_accepts_progress_fields(self):
+        g = db_client.create_game(pgn="x")
+        db_client.update_game(g["id"], progress_current=3, progress_total=10)
+        updated = db_client.get_game(g["id"])
+        assert updated["progress_current"] == 3
+        assert updated["progress_total"] == 10
+
     def test_completed_games_filter(self):
         g1 = db_client.create_game(pgn="a", user_id="u1")
         db_client.create_game(pgn="b", user_id="u1")  # reste processing

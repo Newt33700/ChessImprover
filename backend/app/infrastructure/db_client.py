@@ -246,6 +246,8 @@ def create_game(
         "status": status,
         "pgn_hash": pgn_hash,
         "is_reviewed": False,
+        "progress_current": 0,
+        "progress_total": 0,
         "created_at": datetime.now(timezone.utc).isoformat(),
     }
     _games[game_id] = game
@@ -283,7 +285,11 @@ def get_games_for_user(user_id: Optional[str]) -> List[Dict[str, Any]]:
 # pas paramétrables dans une requête — seule une liste blanche protège
 # l'interpolation faite par PgRepository.update_game).
 GAME_UPDATABLE_FIELDS = frozenset(
-    {"status", "result", "eco", "opening_name", "pivot_move_index", "is_reviewed"}
+    {
+        "status", "result", "eco", "opening_name", "pivot_move_index", "is_reviewed",
+        # EPIC 28 (US 28.1) : progression coup-par-coup pendant l'analyse (Smart Loader).
+        "progress_current", "progress_total",
+    }
 )
 
 # Idem pour `tactical_sprints` (PgRepository.update_sprint).

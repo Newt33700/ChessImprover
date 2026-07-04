@@ -911,6 +911,17 @@ Carte **PROGRESSION**, première carte de la colonne principale de la vue Stats 
 
 ---
 
+### 3.13 quinquies EPIC 28 — Smart Loader (progression réelle de l'analyse Chess.com)
+
+**Fichiers :** `index.html` (`#smart-loader-overlay`), `js/app.js` (`_showSmartLoader`/`_pollSmartLoaderProgress`/`_onSyncCompleted`), `css/style.css` ; backend `domain/analysis_pipeline.py` (`on_progress`), `routers/games.py:run_analysis`, `infrastructure/db_client.py`/`pg_repository.py`, migration `20260704140000_games_progress_epic28.sql`
+
+- **Écart assumé vs. la demande PO** (documenté en détail dans `UserStory.md`, EPIC 28) : la Review reste **instantanée** (elle ne dépend jamais de l'analyse serveur, cf. §3.6) — le Smart Loader s'applique là où l'attente est réelle : la synchronisation Chess.com (EPIC 23/27.2). Endpoint : réutilisation de `GET /api/v1/games/{id}` (déjà existant) plutôt qu'une nouvelle route dédiée.
+- **Progression réelle** (`games.progress_current`/`progress_total`) : `analyze_pgn` accepte un callback `on_progress(current, total)` invoqué après chaque coup effectivement analysé par le moteur ; `run_analysis` le persiste en base à chaque appel (best-effort). Paramètre optionnel, par défaut `None` — zéro régression sur les appelants existants.
+- **Overlay plein écran** (`#smart-loader-overlay`, dismissible via bouton ou Échap) affiché par `_triggerManualSync()` : barre de progression + texte « Coup X sur Y analysés » agrégés sur toutes les parties `processing` (poll 1,5 s), 8 messages rotatifs toutes les 3 s (100 % statiques, Zero-Proxy).
+- Le badge discret d'en-tête et le polling silencieux 15 s de la sync de fond (EPIC 23) restent inchangés ; la finalisation (toast + rafraîchissement) est factorisée dans `_onSyncCompleted()` pour éviter tout double toast entre les deux pollers.
+
+---
+
 ### 3.14 Système XP / Niveaux / Streaks
 
 **Fichier :** `app.js` — `XPSystem`, `StreakSystem`
@@ -1394,6 +1405,14 @@ Modules **purs** (couche domaine), entièrement testés, indépendants de l'infr
 **Gap §10.5 fermé** : les barres de précision de la match-card lisent `g.accuracies.white/black` (précisions officielles Chess.com) en priorité. **Gap §10.6-2 fermé** : panneau des taux de réussite par thème (`GET /tactics/stats`, enfin exposé) dans le Coach Tactique.
 
 **US 25.4 — Purge du code mort (ex-§9)** : routes `POST /analyze`, `GET /games/{username}`, `POST /srs/review`, `POST /srs/review/full` supprimées (jamais appelées par le frontend ; tests de non-réapparition en 404 + routers métier toujours montés). Rattrapage `endgame_accuracy` : les parties IndexedDB antérieures au câblage de l'EndgameDetector sont ré-analysées en tâche de fond (max 5/session, best-effort, 4 s après le boot).
+
+---
+
+### 4.22 EPIC 28 — Progression coup-par-coup de l'analyse (Smart Loader, US 28.1)
+
+**Fichiers :** `domain/analysis_pipeline.py` (`analyze_pgn(..., on_progress=None)`), `routers/games.py:run_analysis`, `infrastructure/db_client.py`/`pg_repository.py` (colonnes `progress_current`/`progress_total`), migration `20260704140000_games_progress_epic28.sql`
+
+`analyze_pgn` accepte désormais un callback optionnel `on_progress(current, total)`, invoqué après **chaque coup réellement passé au moteur** (Stockfish natif ou évaluations client). `run_analysis` le persiste à chaque appel sur la ligne `games` correspondante (best-effort, ne fait jamais échouer l'analyse). Paramètre par défaut `None` : aucun changement de comportement pour les appelants existants. Exposé gratuitement via `GET /api/v1/games/{id}` (déjà existant, US 7.1) — pas de nouvelle route. Consommé par le Smart Loader frontend (§3.13 quinquies) pour agréger une progression réelle sur toutes les parties `processing` en cours de synchronisation.
 
 ---
 
@@ -1947,6 +1966,7 @@ UNIQUE (user_id)
 | **Carte EXERCICE SRS** | `app.js:_renderExerciseCard()` | Count révisions en attente + bouton |
 | **Bilan Chart dashboard** | `app.js:_renderBilanChart()` | Graphe Progrès/Elo sur les 10 dernières parties |
 | **Sidebar de navigation + Mes Parties** (EPIC 27) | `index.html:.app-shell` + `app.js:_navigateTo/_setActiveView/_renderGamesLibrary/_triggerManualSync/_renderOpeningsGrid` | Remplace l'ancien modal PGN (collage manuel supprimé) : sidebar 4 destinations avec deep-link, bibliothèque Mes Parties (sync Chess.com à la demande, table V/L/½), grille visuelle de 10 ouvertures curatées (mini-échiquiers statiques) |
+| **Smart Loader — progression réelle de la sync Chess.com** (EPIC 28) | `analysis_pipeline.py:on_progress` + `routers/games.py:run_analysis` + `app.js:_showSmartLoader/_pollSmartLoaderProgress` + `index.html:#smart-loader-overlay` | Overlay plein écran dismissible pendant la synchronisation manuelle, barre de progression réelle (`games.progress_current`/`progress_total`, un incrément par coup effectivement analysé) agrégée sur toutes les parties en cours, 8 messages rotatifs (3 s) |
 | **Mobile / bascule Review** | CSS `body.board-active` | `.dash-grid` masquée / `.board-col` plein écran via classe `body` |
 | **Vue Statistiques Avancées** (US 4.1/4.2) | `advanced_stats.js` + `index.html` + `app.js` | Plein écran `body.advstats-active` : matrice colorée + gauge Héros + deep-dive + tuiles Finales + carte Tactiques (gauge circulaire `successRatio`) + top 3 ouvertures ECO (données réelles via `/stats/summary`, `MOCK_SUMMARY` en secours) |
 | **Validation email + erreurs UI inscription** (US 6.1) | `models.py:UserCreate` + `auth.js:_extractErrorMessage` | Format email validé (regex) en plus de la longueur ; erreurs 422 Pydantic (liste) affichées lisiblement au lieu de `[object Object]` |
@@ -2094,15 +2114,16 @@ Corrigé lors de l'audit : cf. §3 (échappement XSS `app.js`, base API `auth.js
 - **N+1 sur `/stats/summary` et `/stats/cognitive-load`** : une requête `get_moves_for_game` par partie analysée. Négligeable in-memory, mais en PostgreSQL une jointure unique (`game_moves JOIN games ON ... WHERE user_id = ...`) serait préférable dès que le volume de parties croît.
 - ~~**`backend/mutants/`**~~ → **✅ traité (PR de suite de l'audit)** : artefacts mutmut supprimés du dépôt et ajoutés au `.gitignore` (`backend/mutants/`, `.mutmut-cache`) — mutmut les régénère à l'exécution. Le symlink hérité `backend/src → app/domain` (ancien layout, plus référencé nulle part) a également été supprimé.
 
-### 11.14 EPIC 28-30 (Smart Loader, Gamification serveur, Saisons) — non commencés cette itération
+### 11.14 EPIC 29-30 (Gamification serveur, Saisons) — non commencés cette itération
 
-La demande PO du 04/07 couvrait 4 EPICs (27 à 30) en une seule salve. Seul l'EPIC 27 a été livré, testé et documenté cette itération ; les trois suivants restent **entièrement à faire**, consignés ici plutôt que déclarés « câblés » à tort :
+La demande PO du 04/07 couvrait 4 EPICs (27 à 30) en une seule salve. Les EPICs 27 (§3.13 quater) et 28 (§3.13 quinquies/§4.22) ont été livrés, testés et documentés ; les deux suivants restent **entièrement à faire**, consignés ici plutôt que déclarés « câblés » à tort :
 
-- **EPIC 28 — Smart Loader** : différer le rendu de la page Review tant que l'analyse n'est pas à 100 % (le board ne s'initialiserait qu'au 1ᵉʳ coup une fois complet), overlay plein écran avec polling `GET /api/v1/analysis/{id}/status` (« Coup X sur Y ») et messages d'attente rotatifs. Nécessite un nouvel endpoint de statut détaillé côté backend (l'actuel `GET /games/{id}` renvoie déjà `status`/`moves`, mais pas de compteur de progression coup-par-coup pendant l'analyse asynchrone) — à concevoir avant tout code frontend.
 - **EPIC 29 — Gamification serveur** : migrer l'XP/Niveau de `localStorage` (`XPSystem`, §3.14) vers des colonnes `profiles.xp`/`level` côté Postgres (+50 XP/analyse, +15 XP/problème résolu), jauge circulaire d'en-tête ; quêtes quotidiennes (probablement dérivées sans état d'une table existante plutôt qu'une nouvelle `daily_quests` mutable, à trancher) ; cosmétiques débloqués par niveau — piste naturelle : réutiliser `ThemeService` (thèmes de pièces/plateau déjà implémentés, EPIC 18, §4.16) comme catalogue de déblocages plutôt que fabriquer de nouveaux assets d'avatar.
 - **EPIC 30 — Moteur de saisons** : `backend/app/config/seasons.json` + endpoint renvoyant l'évènement actif (fenêtre UTC serveur), bandeau compte à rebours + cosmétiques exclusifs teasés. Dépend du catalogue de cosmétiques de l'EPIC 29 — à construire après, pas en parallèle.
 
-Aucun de ces trois chantiers ne doit apparaître en §8 « ✅ Fonctionnel et câblé » tant qu'il n'est pas implémenté, testé et documenté ici même.
+**EPIC 28 — écart assumé documenté** (au lieu d'un chantier non fait) : la demande PO littérale (« différer le rendu de la Review tant que l'analyse n'est pas à 100 % ») ne correspondait à aucun besoin réel de l'architecture — la Review est déjà instantanée (analyse géométrique chess.js côté client, §3.6), jamais bloquée par le serveur. Le Smart Loader a donc été appliqué à l'endroit où l'attente est réelle : la synchronisation Chess.com (§3.13 quinquies), avec une progression **réellement mesurée** (`games.progress_current`/`progress_total`, §4.22) plutôt qu'une barre de progression décorative sur un écran qui n'attend rien.
+
+Aucun de ces deux chantiers ne doit apparaître en §8 « ✅ Fonctionnel et câblé » tant qu'il n'est pas implémenté, testé et documenté ici même.
 
 ---
 

@@ -89,7 +89,11 @@ class PgRepository:
     # liste fermée empêche toute injection via un nom de champ. Doit rester
     # alignée avec GAME_UPDATABLE_FIELDS / SPRINT_UPDATABLE_FIELDS (db_client).
     _GAME_COLS = frozenset(
-        {"status", "result", "eco", "opening_name", "pivot_move_index", "is_reviewed"}
+        {
+            "status", "result", "eco", "opening_name", "pivot_move_index", "is_reviewed",
+            # EPIC 28 (US 28.1) : progression coup-par-coup (Smart Loader).
+            "progress_current", "progress_total",
+        }
     )
     _SPRINT_COLS = frozenset(
         {"score", "problems_solved_count", "moves", "started_at", "finished_at", "duration_seconds"}
