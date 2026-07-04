@@ -283,6 +283,23 @@ describe("getDailyQuests (EPIC 29, US 29.2)", () => {
   });
 });
 
+describe("getActiveSeason (EPIC 30)", () => {
+  test("appelle GET /api/v1/seasons/active et renvoie le JSON", async () => {
+    global.fetch = jest.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ active: true, season: { id: "halloween" }, seconds_remaining: 100 }),
+    });
+    const out = await ApiClient.getActiveSeason();
+    expect(global.fetch.mock.calls[0][0]).toBe("/api/v1/seasons/active");
+    expect(out.active).toBe(true);
+  });
+
+  test("rejette sur HTTP non-ok", async () => {
+    global.fetch = jest.fn().mockResolvedValue({ ok: false, status: 500 });
+    await expect(ApiClient.getActiveSeason()).rejects.toThrow("HTTP 500");
+  });
+});
+
 describe("getErrorProfile (EPIC 11, US 9.1)", () => {
   test("appelle GET /api/v1/error-profile et renvoie le JSON", async () => {
     global.fetch = jest.fn().mockResolvedValue({

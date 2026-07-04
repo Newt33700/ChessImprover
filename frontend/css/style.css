@@ -233,6 +233,31 @@ input, textarea { font-family: inherit; }
 }
 
 /* --------------------------------------------------------------------------
+   Bannière saisonnière (EPIC 30) — FOMO : compte à rebours + tease cosmétique
+-------------------------------------------------------------------------- */
+.season-banner {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-md);
+  padding: 6px var(--space-md);
+  background: linear-gradient(90deg, #7c3aed, #f97316);
+  color: #fff;
+  font-size: 0.8rem;
+  font-weight: 600;
+  text-align: center;
+  flex-wrap: wrap;
+}
+.season-banner-countdown {
+  font-family: var(--font-data);
+  font-weight: 800;
+  background: rgba(0,0,0,0.2);
+  padding: 2px 8px;
+  border-radius: 20px;
+  white-space: nowrap;
+}
+
+/* --------------------------------------------------------------------------
    App Shell (EPIC 27, US 27.1) — sidebar fixe + zone de contenu
 -------------------------------------------------------------------------- */
 .app-shell {

@@ -358,6 +358,7 @@ class ChessImproverApp {
     this._bindEvents();
     this._renderAll();
     this._renderVoiceCoachButton();
+    this._loadActiveSeason(); // EPIC 30 : bandeau saisonnier (public, avant même connexion)
 
     if (this.username) {
       document.getElementById("username-input").value = this.username;
@@ -2048,6 +2049,54 @@ class ChessImproverApp {
     } catch {
       container.innerHTML = `<p class="empty-state">Impossible de charger les quêtes pour le moment.</p>`;
     }
+  }
+
+  /**
+   * EPIC 30 — Bannière saisonnière (FOMO) : chargée une fois au boot (route
+   * publique, aucune connexion requise), affiche un compte à rebours en
+   * direct jusqu'à la fin de l'évènement et « tease » les cosmétiques
+   * exclusifs (thèmes existants, cf. EPIC 29 US 29.3 — aucun nouvel asset).
+   */
+  async _loadActiveSeason() {
+    if (!window.ApiClient) return;
+    try {
+      const { active, season, seconds_remaining: remaining } = await ApiClient.getActiveSeason();
+      if (!active || !season) return;
+      this._seasonEndsInMs = Date.now() + remaining * 1000;
+      this._renderSeasonBanner(season);
+      if (this._seasonCountdownInterval) clearInterval(this._seasonCountdownInterval);
+      this._seasonCountdownInterval = setInterval(() => this._updateSeasonCountdown(), 1000);
+      this._updateSeasonCountdown();
+    } catch { /* bannière optionnelle : jamais bloquant si le backend est indisponible */ }
+  }
+
+  _renderSeasonBanner(season) {
+    const banner = document.getElementById("season-banner");
+    const text = document.getElementById("season-banner-text");
+    if (!banner || !text) return;
+    const tease = season.cosmetic_piece_theme
+      ? ` — 🔒 Cosmétique exclusif « ${escapeHtml(season.cosmetic_piece_theme)} » à débloquer !`
+      : "";
+    text.textContent = `${season.banner_message}${tease}`;
+    banner.hidden = false;
+  }
+
+  _updateSeasonCountdown() {
+    const el = document.getElementById("season-banner-countdown");
+    if (!el || !this._seasonEndsInMs) return;
+    const remaining = Math.max(0, Math.floor((this._seasonEndsInMs - Date.now()) / 1000));
+    if (remaining <= 0) {
+      clearInterval(this._seasonCountdownInterval);
+      document.getElementById("season-banner").hidden = true;
+      return;
+    }
+    const d = Math.floor(remaining / 86400);
+    const h = Math.floor((remaining % 86400) / 3600);
+    const m = Math.floor((remaining % 3600) / 60);
+    const s = remaining % 60;
+    el.textContent = d > 0
+      ? `${d}j ${String(h).padStart(2, "0")}h ${String(m).padStart(2, "0")}m`
+      : `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
   }
 
   _renderBilanChart(mode = "progress") {
