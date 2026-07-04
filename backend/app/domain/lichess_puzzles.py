@@ -13,21 +13,25 @@ Module PUR : aucune I/O ici (``infrastructure/lichess_client.py`` s'en charge) �
 uniquement la traduction du JSON brut de ``GET /api/puzzle/next`` vers la forme
 interne d'un problème tactique.
 
-Format de la réponse Lichess (stable, documenté) ::
+Format de la réponse Lichess (vérifié sur une vraie réponse en production,
+cf. hotfix diagnostic 04/07 — la documentation seule ne suffisait pas) ::
 
     {
-      "game": {"pgn": "e4 e5 Nf3 ..."},
+      "game": {"pgn": "e4 e5 Nf3 ... Ba3 Bc1"},
       "puzzle": {
-        "id": "abcd1", "rating": 1550, "initialPly": 24,
-        "solution": ["e2e4", "e7e5", "g1f3"],  # UCI
+        "id": "abcd1", "rating": 1550, "initialPly": 68,
+        "solution": ["d3e2", "d1e2", "e3c1"],  # UCI
         "themes": ["middlegame", "mateIn2"]
       }
     }
 
-``initialPly`` désigne la position juste AVANT le coup qui amène le puzzle
-(``solution[0]``, auto-joué, souvent la « gaffe » adverse) ; le solveur doit
-ensuite trouver ``solution[1]``, puis ``solution[2]`` est la réplique forcée
-auto-jouée, etc.
+``initialPly`` est l'index **0-based du dernier coup déjà joué** dans
+``game.pgn`` (pas « la position avant le coup qui amène le puzzle » comme le
+laisse penser une lecture rapide de la doc publique) — la position de départ
+du puzzle s'obtient donc en rejouant ``initialPly + 1`` demi-coups. À cette
+position, ``solution`` est la séquence **complète** que le solveur doit
+jouer (son propre coup, la réplique adverse forcée, son coup suivant, …) —
+aucun élément de ``solution`` n'est un coup à auto-jouer avant de commencer.
 """
 
 from __future__ import annotations
@@ -104,29 +108,22 @@ def parse_puzzle_payload(payload: Dict[str, Any], category: Optional[str]) -> Op
     if not solution:
         return None
 
-    board = replay_pgn_to_ply(pgn_text, initial_ply)
+    # +1 : `initialPly` est l'index 0-based du DERNIER coup déjà joué dans
+    # le PGN, pas le nombre de coups à rejouer (cf. docstring du module).
+    board = replay_pgn_to_ply(pgn_text, initial_ply + 1)
     if board is None:
         return None
 
-    # solution[0] est le coup qui MÈNE au puzzle (auto-joué, jamais à
-    # valider) ; solution[1:] est la séquence que le solveur doit trouver,
-    # en alternance avec les répliques forcées adverses.
-    setup_move_uci = solution[0]
     try:
-        setup_move = chess.Move.from_uci(setup_move_uci)
+        first_move = chess.Move.from_uci(solution[0])
     except ValueError:
         return None
-    if setup_move not in board.legal_moves:
-        return None
-    board.push(setup_move)
-
-    remaining = solution[1:]
-    if not remaining:
+    if first_move not in board.legal_moves:
         return None
 
     return {
         "fen": board.fen(),
-        "solution": remaining,
+        "solution": solution,
         "category": category or "aleatoire",
         "difficulty_elo": rating,
         "lichess_id": puzzle_id,

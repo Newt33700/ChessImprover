@@ -241,7 +241,9 @@ class TestLichessPrimarySource:
 
     def test_next_problem_uses_lichess_when_reachable(self, monkeypatch):
         token = _signup_and_token()
-        payload = _lichess_payload("1. e4 e5", 1, ["e7e5", "g1f3"], rating=1234, puzzle_id="xyz9")
+        # initialPly=1 -> dernier coup déjà joué = "e5" ; position réelle du
+        # puzzle après 2 demi-coups (Blancs au trait) : "g1f3" y est légal.
+        payload = _lichess_payload("1. e4 e5", 1, ["g1f3"], rating=1234, puzzle_id="xyz9")
         _install_fake_lichess(monkeypatch, _FakeLichessClient(payload=payload))
 
         r = client.get("/api/v1/tactics/next", params={"theme_id": "mate_in_1"}, headers=_auth(token))
