@@ -317,7 +317,7 @@ class BoardManager {
 
   _onDragStart(src, piece) {
     if (this.mode === "review") return false;  // pas de déplacement en review
-    if (this.chess.isGameOver()) return false;
+    if (this.chess.game_over()) return false;
 
     const isWhitePiece = piece.startsWith("w");
     const isWhiteTurn = this.chess.turn() === "w";
@@ -351,7 +351,7 @@ class BoardManager {
     }
 
     // Mode Sandbox (Game-Salvage) : le moteur répond après le coup du joueur
-    if (this.mode === "sandbox" && !this.chess.isGameOver()) {
+    if (this.mode === "sandbox" && !this.chess.game_over()) {
       this._requestSandboxEngineMove();
     }
 
@@ -547,7 +547,7 @@ class BoardManager {
   }
 
   _sandboxPlayEngineMove(uciMove) {
-    if (this.mode !== "sandbox" || this.chess.isGameOver()) return;
+    if (this.mode !== "sandbox" || this.chess.game_over()) return;
     const from = uciMove.slice(0, 2);
     const to = uciMove.slice(2, 4);
     const promotion = uciMove.length > 4 ? uciMove.slice(4) : "q";
