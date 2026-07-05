@@ -1795,8 +1795,9 @@ npm run test:mutation # Stryker
 | `analysis_feedback.test.js` (EPIC 22/25) | AnalysisFeedback | `createState` (états indépendants), `shouldDispatch` (1er dispatch, 20 ré-émissions identiques bloquées, raffinement cpLoss autorisé, arrondi infra-centipion, bascule book→moteur, coups indépendants, entrées invalides), `shouldAlert` (une seule alerte par coup blunder/mistake, classifications non alertables, reset par nouvelle partie), **`evalForPlayer`/`exerciseQuality` (EPIC 25), `isExerciseMoveCorrect` (EPIC 26 : SAN strict, préfixe UCI, entrées invalides)** — **27 TUs, 100 % lignes/branches/fonctions** |
 | `theme_service.test.js` (EPIC 18) | ThemeService | `getPieceThemePath`/`getBoardColors` (thème valide/invalide/absent/état courant sans argument), `listPieceThemes`/`listBoardThemes`, `saveLocalCache`/`loadLocalCache` (JSON corrompu, valeur non-objet), `applySettings` (variables CSS, classe `<body>`, résilience totale : `null`/`undefined`/valeurs de mauvais type/`document` indisponible) |
 | `tap_move.test.js` (EPIC 33) | TapMove | `decide` (les 5 issues — select/reselect/move/clear/ignore — avec toutes les combinaisons `isOwnPickable`/`isLegalTarget`, options par défaut), `clearHighlights`/`highlightMoves` (dot vs anneau selon capture, résilience si `chess.moves` lève), `attach` (sélection → surbrillance → coup joué/refusé, non-duplication d'écouteur au second `attach`, `getChess` indisponible) — avec un faux conteneur/case minimal (pas de jsdom dans ce dépôt, cf. note ci-dessous) — **20 TUs** |
+| `board_manager.test.js` (audit mutation testing 07/2026) | BoardManager | Construction (Worker WASM + Chessboard mockés), **régression bug `isGameOver`** (modes Sandbox/Ghost ne plantent plus, `_onDragStart`/`_onDrop`/`_sandboxPlayEngineMove` utilisent `chess.game_over()`, la vraie API de chess.js 0.10.3 vendorisé), mode Review (`startReview`, navigation `goToMove`/`nextMove`/`prevMove`, bornes), mode Ghost (`startGhost`, réplique adverse auto-jouée, coup illégal sans exception), utilitaires (`flipBoard`, `reset`, `destroy`), messages du worker Stockfish (`ready`/`info`/`bestmove`) — **18 TUs, chess.js vendorisé réel (pas de mock), Worker/Chessboard mockés** |
 
-> `advanced_stats.js` n'est pas dans `collectCoverageFrom` (comme `app.js`, `auth.js`, `board_manager.js`, `tap_move.js`) : seules ses fonctions pures sont testées, les `render*` sont de la glue DOM. `cognitive_dashboard.js` y a été ajouté (EPIC 19, 87 % lignes/branches). `analysis_feedback.js` y a été ajouté (EPIC 22, 100 %).
+> `advanced_stats.js` n'est pas dans `collectCoverageFrom` (comme `app.js`, `auth.js`, `board_manager.js`, `tap_move.js`) : seules ses fonctions pures sont testées, les `render*` sont de la glue DOM. `cognitive_dashboard.js` y a été ajouté (EPIC 19, 87 % lignes/branches). `analysis_feedback.js` y a été ajouté (EPIC 22, 100 %). `board_manager.js` reste hors `collectCoverageFrom` malgré ses 18 nouveaux TUs (audit 07/2026) : la majorité du fichier est de la glue Worker/DOM (gestion WASM/fallback asm.js, callbacks chessboard.js) qui ne peut pas atteindre le seuil de 80 % — mêmes précédent que `tap_move.js`.
 >
 > **`tap_move.test.js` (EPIC 33)** n'utilise pas `global.document` (l'environnement Jest est `node`, pas jsdom) : comme le reste de la suite, il construit un faux conteneur/case minimal (`querySelector`/`querySelectorAll`/`classList`/`addEventListener` réimplémentés à la main) plutôt que d'ajouter une dépendance `jest-environment-jsdom` pour un seul fichier.
 
@@ -1864,16 +1865,24 @@ JWT_SECRET=ci-test-secret pytest tests/ -v
 | `test_db_srs_flashcards.py` | Store flashcards : création (calendrier SM-2 initial), liste/isolation par utilisateur, cartes dues (bornes de date), mise à jour de calendrier, reset | EPIC 20 |
 | `test_srs_flashcards_api.py` | Génération auto depuis une gaffe analysée (evals moteur), aucune flashcard sur partie propre, isolation entre utilisateurs, `POST /{id}/review` (rappel correct avance le calendrier, rappel incorrect réinitialise + révèle la solution), 404 carte inconnue/non-propriétaire, 401 sans JWT | EPIC 20 |
 
-**Couverture backend :** 841 TUs au total, couverture globale **89 %+** ; cœur Stats Avancées + EPIC 1/5.1/US 4.2/EPIC 19 à 92–100 % (`stats_aggregator`, `cadence`, `progress_history`, `models`, `engine`, `cognitive_load`, `srs_flashcards` à 100 %, `analysis_pipeline` 92 %, `routers/games` 92 %, `db_client` 98 %). Les requêtes SQL réelles de `pg_repository` (nécessitant une base) sont marquées `pragma: no cover`.
+**Couverture backend :** **1084 TUs** au total (audit mutation testing 07/2026 : +120 TUs), couverture globale **89 %+** ; cœur Stats Avancées + EPIC 1/5.1/US 4.2/EPIC 19 à 92–100 % (`stats_aggregator`, `cadence`, `progress_history`, `models`, `engine`, `cognitive_load`, `srs_flashcards` à 100 %, `analysis_pipeline` 92 %, `routers/games` 92 %, `db_client` 98 %). Les requêtes SQL réelles de `pg_repository` (nécessitant une base) sont marquées `pragma: no cover`.
 
 **Architecture de test `test_auth.py` :**
 - App de test minimale (`FastAPI()` + routers auth/sync uniquement) pour éviter la dépendance `python-chess`
 - `@pytest.fixture(autouse=True)` avec `_reset_store()` pour isolation entre tests
 - Mock non nécessaire pour la DB (in-memory résetable)
 
-**Mutation testing :**
-- Frontend : Stryker JS (`npm run test:mutation`)
-- Backend : mutmut (`mutmut run --paths-to-mutate app/domain/auth.py`)
+**Mutation testing (audit 07/2026, EPIC 35) :**
+- **Backend — mutmut**, module par module sur `app/domain/*.py` (chaque fichier ciblé avec ses seuls tests unitaires, pour éviter de rejouer les 1084 TUs à chaque mutant) :
+  ```bash
+  cd backend
+  mutmut run --paths-to-mutate app/domain/<module>.py --runner "pytest tests/test_<module>.py -q -x"
+  mutmut results   # liste les mutants survivants par fichier
+  mutmut show <id> # affiche le diff d'un mutant précis
+  ```
+  **Résultat** : ~2500 mutants générés sur les 28 modules de `app/domain/`, **taux de survie ramené à moins de 5 %** après ajout de 120 TUs ciblés (bornes exactes, valeurs littérales de constantes plutôt que comparées à elles-mêmes, formes exactes de dict/messages plutôt que des recherches de sous-chaîne). Les mutants encore vivants sont, module par module, documentés comme **équivalents** (aucune assertion ne peut les distinguer du code correct — ex. un clamp `min(100, x)` où `x` est déjà borné, ou une romance d'index `[-1]`/`[+1]` identique sur une liste à 2 éléments) ou dus à une **limite de mutmut** (un mutant qui casse la syntaxe/l'import est parfois compté « survived » alors que la collecte pytest échoue bel et bien — `exit code 2`, non reconnu par l'outil).
+  - **Bug de production trouvé et corrigé pendant cet audit** : `frontend/js/board_manager.js` appelait `this.chess.isGameOver()`, une méthode inexistante sur la version vendorisée de chess.js (`assets/js/chess-0.10.3.js`, API snake_case `game_over()`) — crash à chaque tentative de coup en mode Ghost/Sandbox. Corrigé (3 sites d'appel) + test de non-régression dans `board_manager.test.js`.
+- **Frontend — Stryker JS non câblé** : `npm run test:mutation` référence `stryker run`, mais **aucune dépendance `@stryker-mutator/*` n'est installée et aucun `stryker.conf.json` n'existe** dans ce dépôt — la commande échoue si on l'exécute telle quelle. Non câblé : mise en place à faire dans une itération dédiée (cf. §10).
 
 ### 6.3 E2E — Playwright (frontend/tests/e2e/)
 
