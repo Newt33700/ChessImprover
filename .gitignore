@@ -25,6 +25,7 @@ htmlcov/
 # Mutation testing (artefacts générés par mutmut à l'exécution)
 backend/mutants/
 .mutmut-cache
+*.py.bak
 
 # IDE
 .idea/

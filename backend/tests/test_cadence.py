@@ -37,6 +37,12 @@ class TestEstimateSeconds:
     def test_garbage(self):
         assert estimate_seconds("abc") is None
 
+    def test_daily_extra_slash_returns_none(self):
+        # `tc.split("/", 1)` : un second "/" doit rester dans la partie
+        # secondes (non convertible en int), pas être utilisé pour un
+        # découpage supplémentaire.
+        assert estimate_seconds("1/86400/50") is None
+
 
 class TestClassifyCadence:
     def test_bullet(self):
@@ -90,3 +96,15 @@ class TestParseIncrement:
         # Le format de base est illisible ; seul l'incrément importe ici,
         # `int()` échoue quand même sur la partie droite -> repli à 0.
         assert parse_increment("abc+xyz") == 0
+
+    def test_slash_with_plus_still_zero(self):
+        # `"/" in tc` doit être détecté par une vraie sous-chaîne "/", pas
+        # par un motif fixe qui ne matcherait jamais rien : sinon une
+        # cadence daily malformée avec un "+" serait lue comme un incrément.
+        assert parse_increment("1/86400+5") == 0
+
+    def test_extra_plus_returns_zero_not_partial_value(self):
+        # `tc.split("+", 1)` : un second "+" doit rester dans la partie
+        # incrément (illisible en int), pas être utilisé pour découper plus
+        # loin et renvoyer une valeur partielle erronée.
+        assert parse_increment("180+2+3") == 0

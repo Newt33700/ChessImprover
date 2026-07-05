@@ -31,10 +31,21 @@ CLEAN_PGN = """
 """
 
 
+def test_recurring_threshold_is_70():
+    assert RECURRING_THRESHOLD == 70.0
+
+
 class TestDetectErrorOccurrences:
     def test_clean_game_has_no_occurrences(self):
         occ = detect_error_occurrences(CLEAN_PGN, "white", moves=[])
         assert occ == {"hanging_piece": False, "time_pressure": False, "missed_mate": False}
+
+    def test_missed_mate_cpl_of_one_still_counts(self):
+        # `(m.get("cpl") or 0) > 0` : une perte d'1 centipion sur un mat
+        # loupé compte déjà comme un oubli, pas seulement au-delà de 1.
+        moves = [{"color": "white", "is_mate": True, "cpl": 1}]
+        occ = detect_error_occurrences(CLEAN_PGN, "white", moves=moves)
+        assert occ["missed_mate"] is True
 
     def test_missed_mate_detected_from_game_moves(self):
         moves = [
@@ -84,6 +95,16 @@ class TestUpdateFrequencyScore:
     def test_score_bounded_0_100(self):
         assert update_frequency_score(95.0, occurred=True, alpha=0.5) <= 100.0
         assert update_frequency_score(5.0, occurred=False, alpha=0.5) >= 0.0
+
+    def test_score_capped_exactly_at_100_not_101(self):
+        # Mathématiquement, `new_score` ne peut dépasser 100 que si le score
+        # d'entrée est déjà hors bornes (donnée corrompue) : c'est le seul
+        # moyen d'exercer réellement le plafond `min(100.0, ...)`.
+        assert update_frequency_score(200.0, occurred=True, alpha=0.1) == 100.0
+
+    def test_score_rounds_to_one_decimal_not_two(self):
+        new = update_frequency_score(10.0, occurred=False, alpha=1 / 3)
+        assert new == round(10.0 + (1 / 3) * (0.0 - 10.0), 1)
 
     def test_repeated_occurrences_cross_recurring_threshold(self):
         score = 0.0

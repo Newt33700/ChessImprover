@@ -27,6 +27,27 @@ def _move(phase="opening", eval_before=None, cpl=None, time_spent=None):
     }
 
 
+class TestConstantsAndEnumValues:
+    """Comparer une constante à elle-même ne détecte jamais une régression :
+    valeurs littérales attendues en dur (règle métier, cf. README §5)."""
+
+    def test_pressure_threshold_cp_is_minus_150(self):
+        assert PRESSURE_THRESHOLD_CP == -150
+
+    def test_top3_cpl_threshold_is_50(self):
+        assert TOP3_CPL_THRESHOLD == 50
+
+    def test_weak_move_cpl_threshold_is_100(self):
+        assert WEAK_MOVE_CPL_THRESHOLD == 100
+
+    def test_decision_fatigue_ratio_is_1_3(self):
+        assert DECISION_FATIGUE_RATIO == 1.3
+
+    def test_move_quality_bucket_values(self):
+        assert MoveQualityBucket.TOP3.value == "top3"
+        assert MoveQualityBucket.WEAK.value == "weak"
+
+
 # ---------------------------------------------------------------------------
 # derive_time_spent
 # ---------------------------------------------------------------------------
@@ -108,8 +129,39 @@ class TestBuildTimeAllocationReport:
         assert report["sample_size"] == 0
         for phase_stats in report["by_phase"].values():
             assert phase_stats["avg_seconds"] is None
+            assert phase_stats["total_seconds"] == 0.0
             assert phase_stats["count"] == 0
             assert phase_stats["share_pct"] == 0.0
+
+    def test_avg_and_total_seconds_round_to_one_decimal(self):
+        moves = [
+            _move(phase="opening", time_spent=1.0),
+            _move(phase="opening", time_spent=1.0),
+            _move(phase="opening", time_spent=2.0),
+        ]
+        report = build_time_allocation_report(moves)
+        assert report["by_phase"]["opening"]["avg_seconds"] == round(4 / 3, 1)
+
+    def test_total_seconds_rounds_to_one_decimal_not_two(self):
+        moves = [_move(phase="opening", time_spent=1.0), _move(phase="opening", time_spent=1.11)]
+        report = build_time_allocation_report(moves)
+        assert report["by_phase"]["opening"]["total_seconds"] == round(2.11, 1)
+
+    def test_share_pct_rounds_to_one_decimal(self):
+        moves = [
+            _move(phase="opening", time_spent=1.0),
+            _move(phase="middlegame", time_spent=1.0),
+            _move(phase="endgame", time_spent=1.0),
+        ]
+        report = build_time_allocation_report(moves)
+        assert report["by_phase"]["opening"]["share_pct"] == round(100 / 3, 1)
+
+    def test_share_pct_computed_even_below_one_second_total(self):
+        # `total_seconds > 0` (pas `> 1`) : un total inférieur à 1s doit quand
+        # même produire un share_pct calculé, pas le repli à 0.0.
+        moves = [_move(phase="opening", time_spent=0.5)]
+        report = build_time_allocation_report(moves)
+        assert report["by_phase"]["opening"]["share_pct"] == 100.0
 
     def test_all_three_phases_always_present(self):
         report = build_time_allocation_report([])
@@ -193,6 +245,11 @@ class TestIsDecisionFatigue:
     def test_spec_example_three_minutes_on_a_losing_move(self):
         # Coups Top 3 joués vite (5s), mais 3 minutes sur un coup perdant.
         assert is_decision_fatigue(5.0, 180.0) is True
+
+    def test_reference_of_one_second_still_evaluates_ratio(self):
+        # `top3_avg_seconds <= 0` : seule une référence nulle/négative doit
+        # court-circuiter le calcul, pas une référence de 1s exactement.
+        assert is_decision_fatigue(1.0, 1000.0) is True
 
 
 class TestBuildDecisionFluidityReport:

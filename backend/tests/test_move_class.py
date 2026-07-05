@@ -29,6 +29,24 @@ class TestConstants:
 
 
 # ===================================================================
+# Valeurs .value des enums (persistées telles quelles dans game_moves,
+# comparées comme chaînes brutes ailleurs — ex. stats_aggregator.py — donc
+# leur valeur exacte est une règle métier, pas un détail d'implémentation).
+# ===================================================================
+
+class TestEnumValues:
+    def test_position_type_values(self):
+        assert PositionType.TACTICAL.value == "tactical"
+        assert PositionType.STRATEGIC.value == "strategic"
+        assert PositionType.NEUTRAL.value == "neutral"
+
+    def test_tactic_outcome_values(self):
+        assert TacticOutcome.SUCCESS.value == "success"
+        assert TacticOutcome.MISSED.value == "missed"
+        assert TacticOutcome.PARTIAL.value == "partial"
+
+
+# ===================================================================
 # classify_position
 # ===================================================================
 
@@ -63,6 +81,11 @@ class TestClassifyPosition:
     def test_two_lines_cannot_be_strategic(self):
         assert classify_position([50, 40]) == PositionType.NEUTRAL
 
+    def test_two_lines_can_be_tactical(self):
+        # `len(line_scores) >= 2` : deux lignes suffisent pour la détection
+        # tactique (contrairement au cas stratégique qui en exige 3).
+        assert classify_position([300, 100]) == PositionType.TACTICAL
+
     def test_single_line_neutral(self):
         assert classify_position([100]) == PositionType.NEUTRAL
 
@@ -90,6 +113,11 @@ class TestTacticOutcome:
 
     def test_partial_between(self):
         assert tactic_outcome(50) == TacticOutcome.PARTIAL
+
+    def test_cpl_one_is_partial_not_success(self):
+        # `played_cpl <= 0` : seul un coup parfait (0 ou négatif) est un
+        # succès ; une perte d'1 centipion est déjà un partiel.
+        assert tactic_outcome(1) == TacticOutcome.PARTIAL
 
 
 # ===================================================================

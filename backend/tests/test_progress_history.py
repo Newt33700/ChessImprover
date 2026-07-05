@@ -39,6 +39,15 @@ class TestBuildSnapshot:
         black_record = build_snapshot(moves, time_control="300", user_color="black")
         assert white_record["elos"]["openings"] > black_record["elos"]["openings"]
 
+    def test_default_user_color_is_white(self):
+        moves = [
+            _move("white", "opening", 0),
+            _move("black", "opening", 400),
+        ]
+        default_record = build_snapshot(moves, time_control="300")
+        white_record = build_snapshot(moves, time_control="300", user_color="white")
+        assert default_record["elos"]["openings"] == white_record["elos"]["openings"]
+
     def test_passes_through_ids(self):
         record = build_snapshot(
             [_move("white", "opening", 10)],
@@ -103,6 +112,23 @@ class TestFilterHistoryByDays:
     def test_malformed_date_excluded(self):
         rows = [_row(5, recorded_at="not-a-date")]
         assert filter_history_by_days(rows, days=30, now=_NOW) == []
+
+    def test_non_string_recorded_at_excluded_without_crash(self):
+        # `not value or not isinstance(value, str)` : une valeur non-chaîne
+        # (donnée corrompue) doit être écartée proprement, pas planter sur
+        # `.replace(...)` (AttributeError non rattrapée sinon).
+        rows = [_row(5, recorded_at=12345)]
+        assert filter_history_by_days(rows, days=30, now=_NOW) == []
+
+    def test_default_days_is_30(self):
+        rows = [_row(29), _row(31)]
+        assert len(filter_history_by_days(rows, now=_NOW)) == 1
+
+    def test_days_of_one_is_not_treated_as_zero(self):
+        # `days <= 0` (pas `<= 1`) : une fenêtre d'1 jour doit rester
+        # exploitable, pas systématiquement vide.
+        rows = [_row(0)]
+        assert len(filter_history_by_days(rows, days=1, now=_NOW)) == 1
 
     def test_naive_iso_treated_as_utc(self):
         # Défensif : une date sans fuseau (donnée legacy/corrompue) est
