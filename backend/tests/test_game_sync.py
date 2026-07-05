@@ -16,6 +16,9 @@ class TestContratPo:
         # Décision PO (EPIC 23) : plafond de 5 nouvelles analyses par sync.
         assert game_sync.MAX_ANALYSES_PER_SYNC == 5
 
+    def test_stale_processing_minutes_is_10(self):
+        assert game_sync.STALE_PROCESSING_MINUTES == 10
+
 
 class TestDetectUserColor:
     def test_black_side_match(self):
@@ -36,6 +39,19 @@ class TestDetectUserColor:
     def test_empty_username_defaults_to_white(self):
         raw = {"black": {"username": ""}}
         assert game_sync.detect_user_color(raw, "") == "white"
+
+    def test_none_username_does_not_match_any_default_placeholder(self):
+        # `(chess_username or "").lower()` : un pseudo absent (None) doit
+        # rester une chaîne vide, jamais une valeur par défaut qui pourrait
+        # accidentellement matcher un pseudo réel.
+        raw = {"black": {"username": "xxxx"}}
+        assert game_sync.detect_user_color(raw, None) == "white"
+
+    def test_missing_black_username_does_not_match_any_default_placeholder(self):
+        # Même chose côté `black` : un dictionnaire sans "username" doit
+        # rester une chaîne vide, jamais un défaut qui matcherait le pseudo.
+        raw = {"black": {}}
+        assert game_sync.detect_user_color(raw, "xxxx") == "white"
 
 
 class TestExtractSyncCandidates:

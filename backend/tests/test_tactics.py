@@ -4,8 +4,11 @@ from __future__ import annotations
 
 from datetime import date, datetime, timedelta, timezone
 
+import chess
+
 from app.domain.tactics import (
     TACTICAL_THEMES,
+    _parse_move_token,
     advance_tactical_attempt,
     compute_daily_streak,
     compute_stats_by_theme,
@@ -26,6 +29,21 @@ MATE_IN_2_SEQUENCE = ["d1d4", "a1a2", "d4b2"]
 class TestTacticalThemes:
     def test_contains_the_three_seeded_categories(self):
         assert set(TACTICAL_THEMES) == {"mate_in_1", "mate_in_2", "hanging_piece"}
+
+
+class TestParseMoveToken:
+    """`_parse_move_token` — repli UCI après échec du parsing SAN (EPIC 34)."""
+
+    def test_legal_uci_move_is_parsed(self):
+        board = chess.Board(MATE_IN_2_FEN)
+        move = _parse_move_token(board, "d1d4")  # Qd1-d4, pas du SAN valide
+        assert move == chess.Move.from_uci("d1d4")
+
+    def test_illegal_uci_move_returns_none(self):
+        board = chess.Board(MATE_IN_2_FEN)
+        # d1f2 : syntaxiquement un coup UCI valide, mais pas un déplacement
+        # de Dame légal (ni même rang, colonne, ou diagonale) depuis d1.
+        assert _parse_move_token(board, "d1f2") is None
 
 
 class TestIsCorrectMove:
@@ -139,6 +157,15 @@ class TestAdvanceTacticalAttempt:
     def test_garbage_played_move_rejected_not_raised(self):
         assert advance_tactical_attempt(MATE_IN_1_FEN, [MATE_IN_1_SOLUTION], "not a move") == {"result": "wrong"}
 
+    def test_garbage_opponent_reply_treated_as_complete(self):
+        # Réplique adverse illisible (donnée corrompue) : on ne plante pas,
+        # on traite comme terminé sur le dernier coup validé — forme exacte
+        # attendue, pas seulement "ne lève pas d'exception".
+        sequence = ["d1d4", "garbage-token", "d4b2"]
+        result = advance_tactical_attempt(MATE_IN_2_FEN, sequence, "Qd4+")
+        assert result == {"result": "correct_complete", "fen": result["fen"]}
+        assert set(result.keys()) == {"result", "fen"}
+
 
 class TestSolutionSequence:
     def test_wraps_plain_string_in_a_list(self):
@@ -204,3 +231,12 @@ class TestComputeStatsByTheme:
         assert by_cat["hanging_piece"] == {
             "category": "hanging_piece", "attempts": 1, "successes": 1, "success_rate": 1.0,
         }
+
+    def test_successes_accumulate_not_stuck_at_one(self):
+        attempts = [
+            {"category": "mate_in_1", "success": True},
+            {"category": "mate_in_1", "success": True},
+            {"category": "mate_in_1", "success": True},
+        ]
+        stats = compute_stats_by_theme(attempts)
+        assert stats[0]["successes"] == 3

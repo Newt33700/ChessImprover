@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
-from app.domain.seasons import get_active_season, load_seasons, seconds_remaining
+from app.domain.seasons import SEASONS_PATH, get_active_season, load_seasons, seconds_remaining
 
 SEASON = {
     "id": "halloween",
@@ -20,6 +20,17 @@ SEASON = {
 class TestLoadSeasons:
     def test_loads_real_catalog_as_a_list(self):
         assert isinstance(load_seasons(), list)
+
+    def test_loads_real_catalog_actual_content(self):
+        # `json.load(f)` doit vraiment être appelé (pas remplacé par `None`,
+        # qui donnerait aussi une liste... mais toujours vide).
+        seasons = load_seasons()
+        assert len(seasons) > 0
+        assert seasons[0]["id"] == "halloween"
+
+    def test_seasons_path_points_to_data_directory(self):
+        assert SEASONS_PATH.parent.name == "data"
+        assert SEASONS_PATH.name == "seasons.json"
 
     def test_missing_file_returns_empty_list(self, tmp_path):
         assert load_seasons(tmp_path / "does-not-exist.json") == []

@@ -55,9 +55,18 @@ class TestWithoutEngine:
         assert first["color"] == "white"
         assert first["phase"] == "opening"
         assert first["cpl"] is None  # pas de moteur → pas d'éval
+        assert out["moves"][1]["color"] == "black"
 
     def test_invalid_pgn(self):
         assert analyze_pgn("not a pgn")["moves"] == []
+
+    def test_invalid_pgn_exact_empty_shape(self):
+        # `chess.pgn.read_game` renvoie `None` sur une entrée vide (contrairement
+        # à "not a pgn", qui produit une partie valide sans coups) : c'est le
+        # seul cas qui exerce réellement le littéral `empty`.
+        assert analyze_pgn("") == {
+            "result": None, "eco": None, "opening_name": None, "moves": [],
+        }
 
     def test_star_result_normalized(self):
         out = analyze_pgn('[Result "*"]\n\n1. e4 *')
@@ -67,6 +76,26 @@ class TestWithoutEngine:
         out = analyze_pgn("not a pgn")
         assert out["eco"] is None
         assert out["opening_name"] is None
+
+    def test_blank_record_exact_shape_without_engine(self):
+        # Verrouille le jeu de clés ET les valeurs par défaut d'un
+        # enregistrement sans moteur (`_blank_record`) — une seule clé
+        # renommée ou une valeur par défaut modifiée casserait ce test.
+        out = analyze_pgn(PGN)
+        first = out["moves"][0]
+        assert first["move_number"] == 1
+        assert first["eval_before"] is None
+        assert first["eval_after"] is None
+        assert first["score_cp"] is None
+        assert first["is_mate"] is False
+        assert first["mate_in"] is None
+        assert first["position_type"] == "neutral"
+        assert first["best_move_san"] is None
+        assert set(first.keys()) == {
+            "move_number", "color", "move_san", "eval_before", "eval_after",
+            "score_cp", "cpl", "is_mate", "mate_in", "phase", "position_type",
+            "fen", "best_move_san", "time_spent_seconds",
+        }
 
 
 class TestExtractOpening:
@@ -89,6 +118,12 @@ class TestExtractOpening:
             "ECOUrl": "https://www.chess.com/openings/Italian-Game",
         })
         assert name == "Ruy Lopez"
+
+    def test_eco_url_with_trailing_slash(self):
+        _, name = _extract_opening({
+            "ECOUrl": "https://www.chess.com/openings/Italian-Game/",
+        })
+        assert name == "Italian Game"
 
     def test_no_headers(self):
         assert _extract_opening(None) == (None, None)
@@ -122,7 +157,31 @@ class TestWithEngine:
         out = analyze_pgn(PGN, engine)
         assert all(m["cpl"] == 0 for m in out["moves"])
         assert out["moves"][0]["eval_before"] == 40
+        assert out["moves"][0]["eval_after"] == 40
         assert out["moves"][0]["score_cp"] == 40
+
+    def test_is_mate_and_mate_in_reflect_engine_best(self):
+        game = chess.pgn.read_game(io.StringIO(PGN))
+        first_move = next(iter(game.mainline_moves()))
+        fen = game.board().fen()
+        engine = build_client_engine({fen: [[first_move.uci(), 100000, True, 4]]})
+        out = analyze_pgn(PGN, engine)
+        assert out["moves"][0]["is_mate"] is True
+        assert out["moves"][0]["mate_in"] == 4
+
+    def test_multipv_limits_lines_to_three(self):
+        # `engine.analyse(fen, multipv=3)` : le coup joué classé 4e (hors du
+        # top 3) ne doit pas être retrouvé par `pos.score_of`, donc rester
+        # sans cpl — un `multipv=4` le retrouverait à tort.
+        game = chess.pgn.read_game(io.StringIO(PGN))
+        first_move = next(iter(game.mainline_moves()))
+        fen = game.board().fen()
+        engine = build_client_engine({
+            fen: [["0000", 300], ["1111", 200], ["2222", 100], [first_move.uci(), 10]]
+        })
+        out = analyze_pgn(PGN, engine)
+        assert out["moves"][0]["cpl"] is None
+        assert out["moves"][0]["eval_after"] is None
 
     def test_cpl_reflects_delta_capped(self):
         engine = build_client_engine(_evals_for(PGN, played=10, best_delta=500))
@@ -150,6 +209,29 @@ class TestBuildClientEngine:
         assert pos.best.is_mate is True
         assert pos.best.mate_in == 3
 
+    def test_two_element_line_defaults_is_mate_false(self):
+        # `len(line) > 2` : sans 3e élément, is_mate doit valoir False,
+        # jamais True par défaut.
+        engine = build_client_engine({"FEN": [["e2e4", 50]]})
+        pos = engine.analyse("FEN")
+        assert pos.best.is_mate is False
+        assert pos.best.mate_in is None
+
+    def test_three_element_line_uses_third_element_for_is_mate(self):
+        # `len(line) > 2` (pas `> 3`) : une ligne à 3 éléments doit déjà lire
+        # `line[2]`, sans planter sur l'absence de `line[3]`.
+        engine = build_client_engine({"FEN": [["e2e4", 50, True]]})
+        pos = engine.analyse("FEN")
+        assert pos.best.is_mate is True
+        assert pos.best.mate_in is None
+
+    def test_is_mate_reads_third_element_not_fourth(self):
+        # `bool(line[2])`, pas `bool(line[3])` : un `is_mate` explicitement
+        # faux ne doit jamais être renversé par un `mate_in` renseigné.
+        engine = build_client_engine({"FEN": [["e2e4", 50, False, 3]]})
+        pos = engine.analyse("FEN")
+        assert pos.best.is_mate is False
+
 
 # ---------------------------------------------------------------------------
 # EPIC 19/20 : fen / best_move_san / time_spent_seconds
@@ -171,10 +253,10 @@ class TestFenAndBestMoveSan:
     def test_best_move_san_from_engine(self):
         engine = build_client_engine(_evals_for(PGN, played=40, best_delta=0))
         out = analyze_pgn(PGN, engine)
-        # best_delta=0 -> le meilleur coup ("0000" = null move) reste inconnu
-        # en SAN (coup nul), donc None : on vérifie plutôt un cas où le
-        # meilleur coup EST un coup réel.
-        assert "best_move_san" in out["moves"][0]
+        # best_delta=0 -> le meilleur coup est le coup nul "0000", que
+        # chess.Board.san() rend "--" (pas une exception) : on vérifie
+        # ensuite un cas où le meilleur coup EST un coup réel.
+        assert out["moves"][0]["best_move_san"] == "--"
 
     def test_best_move_san_resolves_real_move(self):
         game = chess.pgn.read_game(io.StringIO(PGN))
@@ -183,6 +265,24 @@ class TestFenAndBestMoveSan:
         evals = {board.fen(): [[first_move.uci(), 40]]}
         out = analyze_pgn(PGN, build_client_engine(evals))
         assert out["moves"][0]["best_move_san"] == board.san(first_move)
+
+    def test_unparseable_best_move_uci_yields_none_best_move_san(self):
+        # `except (ValueError, AssertionError)` : un `move_uci` illisible ne
+        # doit jamais planter l'analyse, et le champ doit rester `None`
+        # (pas une chaîne vide ni une clé renommée).
+        game = chess.pgn.read_game(io.StringIO(PGN))
+        evals = {game.board().fen(): [["e9e9", 40]]}
+        out = analyze_pgn(PGN, build_client_engine(evals))
+        assert out["moves"][0]["best_move_san"] is None
+        # La clé écrite dans le except doit être EXACTEMENT "best_move_san" —
+        # sinon la valeur `None` observée ci-dessus viendrait du record vierge
+        # (`_blank_record`) et masquerait une clé mal orthographiée ajoutée
+        # en plus.
+        assert set(out["moves"][0].keys()) == {
+            "move_number", "color", "move_san", "eval_before", "eval_after",
+            "score_cp", "cpl", "is_mate", "mate_in", "phase", "position_type",
+            "fen", "best_move_san", "time_spent_seconds",
+        }
 
 
 class TestTimeSpentSeconds:
@@ -206,6 +306,35 @@ class TestTimeSpentSeconds:
         out = analyze_pgn(CLOCK_PGN, time_control="600+5")
         # incrément 5s retranché : 20s de chute d'horloge + 5s d'incrément = 25s réels
         assert out["moves"][2]["time_spent_seconds"] == 25.0
+
+    def test_time_control_header_read_when_not_explicit(self):
+        # `game.headers.get("TimeControl")` : sans `time_control` explicite,
+        # l'incrément DOIT venir de l'en-tête PGN, pas rester à 0 par défaut.
+        pgn_with_increment = (
+            '[Event "x"]\n[Result "*"]\n[TimeControl "600+5"]\n\n'
+            "1. e4 {[%clk 0:10:00]} e5 {[%clk 0:10:00]} "
+            "2. Nf3 {[%clk 0:09:40]} Nc6 {[%clk 0:09:50]} *"
+        )
+        out = analyze_pgn(pgn_with_increment)
+        assert out["moves"][2]["time_spent_seconds"] == 25.0
+
+
+class TestMoveAlertWiring:
+    """EPIC 14 — `attach_move_alert` doit recevoir la VRAIE couleur du
+    joueur qui vient de jouer (`mover_color`), pas une valeur bidon : sinon
+    `_find_hanging_piece_square` ne trouve jamais aucune pièce (comparaison
+    à une couleur invalide) et l'alerte retombe sur un message générique."""
+
+    HANGING_KNIGHT_PGN = "1. e4 d6 2. Nf3 e5 3. Nxe5 *"
+
+    def test_hanging_piece_alert_mentions_the_piece_and_square(self):
+        fen_before = "rnbqkbnr/ppp2ppp/3p4/4p3/4P3/5N2/PPPP1PPP/RNBQKB1R w KQkq - 0 3"
+        engine = build_client_engine({fen_before: [["a2a3", 250], ["f3e5", 0]]})
+        out = analyze_pgn(self.HANGING_KNIGHT_PGN, engine)
+        nxe5_record = out["moves"][4]
+        assert nxe5_record["move_san"] == "Nxe5"
+        assert "alert_text" in nxe5_record
+        assert "expose" in nxe5_record["alert_text"]
 
 
 class TestOnProgressCallback:

@@ -8,11 +8,25 @@ Couvre :
 
 from __future__ import annotations
 
+import base64
+import hashlib
+import hmac
+import time
+
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from app.domain.auth import JWTError, create_token, decode_token, hash_password, verify_password
+from app.config import settings
+from app.domain.auth import (
+    JWTError,
+    _b64url_decode,
+    _b64url_encode,
+    create_token,
+    decode_token,
+    hash_password,
+    verify_password,
+)
 from app.infrastructure.db_client import _reset_store
 from app.routers.auth import router as auth_router
 from app.routers.sync import router as sync_router
@@ -55,6 +69,39 @@ class TestPasswordHashing:
         h1 = hash_password("same")
         h2 = hash_password("same")
         assert h1 != h2  # bcrypt uses random salt
+
+    def test_verify_password_returns_false_not_true_on_malformed_hash(self):
+        # `except Exception: return False` — un hash corrompu/illisible par
+        # bcrypt.checkpw ne doit JAMAIS être traité comme un mot de passe
+        # valide (faille d'authentification si ça devenait `return True`).
+        assert verify_password("anything", "not-a-valid-bcrypt-hash") is False
+
+
+# ── _b64url_encode / _b64url_decode ────────────────────────────────────────────
+
+class TestB64Url:
+    @pytest.mark.parametrize("length", [0, 1, 2, 3, 4, 5, 6, 7, 8, 16, 17])
+    def test_round_trip_all_padding_lengths(self, length):
+        data = bytes(range(length))
+        assert _b64url_decode(_b64url_encode(data)) == data
+
+    def test_decode_without_padding_needed(self):
+        # len(s) % 4 == 0 → padding calculé = 4 → aucun "=" ne doit être ajouté
+        # (`if padding != 4` doit rester vrai seulement quand un padding réel
+        # est nécessaire). 3 octets → base64 sans padding, longueur multiple de 4.
+        data = b"123"
+        encoded = _b64url_encode(data)
+        assert len(encoded) % 4 == 0
+        assert _b64url_decode(encoded) == data
+
+    def test_strip_only_equals_not_other_trailing_chars(self):
+        # `rstrip(b"=")` ne doit retirer QUE les "=" de padding, jamais un
+        # caractère base64 valide (ex. "X") qui terminerait légitimement
+        # l'encodage.
+        data = b"\x00\x00\x17"  # encode en base64url vers "AAAX" (se termine par un X)
+        encoded = base64.urlsafe_b64encode(data).decode()
+        assert encoded == "AAAX"
+        assert _b64url_encode(data) == encoded  # ne doit pas être tronqué en "AAA"
 
 
 # ── create_token / decode_token ───────────────────────────────────────────────
@@ -105,6 +152,96 @@ class TestJWT:
         ).rstrip(b"=").decode()
         with pytest.raises(JWTError):
             decode_token(f"{evil_header}.{payload}.{sig}")
+
+    def test_header_has_exact_alg_and_typ_keys(self):
+        import json as _json
+
+        token = create_token("user-1", "a@b.com")
+        header_b64 = token.split(".")[0]
+        assert _json.loads(_b64url_decode(header_b64)) == {"alg": "HS256", "typ": "JWT"}
+
+    def test_expiry_uses_86400_seconds_per_day(self):
+        before = int(time.time())
+        token = create_token("user-1", "a@b.com")
+        payload = decode_token(token)
+        expected = before + settings.jwt_expiry_days * 86400
+        # Tolérance de 2s pour le temps d'exécution du test (pas plus : une
+        # mutation `* 86401` décale l'expiration de `jwt_expiry_days` secondes,
+        # largement au-delà de cette marge).
+        assert expected <= payload["exp"] <= expected + 2
+
+    def test_malformed_token_error_message(self):
+        # Égalité exacte (pas `match=`, qui n'est qu'une recherche de
+        # sous-chaîne et ne distinguerait pas "Malformed token" de
+        # "XXMalformed tokenXX").
+        with pytest.raises(JWTError) as exc_info:
+            decode_token("only.two.parts.oops.four")
+        assert str(exc_info.value) == "Malformed token"
+
+    def test_unsupported_algorithm_error_message(self):
+        import json as _json
+
+        token = create_token("user-1", "a@b.com")
+        _, payload, sig = token.split(".")
+        evil_header = _b64url_encode(_json.dumps({"alg": "HS512", "typ": "JWT"}).encode())
+        with pytest.raises(JWTError) as exc_info:
+            decode_token(f"{evil_header}.{payload}.{sig}")
+        assert str(exc_info.value) == "Unsupported algorithm"
+
+    def test_invalid_signature_error_message(self):
+        token = create_token("user-456", "a@b.com")
+        tampered = token[:-5] + "XXXXX"
+        with pytest.raises(JWTError) as exc_info:
+            decode_token(tampered)
+        assert str(exc_info.value) == "Invalid signature"
+
+    def test_expired_token_error_message_and_boundary(self):
+        import json as _json
+
+        header = _b64url_encode(_json.dumps({"alg": "HS256", "typ": "JWT"}).encode())
+        expired_payload = _b64url_encode(
+            _json.dumps({"sub": "u", "email": "e", "exp": int(time.time()) - 10}).encode()
+        )
+        signing_input = f"{header}.{expired_payload}"
+        sig = hmac.new(settings.jwt_secret.encode(), signing_input.encode(), hashlib.sha256).digest()
+        token = f"{signing_input}.{_b64url_encode(sig)}"
+        with pytest.raises(JWTError) as exc_info:
+            decode_token(token)
+        assert str(exc_info.value) == "Token expired"
+
+    def test_exp_exactly_now_is_not_expired(self):
+        # `payload.get("exp", 0) < time.time()` : une expiration égale à
+        # l'instant présent ne doit PAS être rejetée (limite stricte `<`,
+        # pas `<=`).
+        import json as _json
+
+        exp = int(time.time()) + 5
+        header = _b64url_encode(_json.dumps({"alg": "HS256", "typ": "JWT"}).encode())
+        payload_b64 = _b64url_encode(_json.dumps({"sub": "u", "email": "e", "exp": exp}).encode())
+        signing_input = f"{header}.{payload_b64}"
+        sig = hmac.new(settings.jwt_secret.encode(), signing_input.encode(), hashlib.sha256).digest()
+        token = f"{signing_input}.{_b64url_encode(sig)}"
+        payload = decode_token(token)
+        assert payload["exp"] == exp
+
+    def test_exp_equal_to_current_time_is_not_expired(self):
+        # Frontière stricte : `exp < time.time()`, jamais `<=` — un jeton
+        # dont l'expiration tombe exactement à l'instant présent doit
+        # encore être accepté. `time.time()` figé pour un test déterministe.
+        import json as _json
+        from unittest.mock import patch
+
+        frozen_now = 2_000_000_000.0
+        header = _b64url_encode(_json.dumps({"alg": "HS256", "typ": "JWT"}).encode())
+        payload_b64 = _b64url_encode(
+            _json.dumps({"sub": "u", "email": "e", "exp": int(frozen_now)}).encode()
+        )
+        signing_input = f"{header}.{payload_b64}"
+        sig = hmac.new(settings.jwt_secret.encode(), signing_input.encode(), hashlib.sha256).digest()
+        token = f"{signing_input}.{_b64url_encode(sig)}"
+        with patch("app.domain.auth.time.time", return_value=frozen_now):
+            payload = decode_token(token)
+        assert payload["exp"] == int(frozen_now)
 
 
 # ── POST /auth/signup ─────────────────────────────────────────────────────────

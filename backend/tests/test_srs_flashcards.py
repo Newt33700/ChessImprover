@@ -54,6 +54,15 @@ class TestExtractBlunderFlashcards:
         moves = [_move(cpl=300, best_move_san="Nc3", move_san="Nc3")]
         assert extract_blunder_flashcards(moves) == []
 
+    def test_skipped_move_does_not_stop_later_ones(self):
+        # `continue`, jamais `break` : un coup ignoré (best_move == move joué)
+        # ne doit pas empêcher la détection d'une gaffe suivante.
+        moves = [
+            _move(cpl=300, fen="fenA", best_move_san="Nc3", move_san="Nc3"),  # ignoré
+            _move(cpl=300, fen="fenB", best_move_san="Qxe5"),  # doit être détecté
+        ]
+        assert extract_blunder_flashcards(moves) == [{"fen": "fenB", "solution": "Qxe5"}]
+
     def test_multiple_blunders_yield_multiple_cards(self):
         moves = [
             _move(cpl=200, fen="fenA", best_move_san="Qxe5"),

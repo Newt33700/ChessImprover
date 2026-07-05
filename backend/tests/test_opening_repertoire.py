@@ -2,7 +2,20 @@
 
 from __future__ import annotations
 
-from app.domain.opening_repertoire import infer_quality, validate_move_sequence
+from app.domain.opening_repertoire import (
+    DEFAULT_EASE_FACTOR,
+    DEFAULT_INTERVAL_DAYS,
+    infer_quality,
+    validate_move_sequence,
+)
+
+
+def test_default_ease_factor_is_2_5():
+    assert DEFAULT_EASE_FACTOR == 2.5
+
+
+def test_default_interval_days_is_1():
+    assert DEFAULT_INTERVAL_DAYS == 1
 
 
 class TestValidateMoveSequence:

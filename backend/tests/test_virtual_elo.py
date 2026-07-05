@@ -58,6 +58,13 @@ class TestAnchors:
         assert acpl_to_elo_base(110) == 600
         assert acpl_to_elo_base(200) == 600
 
+    def test_floor_check_uses_acpl_not_elo_value(self):
+        # `ACPL_ELO_ANCHORS[-1][0]` (ACPL=110), pas `[-1][1]` (Elo=600) : un
+        # ACPL de 150 doit être plafonné au plancher directement, pas
+        # retomber dans la boucle d'interpolation (qui ne couvre que
+        # jusqu'à 110 et ne trouverait aucun segment correspondant).
+        assert acpl_to_elo_base(150) == 600
+
 
 # ===================================================================
 # acpl_to_elo_base — interpolation

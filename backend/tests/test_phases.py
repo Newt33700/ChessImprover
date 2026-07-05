@@ -109,6 +109,12 @@ class TestIsEndgame:
         board = chess.Board("r3k1n1/6q1/8/8/8/8/1Q6/4K3 w - - 0 1")
         assert is_endgame(board) is False
 
+    def test_queens_one_extra_black_side(self):
+        # Symétrie de test_queens_one_extra_each : exactement 1 extra côté
+        # noir (borne `<= 1` du camp noir), blanc à 0 → finale.
+        board = chess.Board("r3k3/6q1/8/8/8/8/1Q6/4K3 w - - 0 1")
+        assert is_endgame(board) is True
+
 
 # ===================================================================
 # opening_end_ply
