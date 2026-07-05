@@ -25,7 +25,10 @@ def _payload(initial_ply=4, solution=None, rating=1550, puzzle_id="abcd1", theme
             "id": puzzle_id,
             "rating": rating,
             "initialPly": initial_ply,
-            "solution": solution if solution is not None else ["f1b5", "a7a6", "b5a4", "g8f6"],
+            # `initialPly=4` = index du dernier coup déjà joué (Bb5, cf. PGN) ;
+            # la position de départ du puzzle est donc après 5 demi-coups
+            # (Noirs au trait) — "a7a6" y est un coup noir légal.
+            "solution": solution if solution is not None else ["a7a6", "b5a4", "g8f6"],
             "themes": themes or [],
         },
     }
@@ -76,8 +79,8 @@ class TestParsePuzzlePayload:
         assert parsed["category"] == "mate_in_2"
         assert parsed["difficulty_elo"] == 1550
         assert parsed["lichess_id"] == "abcd1"
-        # solution[0] ("f1b5") est auto-joué pour atteindre le FEN retourné ;
-        # solution restante = ce que le solveur doit trouver.
+        # EPIC 34 hotfix : `solution` est la séquence COMPLÈTE à résoudre —
+        # aucun élément n'est auto-joué (cf. payload réel de production).
         assert parsed["solution"] == ["a7a6", "b5a4", "g8f6"]
         assert parsed["fen"] == "r1bqkbnr/pppp1ppp/2n5/1B2p3/4P3/5N2/PPPP1PPP/RNBQK2R b KQkq - 3 3"
 
@@ -103,9 +106,12 @@ class TestParsePuzzlePayload:
     def test_empty_solution_list_returns_none(self):
         assert parse_puzzle_payload(_payload(solution=[]), category="mate_in_1") is None
 
-    def test_solution_with_only_the_setup_move_returns_none(self):
-        # Rien à résoudre après le coup auto-joué : donnée inexploitable.
-        assert parse_puzzle_payload(_payload(solution=["f1b5"]), category="mate_in_1") is None
+    def test_single_move_solution_is_valid(self):
+        # EPIC 34 hotfix : un puzzle à un seul coup (ex. mat en 1) est
+        # parfaitement valide — rien n'est plus "auto-joué" avant de résoudre.
+        parsed = parse_puzzle_payload(_payload(solution=["a7a6"]), category="mate_in_1")
+        assert parsed is not None
+        assert parsed["solution"] == ["a7a6"]
 
     def test_non_integer_rating_returns_none(self):
         payload = _payload()
@@ -115,10 +121,16 @@ class TestParsePuzzlePayload:
     def test_unreadable_pgn_returns_none(self):
         assert parse_puzzle_payload(_payload(pgn="garbage"), category="mate_in_1") is None
 
-    def test_illegal_setup_move_returns_none(self):
+    def test_illegal_first_move_returns_none(self):
+        # "a1a1" n'est pas un coup légal (case de départ = case d'arrivée).
         assert parse_puzzle_payload(_payload(solution=["a1a1", "e7e5"]), category="mate_in_1") is None
 
-    def test_malformed_setup_move_token_returns_none(self):
+    def test_already_played_move_is_illegal_at_the_real_position(self):
+        # "e7e5" a déjà été joué dans le PGN (2ᵉ demi-coup) : la case e7 est
+        # vide à la vraie position de départ du puzzle (après 5 demi-coups).
+        assert parse_puzzle_payload(_payload(solution=["e7e5"]), category="mate_in_1") is None
+
+    def test_malformed_first_move_token_returns_none(self):
         assert parse_puzzle_payload(_payload(solution=["not-a-move", "e7e5"]), category="mate_in_1") is None
 
     def test_completely_unexpected_shape_returns_none(self):
@@ -126,3 +138,30 @@ class TestParsePuzzlePayload:
 
     def test_none_payload_fields_return_none(self):
         assert parse_puzzle_payload({"game": None, "puzzle": None}, category="mate_in_1") is None
+
+    def test_real_production_payload_regression(self):
+        # EPIC 34 hotfix — payload RÉEL capturé en production (04/07) qui
+        # révélait le bug initialPly/off-by-one : доit désormais se parser
+        # correctement (Noirs jouent Bxe2, Blancs Rxe2 forcé, Noirs Bxc1).
+        payload = {
+            "game": {
+                "pgn": (
+                    "d4 c5 d5 e5 c4 d6 e4 Be7 Nf3 Nf6 Nc3 O-O Bd3 h6 O-O Nh7 "
+                    "Ne1 f5 f4 fxe4 Bxe4 Nd7 fxe5 Rxf1+ Kxf1 Nxe5 b3 Bg4 Qc2 "
+                    "Qf8+ Kg1 Nf6 Bb2 a6 Nd3 Nxe4 Nxe4 Nxd3 Qxd3 Qd8 Qg3 h5 "
+                    "h3 Bh4 Qxd6 Qxd6 Nxd6 Bd7 Nxb7 Rc8 Nd6 Rf8 Rf1 Rxf1+ "
+                    "Kxf1 Be7 Ne4 Bf5 Ng3 Bd3+ Ke1 h4 Ne2 Bg5 Kd1 Kf7 Ba3 "
+                    "Be3 Bc1"
+                ),
+            },
+            "puzzle": {
+                "id": "pmR1P", "rating": 1386, "initialPly": 68,
+                "solution": ["d3e2", "d1e2", "e3c1"],
+                "themes": ["advantage", "short", "endgame"],
+            },
+        }
+        parsed = parse_puzzle_payload(payload, category=None)
+        assert parsed is not None
+        assert parsed["solution"] == ["d3e2", "d1e2", "e3c1"]
+        assert parsed["difficulty_elo"] == 1386
+        assert parsed["lichess_id"] == "pmR1P"

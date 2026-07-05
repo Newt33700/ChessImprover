@@ -1309,13 +1309,17 @@ Reste à faire, consigné en Backlog (README §11) : migration complète des 5 a
 
 **Validation EPIC 34 :** backend **964/964 pytest** (48 nouveaux : `test_lichess_puzzles.py` 22, `test_tactics.py` +17, `test_tactics_api.py` +9), frontend 405/405 Jest (inchangé — plomberie DOM côté Coach Tactique, sans nouvelle fonction pure), E2E `tactics.spec.js` mis à jour et stabilisé (3/3, 5 exécutions consécutives vérifiées), couverture ≥ 80 % maintenue.
 
-## Hotfix prod (04/07) : diagnostic « réponse Lichess inexploitable »
+## Hotfix prod (04/07) : correction du parsing Lichess (`initialPly` mal interprété)
 
-**Constat en production** (logs Render, une fois EPIC 34 réellement déployé) : `tactics/next: réponse Lichess inexploitable (angle=None)` — l'appel réseau à Lichess réussit (aucune exception, pas de « Lichess injoignable »), mais `parse_puzzle_payload` rejette la réponse. La forme exacte du JSON de `GET /api/puzzle/next` n'a pas pu être vérifiée pendant le développement (réseau bloqué dans le bac à sable de développement) : l'implémentation s'est appuyée sur la documentation connue de l'API, qui ne correspond visiblement pas exactement (ou plus) à la réponse réelle.
+**Constat en production** (logs Render, une fois EPIC 34 réellement déployé) : `tactics/next: réponse Lichess inexploitable (angle=None)` — l'appel réseau à Lichess réussit, mais `parse_puzzle_payload` rejette systématiquement la réponse. La forme exacte du JSON de `GET /api/puzzle/next` n'avait pas pu être vérifiée pendant le développement (réseau bloqué dans le bac à sable) ; un premier correctif a ajouté le payload brut au log pour diagnostiquer sur une vraie réponse plutôt que par supposition.
 
-**Correctif (diagnostic, pas encore le fix définitif)** : le message de log en cas de rejet embarque désormais le payload brut reçu (tronqué à 2000 caractères) — `routers/tactics.py:_fetch_lichess_problem`. Le prochain appel en échec révèlera la forme exacte reçue, permettant de corriger `parse_puzzle_payload` avec certitude plutôt que par supposition. Le repli sur le seed local (variété par exclusion + mat en 2 corrigé) reste pleinement fonctionnel entre-temps — seul le bénéfice de la source Lichess (volume de puzzles) est indisponible tant que le parsing n'est pas corrigé.
+**Payload réel obtenu** (extrait) : `"initialPly": 68`, `"solution": ["d3e2", "d1e2", "e3c1"]`, PGN de 69 demi-coups se terminant par `"... Ba3 Be3 Bc1"`. En rejouant `initialPly` (68) demi-coups comme l'implémentation initiale le faisait, le coup suivant attendu était celui du PGN lui-même (`Bc1`, un coup Blanc) — alors que `solution[0]` (`d3e2`) est un coup **Noir**, illégal à cette position : d'où le rejet systématique.
 
-**Validation :** backend 964/964 pytest (inchangé, changement de log uniquement).
+**Cause racine** : `initialPly` désigne l'index **0-based du DERNIER coup déjà joué** dans `game.pgn`, pas « le nombre de demi-coups à rejouer avant le coup qui amène le puzzle » comme le laissait penser une première lecture de la documentation publique. Il fallait donc rejouer `initialPly + 1` demi-coups. Autre correction liée : `solution` n'a **aucun élément auto-joué** — c'est la séquence complète que le solveur doit jouer lui-même (son coup, la réplique forcée adverse, son coup suivant…), contrairement à l'hypothèse initiale.
+
+**Correctif** : `domain/lichess_puzzles.py:parse_puzzle_payload` rejoue désormais `initialPly + 1` demi-coups et conserve `solution` intégralement (plus de découpage `solution[1:]`). Un test de régression (`test_real_production_payload_regression`) fige le payload réel capturé en production. Le message de diagnostic (payload brut tronqué dans le log en cas d'échec de parsing) est conservé pour toute future divergence.
+
+**Validation :** backend **966/966 pytest** (+2 nets : ajout de tests de régression/cas limites, un test devenu obsolète par le changement de sémantique retiré), tests Lichess existants adaptés au payload réellement rejoué (`initialPly + 1`).
 
 ## EPIC 35 : Audit mutation testing — durcissement de la suite de tests + bug board Sandbox/Ghost
 
@@ -1335,4 +1339,4 @@ Reste à faire, consigné en Backlog (README §11) : migration complète des 5 a
 
 **Hors périmètre (limites de temps, pas d'obstacle technique)** : quelques mutants de priorité entre pièces multiples en prise (`coaching_voice._find_hanging_piece_square`, choix de la pièce la plus précieuse) nécessiteraient des positions à plusieurs pièces en prise simultanément — non traités, valeur marginale par rapport au reste de l'audit.
 
-**Validation EPIC 35 :** backend **1084/1084 pytest** (+120 TUs), frontend **423/423 Jest** (+18 TUs, dont la régression `board_manager.js`), couverture ≥ 80 % maintenue sur les fichiers suivis.
+**Validation EPIC 35 :** backend **1086/1086 pytest** (+120 TUs sur la base 966 post-fix Lichess), frontend **423/423 Jest** (+18 TUs, dont la régression `board_manager.js`), couverture ≥ 80 % maintenue sur les fichiers suivis.
