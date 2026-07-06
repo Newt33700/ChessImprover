@@ -7,7 +7,7 @@ dépendre du fichier `.csv.zst` réel ni d'une connexion Postgres.
 
 from __future__ import annotations
 
-from scripts.ingest_lichess_puzzles import parse_puzzle_row
+from scripts.ingest_lichess_puzzles import DEFAULT_PUZZLE_DUMP_URL, is_url, parse_puzzle_row
 
 
 def _row(**overrides) -> dict:
@@ -66,3 +66,17 @@ class TestParsePuzzleRow:
             isinstance(puzzle[key], int)
             for key in ("rating", "rating_deviation", "popularity", "nb_plays")
         )
+
+
+class TestIsUrl:
+    def test_https_dump_url_is_a_url(self):
+        assert is_url(DEFAULT_PUZZLE_DUMP_URL) is True
+
+    def test_http_url_is_a_url(self):
+        assert is_url("http://example.com/dump.csv.zst") is True
+
+    def test_local_path_is_not_a_url(self):
+        assert is_url("lichess_db_puzzle.csv.zst") is False
+
+    def test_absolute_local_path_is_not_a_url(self):
+        assert is_url("/data/lichess_db_puzzle.csv.zst") is False
