@@ -41,6 +41,15 @@ jobs:
         working-directory: backend
         run: pip install -r requirements.txt
 
+      # DATABASE_URL (CockroachDB Cloud) utilise sslmode=verify-full : le
+      # certificat racine du cluster doit être présent localement, sinon
+      # psycopg échoue avec « root certificate file ... does not exist ».
+      - name: Download CockroachDB CA certificate
+        run: |
+          mkdir -p "$HOME/.postgresql"
+          curl --create-dirs -o "$HOME/.postgresql/root.crt" \
+            'https://cockroachlabs.cloud/clusters/206ab806-09a1-4320-8a47-2080e53e9b40/cert'
+
       - name: Run ingestion
         working-directory: backend
         env:

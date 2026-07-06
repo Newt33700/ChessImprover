@@ -2097,10 +2097,13 @@ Job 1 : lint-migrations (ubuntu-latest)
 
 Job 2 : push-migrations (main seulement, dépend de lint-migrations)
   → pip install -r backend/requirements.txt
+  → télécharge le certificat racine du cluster CockroachDB ($HOME/.postgresql/root.crt)
   → python -m scripts.apply_migrations "$DATABASE_URL"
 ```
 
 **Secret requis :** `DATABASE_URL` (**même secret** que §7.5 — une connexion Postgres directe, celle que le backend utilise en production). Ex-pipeline Supabase (`supabase/setup-cli` + `supabase db push`, secrets `SUPABASE_ACCESS_TOKEN`/`SUPABASE_DB_PASSWORD`/`SUPABASE_PROJECT_ID`) retiré après saturation du quota gratuit Supabase (EPIC 39) — `scripts/apply_migrations.py` fonctionne contre n'importe quel Postgres compatible, plus besoin du CLI ni des secrets propres à Supabase.
+
+**Certificat TLS CockroachDB Cloud :** `DATABASE_URL` utilise `sslmode=verify-full`, qui exige un certificat racine local (`~/.postgresql/root.crt`) — absent par défaut sur un runner GitHub Actions ou dans l'image Docker Render. Étape ajoutée : `curl --create-dirs -o "$HOME/.postgresql/root.crt" 'https://cockroachlabs.cloud/clusters/206ab806-09a1-4320-8a47-2080e53e9b40/cert'` (URL spécifique à ce cluster — à mettre à jour si le cluster est recréé). Même fix appliqué à `ingest-puzzles.yml` (§7.5) et à `backend/Dockerfile` (build, pour le déploiement Render).
 
 ### 7.5 Ingestion ponctuelle des puzzles Lichess (EPIC 37)
 
@@ -2110,6 +2113,7 @@ Job 2 : push-migrations (main seulement, dépend de lint-migrations)
 ```
 Job : ingest (ubuntu-latest, timeout 180 min, concurrency group anti-double-run)
   → pip install -r backend/requirements.txt
+  → télécharge le certificat racine du cluster CockroachDB ($HOME/.postgresql/root.crt)
   → python -m scripts.ingest_lichess_puzzles [dump_url]
     (dump_url optionnel, input du workflow ; vide = DEFAULT_PUZZLE_DUMP_URL,
     le dump officiel https://database.lichess.org/lichess_db_puzzle.csv.zst)
