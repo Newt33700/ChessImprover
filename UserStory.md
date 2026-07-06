@@ -1448,3 +1448,23 @@ Reste à faire, consigné en Backlog (README §11) : migration complète des 5 a
 **Hors périmètre de cette US** : pas de nouveau test e2e Playwright pour ce flux (`openings.spec.js` reste retiré, cf. §10 README) — couverture actuelle = vérification manuelle + Jest `api_client.test.js`.
 
 **Validation US 38.2 :** frontend **434/434 Jest** (net stable : 6 tests EPIC 9 remplacés par 5 EPIC 38), backend **1155/1155 pytest** (+1 test sur les nouveaux champs `success`/`solution`), `flake8` propre, vérification visuelle manuelle bout-en-bout (import → échec → session terminée → nouvel import → succès).
+
+## EPIC 39 : Outillage de migration — Supabase → CockroachDB (quota gratuit saturé)
+
+**Contexte** : le quota Supabase gratuit (500 Mo) est saturé alors même que le dump complet des puzzles Lichess (EPIC 37) n'a pas encore été ingéré en production, et l'utilisateur prévoit d'ajouter le référentiel d'ouvertures ECO (EPIC 38) par-dessus. Demande explicite : une solution d'hébergement Postgres gratuite offrant plusieurs Go. CockroachDB Basic (ex-Serverless) retenu — **5 Gio gratuits**, vrai wire-protocol Postgres, choisi par l'utilisateur après comparaison avec Neon (3 Gio/branche, Postgres non distribué).
+
+**Constat bloquant identifié avant tout script** : les migrations de ce dépôt contiennent des `CREATE POLICY`/`ALTER TABLE ... ENABLE ROW LEVEL SECURITY` reposant sur `auth.uid()`, une fonction propre à Supabase/PostgREST. Le backend ne passe jamais par PostgREST — connexion directe `psycopg` avec son propre `DATABASE_URL`, autorisation faite côté application (`WHERE user_id = ...`) — ces politiques RLS ne sont donc **jamais appliquées à l'exécution**, quel que soit le moteur cible. Rejouer les migrations telles quelles sur CockroachDB (support RLS/triggers incertain selon les versions) aurait été un pari inutile pour une protection déjà inerte.
+
+**Statut :** ✅ Implémenté (outillage — la bascule effective vers un cluster CockroachDB réel reste à exécuter par l'utilisateur, cf. tutoriel fourni en session) :
+
+- **`scripts/apply_migrations.py`** (nouveau) : `strip_unsupported_statements` (fonction pure) retire les `CREATE POLICY`/`ENABLE ROW LEVEL SECURITY` (inertes, cf. ci-dessus) et le trigger `set_updated_at`/`user_data.updated_at` (colonne jamais lue côté application) de chaque fichier `.sql` avant exécution. `split_statements` découpe le SQL nettoyé en instructions individuelles. `apply_migrations(dsn, migrations_dir)` rejoue tous les fichiers de `supabase/migrations/` dans l'ordre chronologique (tri lexicographique sur le préfixe horodaté) contre n'importe quelle base Postgres compatible — CockroachDB, Neon, Postgres auto-hébergé. Rejouable sans risque (`CREATE TABLE/INDEX IF NOT EXISTS`, `ON CONFLICT DO NOTHING`).
+- **Vérifié sur les 23 migrations réelles du dépôt** : zéro `CREATE POLICY`/`ROW LEVEL SECURITY`/`auth.uid()`/`CREATE TRIGGER` résiduel après nettoyage, en conservant intégralement les `CREATE TABLE`/`CREATE INDEX`/`CHECK`/clés étrangères.
+- **Tests** : `tests/test_apply_migrations.py` (9 TUs, fonctions pures uniquement — pas de connexion réelle).
+
+**Hors périmètre de cette US (actions qui ne peuvent être effectuées que par l'utilisateur, aucun accès depuis ce sandbox)** :
+- Création du cluster CockroachDB Basic et récupération du DSN.
+- Exécution réelle de `python -m scripts.apply_migrations <DSN CockroachDB>` contre le nouveau cluster.
+- Mise à jour du secret `DATABASE_URL` (GitHub Actions `ingest-puzzles.yml`, déploiement backend Render) pour pointer vers CockroachDB au lieu de Supabase.
+- Le pipeline `deploy-database.yml` (§7.4) reste spécifique à Supabase (`supabase db push` via le CLI officiel) : à désactiver ou remplacer si la bascule vers CockroachDB devient définitive — décision volontairement laissée à l'utilisateur, pas prise unilatéralement ici.
+
+**Validation EPIC 39 :** backend **1164/1164 pytest** (+9 TUs), `flake8` propre sur les fichiers créés, vérification manuelle du nettoyage sur les 23 migrations réelles du dépôt.
