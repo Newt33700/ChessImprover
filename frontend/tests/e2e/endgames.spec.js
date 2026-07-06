@@ -29,7 +29,7 @@ test("mat trouvé (Roi+Dame) : Elo monte, feedback positif", async ({ page }) =>
   await expect(page.locator("#endgame-elo-badge")).toHaveText("Elo 1015");
 });
 
-test("coup incorrect : halo rouge, solution révélée", async ({ page }) => {
+test("coup incorrect : halo rouge, solution fléchée (EPIC 32)", async ({ page }) => {
   await page.goto("/index.html");
   await signupFreshUser(page, "e2e_endgames");
 
@@ -41,7 +41,11 @@ test("coup incorrect : halo rouge, solution révélée", async ({ page }) => {
   await page.evaluate(() => window.app._onEndgameDrop("a1", "a2"));
 
   await expect(page.locator("#endgame-board")).toHaveClass(/tactics-board--error/);
-  await expect(page.locator("#endgame-feedback")).toContainText("Coup incorrect. Solution");
+  // EPIC 32 : la solution n'est plus donnée en texte mais rejouée sur
+  // l'échiquier (flèche verte = coup attendu, orange = coup joué).
+  await expect(page.locator("#endgame-feedback")).toContainText(
+    "❌ Raté — la flèche verte montre le coup attendu, l'orange votre coup."
+  );
 });
 
 test("le menu de catégories filtre bien (Roi+Tour)", async ({ page }) => {

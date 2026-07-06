@@ -35,6 +35,7 @@ from app.domain.tactics import (
     compute_stats_by_theme,
     solution_sequence,
 )
+from app.config import settings
 from app.infrastructure import db_client
 from app.routers.deps import get_current_user_id
 
@@ -100,7 +101,7 @@ async def next_problem(
     if theme_id is not None and theme_id not in TACTICAL_THEMES:
         raise HTTPException(status_code=422, detail=f"theme_id inconnu : {theme_id!r}")
 
-    problem = await _fetch_lichess_problem(theme_id)
+    problem = None if settings.disable_lichess_puzzles else await _fetch_lichess_problem(theme_id)
     if problem is None:
         tactical_elo = db_client.get_tactical_elo(user_id)
         recent_ids = db_client.get_recent_tactical_problem_ids(user_id)

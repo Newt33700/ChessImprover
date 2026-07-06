@@ -90,7 +90,11 @@ test("Rappel Actif : coup incorrect révèle la solution", async ({ page }) => {
   await page.evaluate(() => window.app._onFlashcardDrop("b1", "c3"));
 
   await expect(page.locator("#flashcards-board")).toHaveClass(/tactics-board--error/);
-  await expect(page.locator("#flashcards-feedback")).toContainText("Solution : d4");
+  // EPIC 32 : la solution n'est plus donnée en texte mais rejouée sur
+  // l'échiquier (flèche verte) ; la carte reste programmée pour révision.
+  await expect(page.locator("#flashcards-feedback")).toContainText(
+    "❌ Raté — la flèche verte montre le coup attendu. La carte revient bientôt."
+  );
 });
 
 test("sans gaffe, le Cimetière reste vide", async ({ page }) => {
@@ -101,5 +105,8 @@ test("sans gaffe, le Cimetière reste vide", async ({ page }) => {
   await submitAndWaitCompleted(page, cleanPgn, {});
 
   await page.click("#btn-advstats");
-  await expect(page.locator("#flashcards-summary .tac-rating")).toHaveText("0");
+  // US 22.4 : zéro flashcard n'affiche plus un compteur « 0 » mais un état
+  // vide stimulant avec appel à l'action.
+  await expect(page.locator("#flashcards-summary .empty-state")).toContainText("Aucune donnée pour le moment");
+  await expect(page.locator("#flashcards-summary .tac-rating")).toHaveCount(0);
 });
