@@ -1451,7 +1451,7 @@ Reste à faire, consigné en Backlog (README §11) : migration complète des 5 a
 
 ## EPIC 39 : Outillage de migration — Supabase → CockroachDB (quota gratuit saturé)
 
-**Contexte** : le quota Supabase gratuit (500 Mo) est saturé alors même que le dump complet des puzzles Lichess (EPIC 37) n'a pas encore été ingéré en production, et l'utilisateur prévoit d'ajouter le référentiel d'ouvertures ECO (EPIC 38) par-dessus. Demande explicite : une solution d'hébergement Postgres gratuite offrant plusieurs Go. CockroachDB Basic (ex-Serverless) retenu — **5 Gio gratuits**, vrai wire-protocol Postgres, choisi par l'utilisateur après comparaison avec Neon (3 Gio/branche, Postgres non distribué).
+**Contexte** : le quota Supabase gratuit (500 Mo) est saturé alors même que le dump complet des puzzles Lichess (EPIC 37) n'a pas encore été ingéré en production, et l'utilisateur prévoit d'ajouter le référentiel d'ouvertures ECO (EPIC 38) par-dessus. Demande explicite : une solution d'hébergement Postgres gratuite offrant plusieurs Go. CockroachDB Basic (ex-Serverless) retenu — **10 Gio + 50M Request Units gratuits/mois** (confirmé sur l'écran réel de création de cluster), vrai wire-protocol Postgres, choisi par l'utilisateur après comparaison avec Neon (0,5 Gio/projet) et Aiven (1 Gio) — trop faibles — et face au constat qu'une migration NoSQL/SQLite (Turso, même volume gratuit) exigerait une réécriture complète de la couche d'accès aux données (UUID/JSONB/tableaux Postgres) pour un gain nul.
 
 **Constat bloquant identifié avant tout script** : les migrations de ce dépôt contiennent des `CREATE POLICY`/`ALTER TABLE ... ENABLE ROW LEVEL SECURITY` reposant sur `auth.uid()`, une fonction propre à Supabase/PostgREST. Le backend ne passe jamais par PostgREST — connexion directe `psycopg` avec son propre `DATABASE_URL`, autorisation faite côté application (`WHERE user_id = ...`) — ces politiques RLS ne sont donc **jamais appliquées à l'exécution**, quel que soit le moteur cible. Rejouer les migrations telles quelles sur CockroachDB (support RLS/triggers incertain selon les versions) aurait été un pari inutile pour une protection déjà inerte.
 
@@ -1464,7 +1464,18 @@ Reste à faire, consigné en Backlog (README §11) : migration complète des 5 a
 **Hors périmètre de cette US (actions qui ne peuvent être effectuées que par l'utilisateur, aucun accès depuis ce sandbox)** :
 - Création du cluster CockroachDB Basic et récupération du DSN.
 - Exécution réelle de `python -m scripts.apply_migrations <DSN CockroachDB>` contre le nouveau cluster.
-- Mise à jour du secret `DATABASE_URL` (GitHub Actions `ingest-puzzles.yml`, déploiement backend Render) pour pointer vers CockroachDB au lieu de Supabase.
-- Le pipeline `deploy-database.yml` (§7.4) reste spécifique à Supabase (`supabase db push` via le CLI officiel) : à désactiver ou remplacer si la bascule vers CockroachDB devient définitive — décision volontairement laissée à l'utilisateur, pas prise unilatéralement ici.
+- Mise à jour du secret `DATABASE_URL` (GitHub Actions, déploiement backend Render) pour pointer vers CockroachDB au lieu de Supabase.
 
 **Validation EPIC 39 :** backend **1164/1164 pytest** (+9 TUs), `flake8` propre sur les fichiers créés, vérification manuelle du nettoyage sur les 23 migrations réelles du dépôt.
+
+### US 39.1 : Pipeline CI générique — `deploy-database.yml` ne dépend plus du CLI Supabase
+
+**Contexte** : demande explicite de l'utilisateur — le pipeline `deploy-database.yml` poussait les migrations exclusivement via le CLI `supabase` (`supabase link`/`supabase db push`, secrets `SUPABASE_ACCESS_TOKEN`/`SUPABASE_DB_PASSWORD`/`SUPABASE_PROJECT_ID`), inutilisable dès que la base cible n'est plus Supabase. Sans ce correctif, chaque nouvelle migration après la bascule CockroachDB serait restée à appliquer manuellement.
+
+**Statut :** ✅ Implémenté :
+- **`deploy-database.yml`** : job `push-migrations` réécrit — `supabase/setup-cli` + `supabase link/db push` remplacés par `pip install -r backend/requirements.txt` puis `python -m scripts.apply_migrations "$DATABASE_URL"` (même script que l'US 39, EPIC 39). Le job `lint-migrations` (sqlfluff, dialecte `postgres`) est inchangé — le SQL reste du Postgres standard, valable pour CockroachDB. Déclencheur inchangé (push/PR sur `main` affectant `supabase/migrations/**`).
+- **Secret** : `DATABASE_URL`, **partagé** avec `ingest-puzzles.yml` — plus aucun secret `SUPABASE_*` requis pour ce pipeline. Une fois le secret repointé vers CockroachDB (US 39, étape manuelle utilisateur), chaque futur push de migration sur `main` s'y applique automatiquement, sans intervention.
+- **`ingest-puzzles.yml`** : commentaire mis à jour (ne référence plus les secrets `SUPABASE_*`, désormais obsolètes).
+- YAML validé (`yaml.safe_load`) sur les deux workflows modifiés.
+
+**Validation US 39.1 :** YAML valide sur les 2 workflows modifiés ; aucun test Python impacté (fichiers `.yml` uniquement, pas de logique applicative nouvelle — la logique de nettoyage RLS/trigger déjà testée en EPIC 39 est réutilisée telle quelle).
