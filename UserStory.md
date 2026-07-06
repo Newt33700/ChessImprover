@@ -1492,3 +1492,16 @@ Reste à faire, consigné en Backlog (README §11) : migration complète des 5 a
 **Hors périmètre** : ce sandbox n'a pas accès pour re-générer ce certificat si le cluster CockroachDB est un jour recréé (nouvel identifiant) — l'URL du certificat dans les 3 fichiers devra alors être mise à jour manuellement.
 
 **Validation US 39.2 :** YAML validé sur les 2 workflows ; `Dockerfile` non testable en CI (pas de build Docker dans ce sandbox) — à valider par le prochain déploiement Render réel.
+
+### US 39.3 : Bug réel — un commentaire contenant `;` corrompait `split_statements`
+
+**Contexte** : après correction TLS (US 39.2) et rotation du mot de passe CockroachDB par l'utilisateur, le run `deploy-database.yml` s'est enfin authentifié avec succès et a commencé à exécuter les migrations — mais a échoué sur `20260701194517_tactics_epic8.sql` : `psycopg.errors.SyntaxError: at or near "1000"`. Le SQL envoyé au serveur était `1000 par défaut tant qu'aucune tentative n'a été faite.\nALTER TABLE profiles\nADD COLUMN...` — un fragment de commentaire français mélangé à du SQL réel.
+
+**Cause racine** : `split_statements` découpait d'abord sur `;`, PUIS retirait les lignes de commentaire de chaque fragment. Le commentaire `-- EPIC 3) ; 1000 par défaut...` contient un point-virgule dans son texte français ; le découpage sur `;` AVANT le retrait des commentaires coupait cette ligne en deux — la moitié après le `;` ne commençait plus par `--` et n'était donc plus reconnue comme un commentaire, fuyant comme si c'était du SQL et se recollant à l'instruction `ALTER TABLE` suivante.
+
+**Statut :** ✅ Implémenté :
+- **`scripts/apply_migrations.py:split_statements`** : ordre des opérations inversé — retire d'abord **toutes** les lignes de commentaire `--` du texte entier, puis découpe sur `;` le texte déjà expurgé de tout commentaire. Élimine la classe de bug entière (plus aucun risque qu'un `;` à l'intérieur d'un commentaire ne soit interprété comme séparateur de fin de commentaire).
+- **Vérifié sur les 23 migrations réelles** : aucun statement suspect (fragment de commentaire non-SQL) après nettoyage.
+- **Test de régression** : `test_semicolon_inside_comment_does_not_leak_into_statement`, reproduisant exactement `20260701194517_tactics_epic8.sql`.
+
+**Validation US 39.3 :** backend **1165/1165 pytest** (+1 TU), `flake8` propre. Bug détecté uniquement grâce au run réel contre CockroachDB — aucun des 23 fichiers de test précédents (vérification manuelle « aucun mot-clé RLS/trigger résiduel ») n'avait exercé ce cas précis, les 22 autres migrations n'ayant pas de `;` à l'intérieur d'un commentaire.
