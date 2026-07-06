@@ -103,3 +103,16 @@ class TestSplitStatements:
 
     def test_empty_sql_yields_no_statements(self):
         assert split_statements("   \n  ") == []
+
+    def test_semicolon_inside_comment_does_not_leak_into_statement(self):
+        sql = (
+            "-- Elo tactique du joueur (distinct de l'Elo virtuel Stats\n"
+            "-- Avancées, EPIC 3) ; 1000 par défaut tant qu'aucune\n"
+            "-- tentative n'a été faite.\n"
+            "ALTER TABLE profiles\n"
+            "ADD COLUMN IF NOT EXISTS tactical_elo INTEGER DEFAULT 1000;"
+        )
+        assert split_statements(sql) == [
+            "ALTER TABLE profiles\n"
+            "ADD COLUMN IF NOT EXISTS tactical_elo INTEGER DEFAULT 1000"
+        ]
