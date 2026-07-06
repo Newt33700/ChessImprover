@@ -410,47 +410,61 @@ class EndgameAttemptResult(BaseModel):
 
 
 # ---------------------------------------------------------------------------
-# Entraîneur d'Ouvertures — Répertoire + SRS (EPIC 9, fonctionnalité bonus)
+# Lotus Mastery Engine — Ouvertures (EPIC 38, US 38.1)
+#
+# REMPLACE l'ancien répertoire de lignes + SRS SM-2 (EPIC 9,
+# OpeningLineCreate/Public/ReviewRequest/ReviewResult) par un modèle en
+# arbre de positions (cf. domain/opening_repertoire.py, domain/mastery_engine.py).
 # ---------------------------------------------------------------------------
 
-class OpeningLineCreate(BaseModel):
-    """Nouvelle ligne de répertoire soumise par l'utilisateur."""
-    name: str = Field(..., min_length=1, max_length=80)
-    color: str = Field(..., description="'white' ou 'black'")
-    moves: List[str] = Field(..., min_items=1, description="Coups en notation SAN, dans l'ordre")
-
-    @validator("color")
-    def _validate_color(cls, value: str) -> str:  # noqa: N805 - validator Pydantic
-        if value not in ("white", "black"):
-            raise ValueError("color doit être 'white' ou 'black'")
-        return value
+class PGNImportRequest(BaseModel):
+    """Import d'un répertoire depuis un PGN (US 38.1)."""
+    repertoire_name: str = Field(..., min_length=1, max_length=80)
+    pgn: str = Field(..., min_length=1)
 
 
-class OpeningLinePublic(BaseModel):
-    """Ligne de répertoire telle qu'exposée au client."""
-    id: str
-    name: str
-    color: str
-    moves: List[str]
-    ease_factor: float
-    interval_days: int
-    repetitions: int
-    due_date: str
+class RepertoireImportResult(BaseModel):
+    """Résultat de l'import : identifiant du répertoire + taille de l'arbre."""
+    repertoire_id: str
+    node_count: int
 
 
-class OpeningLineReviewRequest(BaseModel):
-    """Résultat d'une session de révision (US 9.2) — qualité déjà déduite
-    automatiquement côté frontend du nombre d'erreurs commises."""
-    mistake_count: int = Field(..., ge=0)
+class NextMoveResponse(BaseModel):
+    """Prochain nœud à travailler (générateur de sessions, US 38.1).
+
+    ``fen`` est la position depuis laquelle jouer (jamais ``move_san`` —
+    la solution n'est révélée qu'après validation via
+    ``POST /openings/trainer/attempt``, même politique anti-triche que le
+    Coach Tactique). ``session_complete=True`` avec tous les autres champs
+    absents si rien n'est dû ni à apprendre.
+    """
+    session_complete: bool
+    node_id: Optional[str] = None
+    fen: Optional[str] = None
+    depth_level: Optional[int] = None
+    is_mainline: Optional[bool] = None
+    status: Optional[str] = None
+    mastery_score: Optional[int] = None
+    rank: Optional[str] = None
 
 
-class OpeningLineReviewResult(BaseModel):
-    """Nouveau calendrier SM-2 après une révision."""
-    id: str
-    ease_factor: float
-    interval_days: int
-    repetitions: int
-    due_date: str
+class OpeningAttemptRequest(BaseModel):
+    """Coup joué par l'utilisateur sur un nœud — jamais un verdict de succès
+    envoyé par le client (le routeur compare ``move_san`` à la solution
+    stockée côté serveur avant d'appeler le moteur de maîtrise, même
+    politique anti-triche que le Coach Tactique)."""
+    node_id: str
+    move_san: str = Field(..., min_length=1)
+
+
+class OpeningAttemptResult(BaseModel):
+    """Nouvel état du nœud après une tentative (US 38.1)."""
+    node_id: str
+    status: str
+    mastery_score: int
+    srs_interval: int
+    rank: str
+    unlocked_children: int
 
 
 # ---------------------------------------------------------------------------

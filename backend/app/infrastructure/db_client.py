@@ -708,84 +708,163 @@ def get_tactical_attempts(user_id: str) -> List[Dict[str, Any]]:
     return [a for a in _tactical_attempts if a["user_id"] == user_id]
 
 
-# EPIC 9 — répertoire d'ouvertures (US 9.1/9.2)
-_opening_lines: Dict[str, Dict[str, Any]] = {}  # keyed by line id
+# EPIC 38 — Lotus Mastery Engine : arbre de répertoire + progression par nœud
+# (REMPLACE le répertoire de lignes EPIC 9 ci-dessus, cf. domain/opening_repertoire.py)
+_repertoire_nodes: Dict[str, Dict[str, Any]] = {}  # keyed by node id
+_node_progress: Dict[str, Dict[str, Any]] = {}  # keyed by "user_id:node_id"
+
+#: Position de départ standard — utilisée comme "position de départ" (from_fen)
+#: des nœuds racines (parent_id None), qui n'ont pas de nœud parent à interroger.
+_STANDARD_START_FEN = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"
 
 
-def create_opening_line(user_id: str, name: str, color: str, moves: List[str]) -> Dict[str, Any]:
+def _node_progress_key(user_id: str, node_id: str) -> str:
+    return f"{user_id}:{node_id}"
+
+
+def create_repertoire_nodes(
+    user_id: str, repertoire_id: str, nodes_data: List[Dict[str, Any]]
+) -> List[Dict[str, Any]]:
+    """Assigne un UUID réel à chaque nœud (``parent_index`` -> ``parent_id``)
+    et persiste l'arbre. Génération d'ID commune aux deux backends (in-memory
+    et Postgres) pour ne jamais dupliquer la logique de résolution des FK.
+    """
+    created: List[Dict[str, Any]] = []
+    for entry in nodes_data:
+        node_id = str(uuid.uuid4())
+        parent_index = entry["parent_index"]
+        parent_id = created[parent_index]["id"] if parent_index is not None else None
+        created.append({
+            "id": node_id,
+            "repertoire_id": repertoire_id,
+            "user_id": user_id,
+            "parent_id": parent_id,
+            "move_san": entry["move_san"],
+            "move_fen": entry["move_fen"],
+            "depth_level": entry["depth_level"],
+            "is_mainline": entry["is_mainline"],
+        })
+
     repo = _pg()
     if repo is not None:  # pragma: no cover - nécessite DATABASE_URL
-        return repo.create_opening_line(user_id, name, color, moves)
-    from app.domain.opening_repertoire import DEFAULT_EASE_FACTOR, DEFAULT_INTERVAL_DAYS
-
-    line_id = str(uuid.uuid4())
-    line = {
-        "id": line_id,
-        "user_id": user_id,
-        "name": name,
-        "color": color,
-        "moves": list(moves),
-        "ease_factor": DEFAULT_EASE_FACTOR,
-        "interval_days": DEFAULT_INTERVAL_DAYS,
-        "repetitions": 0,
-        "due_date": datetime.now(timezone.utc).date().isoformat(),
-    }
-    _opening_lines[line_id] = line
-    return line
+        repo.insert_repertoire_nodes(created)
+    else:
+        for node in created:
+            _repertoire_nodes[node["id"]] = node
+    return created
 
 
-def get_opening_lines(user_id: str) -> List[Dict[str, Any]]:
+def get_repertoire_node(node_id: str) -> Optional[Dict[str, Any]]:
     repo = _pg()
     if repo is not None:  # pragma: no cover - nécessite DATABASE_URL
-        return repo.get_opening_lines(user_id)
-    return [line for line in _opening_lines.values() if line["user_id"] == user_id]
+        return repo.get_repertoire_node(node_id)
+    return _repertoire_nodes.get(node_id)
 
 
-def get_due_opening_lines(user_id: str, today: str) -> List[Dict[str, Any]]:
-    """Lignes dont l'échéance de révision (US 9.2) est arrivée ou dépassée."""
+def get_direct_children(node_id: str) -> List[Dict[str, Any]]:
     repo = _pg()
     if repo is not None:  # pragma: no cover - nécessite DATABASE_URL
-        return repo.get_due_opening_lines(user_id, today)
-    return [
-        line for line in _opening_lines.values()
-        if line["user_id"] == user_id and line["due_date"] <= today
-    ]
+        return repo.get_direct_children(node_id)
+    return [n for n in _repertoire_nodes.values() if n["parent_id"] == node_id]
 
 
-def get_opening_line(line_id: str) -> Optional[Dict[str, Any]]:
+def unlock_nodes(user_id: str, node_ids: List[str]) -> int:
+    """Insère une ligne ``user_node_progress`` (statut ``learning``) pour
+    chaque nœud listé, en ignorant ceux déjà débloqués (idempotent — un
+    nœud jamais « re-verrouillé »). Retourne le nombre réellement inséré.
+    """
     repo = _pg()
     if repo is not None:  # pragma: no cover - nécessite DATABASE_URL
-        return repo.get_opening_line(line_id)
-    return _opening_lines.get(line_id)
+        return repo.unlock_nodes(user_id, node_ids)
+    unlocked = 0
+    now_iso = datetime.now(timezone.utc).isoformat()
+    for node_id in node_ids:
+        key = _node_progress_key(user_id, node_id)
+        if key in _node_progress:
+            continue
+        _node_progress[key] = {
+            "id": str(uuid.uuid4()),
+            "user_id": user_id,
+            "node_id": node_id,
+            "status": "learning",
+            "mastery_score": 0,
+            "srs_interval": 1,
+            "next_review_date": now_iso,
+        }
+        unlocked += 1
+    return unlocked
 
 
-def update_opening_line_schedule(
-    line_id: str, ease_factor: float, interval_days: int, repetitions: int, due_date: str
-) -> Optional[Dict[str, Any]]:
+def get_node_progress(user_id: str, node_id: str) -> Optional[Dict[str, Any]]:
     repo = _pg()
     if repo is not None:  # pragma: no cover - nécessite DATABASE_URL
-        return repo.update_opening_line_schedule(
-            line_id, ease_factor, interval_days, repetitions, due_date
+        return repo.get_node_progress(user_id, node_id)
+    return _node_progress.get(_node_progress_key(user_id, node_id))
+
+
+def update_node_progress(
+    user_id: str, node_id: str, mastery_score: int, srs_interval: int,
+    status: str, next_review_date: str,
+) -> Dict[str, Any]:
+    repo = _pg()
+    if repo is not None:  # pragma: no cover - nécessite DATABASE_URL
+        return repo.update_node_progress(
+            user_id, node_id, mastery_score, srs_interval, status, next_review_date
         )
-    line = _opening_lines.get(line_id)
-    if line is None:
-        return None
-    line["ease_factor"] = ease_factor
-    line["interval_days"] = interval_days
-    line["repetitions"] = repetitions
-    line["due_date"] = due_date
-    return line
+    key = _node_progress_key(user_id, node_id)
+    entry = _node_progress.get(key)
+    if entry is None:
+        entry = {"id": str(uuid.uuid4()), "user_id": user_id, "node_id": node_id}
+        _node_progress[key] = entry
+    entry.update({
+        "mastery_score": mastery_score,
+        "srs_interval": srs_interval,
+        "status": status,
+        "next_review_date": next_review_date,
+    })
+    return entry
 
 
-def delete_opening_line(line_id: str, user_id: str) -> bool:
+def get_next_training_node(user_id: str, now_iso: str) -> Optional[Dict[str, Any]]:
+    """Générateur de sessions (US 38.1) : priorité stricte —
+    1. ``review`` dont l'échéance est dépassée (urgence de révision) ;
+    2. ``learning`` (nouvelles lignes débloquées) ;
+    3. ``None`` si rien n'est dû ni à apprendre (session terminée).
+    Enrichit la ligne de progression avec les infos du nœud (``move_fen``,
+    ``depth_level``, ``is_mainline``) et ``from_fen`` (position de départ du
+    coup à jouer : celle du parent, ou la position initiale pour un nœud
+    racine).
+    """
     repo = _pg()
     if repo is not None:  # pragma: no cover - nécessite DATABASE_URL
-        return repo.delete_opening_line(line_id, user_id)
-    line = _opening_lines.get(line_id)
-    if line is None or line["user_id"] != user_id:
-        return False
-    del _opening_lines[line_id]
-    return True
+        return repo.get_next_training_node(user_id, now_iso)
+
+    due_review = [
+        p for p in _node_progress.values()
+        if p["user_id"] == user_id and p["status"] == "review" and p["next_review_date"] <= now_iso
+    ]
+    learning = [
+        p for p in _node_progress.values()
+        if p["user_id"] == user_id and p["status"] == "learning"
+    ]
+    candidates = due_review or learning
+    if not candidates:
+        return None
+
+    progress = candidates[0]
+    node = _repertoire_nodes.get(progress["node_id"])
+    if node is None:  # pragma: no cover - incohérence de données, filet de sécurité
+        return None
+    parent = _repertoire_nodes.get(node["parent_id"]) if node["parent_id"] else None
+    from_fen = parent["move_fen"] if parent else _STANDARD_START_FEN
+
+    return {
+        **progress,
+        "move_fen": node["move_fen"],
+        "from_fen": from_fen,
+        "depth_level": node["depth_level"],
+        "is_mainline": node["is_mainline"],
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -1007,7 +1086,8 @@ def _reset_store() -> None:
     _game_moves.clear()
     _progress_history.clear()
     _tactical_attempts.clear()
-    _opening_lines.clear()
+    _repertoire_nodes.clear()
+    _node_progress.clear()
     _error_profiles.clear()
     _tactical_sprints.clear()
     _srs_flashcards.clear()

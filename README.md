@@ -173,7 +173,8 @@ ChessImprover/
 │       │   ├── pg_repository.py        # Dépôt Postgres/Supabase games+game_moves+progress_history+catalogue lichess_puzzles (EPIC 37, COUNT+OFFSET sans ORDER BY random())
 │       │   └── db_client.py            # Store in-memory + délégation Postgres (EPIC 1 / US 5.1 / US 8.1)
 │       ├── scripts/
-│       │   └── ingest_lichess_puzzles.py # EPIC 37 : ETL dump public Lichess (.csv.zst) → table lichess_puzzles, batch 10k lignes
+│       │   ├── ingest_lichess_puzzles.py # EPIC 37 : ETL dump public Lichess (.csv.zst) → table lichess_puzzles, batch 10k lignes
+│       │   └── seed_eco.py             # EPIC 38 : ETL référentiel ECO (TSV locaux a-e.tsv) → table eco_reference
 │       ├── routers/
 │       │   ├── deps.py                 # get_current_user/get_current_user_id (JWT partagé, US 6.4)
 │       │   ├── auth.py                 # POST /auth/signup /auth/login GET+PATCH /auth/me (US 7/6.3), PATCH /auth/me/settings (EPIC 18)
@@ -204,10 +205,12 @@ ChessImprover/
 │       │   ├── test_db_tactics.py      # US 8.1 : store tactique + intégrité du seed (python-chess)
 │       │   ├── test_tactics_api.py     # US 8.1/8.2 : routes GET next (+ filtre theme_id) / POST attempt ; EPIC 34 : Lichess primaire, multi-coups, variété
 │       │   ├── test_lichess_puzzles.py # EPIC 34 : parsing pur des puzzles Lichess (replay PGN, séquence solveur)
-│       │   ├── test_srs.py             # SM-2 backend + sm2_schedule (EPIC 9)
-│       │   ├── test_opening_repertoire.py # EPIC 9 : validation séquence + infer_quality
-│       │   ├── test_db_opening_repertoire.py # EPIC 9 : store répertoire (CRUD, isolation)
-│       │   ├── test_openings_trainer_api.py # EPIC 9 : routes CRUD + révision SM-2
+│       │   ├── test_srs.py             # SM-2 backend + sm2_schedule + infer_quality (généralisé depuis l'ex-EPIC 9)
+│       │   ├── test_opening_repertoire.py # EPIC 38 : arbre de nœuds depuis un PGN (parse_pgn_tree, variations)
+│       │   ├── test_db_opening_repertoire.py # EPIC 38 : store arbre + progression par nœud (CRUD, isolation, priorité de session)
+│       │   ├── test_openings_trainer_api.py # EPIC 38 : routes import/next-move/attempt (Lotus Mastery Engine)
+│       │   ├── test_mastery_engine.py  # EPIC 38 : rangs, calcul de score/intervalle SRS, seuil de déblocage
+│       │   ├── test_seed_eco.py        # EPIC 38 : mapping pur TSV ECO -> eco_reference
 │       │   ├── test_db_endgames.py     # EPIC 10 : store finales + intégrité du seed (python-chess)
 │       │   ├── test_endgames_api.py    # EPIC 10 : routes GET next (+ filtre theme_id) / POST attempt
 │       │   ├── test_error_profile.py   # EPIC 11 : détection patterns + score EMA
@@ -237,7 +240,9 @@ ChessImprover/
 │       ├── 20260701191149_games_is_reviewed.sql # Colonne is_reviewed (défaut false) sur games (US 7.3)
 │       ├── 20260701194517_tactics_epic8.sql    # Table tactical_problems + profiles.tactical_elo + seed 15 problèmes (US 8.1)
 │       ├── 20260701201530_tactical_attempts.sql # Table tactical_attempts (historique, RLS) (US 8.4)
-│       ├── 20260701223519_opening_repertoire.sql # Table opening_repertoire (répertoire + SRS, RLS) (EPIC 9)
+│       ├── 20260701223519_opening_repertoire.sql # Table opening_repertoire (EPIC 9 — plus utilisée depuis EPIC 38, non supprimée par une migration destructive)
+│       ├── 20260707000000_eco_reference.sql    # Table eco_reference (référentiel ECO, seed_eco.py) (EPIC 38)
+│       ├── 20260707010000_lotus_mastery_engine.sql # Tables repertoire_nodes + user_node_progress (arbre + progression par nœud, RLS) (EPIC 38, REMPLACE opening_repertoire)
 │       ├── 20260702051516_endgames_epic10.sql  # Table endgame_problems + profiles.endgame_elo + seed 9 positions (EPIC 10)
 │       ├── 20260702064353_user_error_profiles_epic11.sql # Table user_error_profiles (score EMA, RLS) (EPIC 11)
 │       ├── 20260702070437_tactical_sprints_epic12.sql # Table tactical_sprints (chrono, moves Ghost, RLS lecture publique) (EPIC 12)
@@ -1202,34 +1207,49 @@ Modules **purs** (couche domaine), entièrement testés, indépendants de l'infr
 
 **ETL (`scripts/ingest_lichess_puzzles.py`)** : décompresse le dump `lichess_db_puzzle.csv.zst` en flux (`zstandard.ZstdDecompressor.stream_reader`, jamais chargé entièrement en mémoire — un dump complet fait plusieurs Go décompressé), parse via `csv.DictReader` (pas de pandas), insère par lots de 10 000 lignes (`INSERT ... ON CONFLICT (puzzle_id) DO NOTHING`, ré-exécutable sans dupliquer). `parse_puzzle_row` (fonction pure, testée sans I/O) éclate les colonnes `Themes`/`OpeningTags` (tags séparés par des espaces dans le CSV source) en `TEXT[]`.
 
-### 4.9 EPIC 9 — Entraîneur d'Ouvertures (Répertoire + SRS) — fonctionnalité bonus auto-initiée
+### 4.9 EPIC 9 → EPIC 38 — Entraîneur d'Ouvertures : du répertoire de lignes (SM-2) au Lotus Mastery Engine (arbre de nœuds)
 
-**Fichiers :** `routers/openings_trainer.py`, `domain/opening_repertoire.py`, `domain/srs_engine.py` (fonction `sm2_schedule` extraite), `infrastructure/db_client.py` + `pg_repository.py`, `supabase/migrations/20260701223519_opening_repertoire.sql`, `js/api_client.js`, `js/app.js`, `index.html` (`#openings-trainer-col`)
+> **EPIC 9** (fonctionnalité bonus auto-initiée, historique conservé ci-dessous) avait introduit un entraîneur de répertoire d'ouvertures par répétition espacée (SM-2) — une **ligne entière** (ex. `e4 e5 Nf3 Nc6 Bb5`) était l'unité de progression. **EPIC 38** (US 38.1, demande explicite « Lotus Mastery Engine » de l'utilisateur) **remplace entièrement** ce système par un modèle en **arbre de positions** : chaque **coup individuel** est un nœud avec son propre score de maîtrise, débloquant ses enfants progressivement — un modèle beaucoup plus proche d'un « skill tree » que d'un simple gestionnaire de fiches SM-2. Décision actée avec l'utilisateur (remplacement plutôt que coexistence, malgré ~150 tests existants sur l'ancien système) plutôt que présumée (règle CLAUDE.md #3).
+>
+> `opening_repertoire` (table SQL) **n'est pas supprimée** par la migration EPIC 38 (pas de `DROP` destructif sur des données existantes) — simplement plus utilisée par le code applicatif à partir de cet EPIC.
 
-> **Contexte :** une fois l'intégralité du backlog EPIC 6/7/8 traité, l'utilisateur a explicitement autorisé le développement d'**une** fonctionnalité à ma discrétion, non spécifiée par une US existante. Choix retenu : un entraîneur de répertoire d'ouvertures par répétition espacée (SM-2), qui ferme la boucle entre le diagnostic déjà existant (§4.5, `top_openings`/`successRatio` par ouverture) et un entraînement ciblé — jusqu'ici absent du produit malgré un moteur SM-2 déjà présent (mode Exercice tactique, cartes 100 % `localStorage`).
+**Fichiers (EPIC 38, système actuel) :** `routers/openings_trainer.py`, `domain/opening_repertoire.py` (`parse_pgn_tree`), `domain/mastery_engine.py` (`process_attempt`/`rank_for_score`), `scripts/seed_eco.py`, `infrastructure/db_client.py` + `pg_repository.py`, `supabase/migrations/20260707000000_eco_reference.sql`, `supabase/migrations/20260707010000_lotus_mastery_engine.sql`
 
 **Routes** (JWT requis) :
 
 | Route | Méthode | Comportement |
 |---|---|---|
-| `/api/v1/openings/repertoire` | POST | Ajoute une ligne `{name, color, moves[]}`. La séquence SAN est rejouée coup par coup côté serveur (`python-chess`) — une ligne illégale est rejetée en 422, jamais de confiance aveugle au client. |
-| `/api/v1/openings/repertoire` | GET | Liste tout le répertoire de l'utilisateur authentifié. |
-| `/api/v1/openings/repertoire/due` | GET | Lignes dont l'échéance SM-2 est arrivée ou dépassée aujourd'hui. |
-| `/api/v1/openings/repertoire/{id}/review` | POST | Corps `{mistake_count}`. Reprogramme la ligne (SM-2) — la qualité (0-5) est **déduite automatiquement** du nombre d'erreurs, jamais notée manuellement. |
-| `/api/v1/openings/repertoire/{id}` | DELETE | Retire une ligne (propriétaire uniquement, 404 sinon). |
+| `/api/v1/openings/trainer/import` | POST | Corps `{repertoire_name, pgn}`. Reconstruit l'arbre depuis un PGN (variations incluses) via `parse_pgn_tree` (python-chess) — 422 si illisible/sans coup. Seuls les nœuds racines (premiers coups possibles, `parent_id` absent) sont débloqués (`learning`) ; le reste est verrouillé (aucune ligne `user_node_progress`). |
+| `/api/v1/openings/trainer/next-move` | GET | Générateur de sessions : priorité `review` en retard, puis `learning`, puis `{"session_complete": true}`. Ne renvoie jamais `move_san` — seule la position de départ (`fen`) est exposée. |
+| `/api/v1/openings/trainer/attempt` | POST | Corps `{node_id, move_san}` — **jamais un booléen de succès envoyé par le client** (anti-triche : le serveur compare `move_san` à la solution stockée, même politique que le Coach Tactique). Applique `mastery_engine.process_attempt` et renvoie le nouvel état + rang + nombre de nœuds enfants nouvellement débloqués. |
 
-**Règles métier :**
-- **Pas de duplication d'algorithme** : un moteur SM-2 Python testé existait déjà (`domain/srs_engine.py`, utilisé par `/srs/review/full` pour les cartes tactiques du mode Exercice). Plutôt que d'écrire un second portage SM-2, la formule pure a été **extraite** de `review_card` en une fonction réutilisable `sm2_schedule(ease_factor, interval, repetitions, quality, today)` — `review_card` n'est plus qu'un fin wrapper autour de `SRSCard` qui délègue à cette fonction (comportement strictement identique, 31 tests existants inchangés + tests de non-régression d'équivalence ajoutés). L'entraîneur d'ouvertures appelle directement `sm2_schedule`, sans dupliquer la moindre formule.
-- **Qualité déduite automatiquement** (`domain/opening_repertoire.infer_quality`) : 0 erreur → 5 (rappel parfait), 1 erreur → 3, 2+ erreurs → 1 — pas de notation manuelle post-révision, pour rester ludique et rapide (contrainte explicite de la demande initiale : gamifier sans rendre l'expérience rébarbative).
-- **Validation de la séquence** (`domain/opening_repertoire.validate_move_sequence`) : rejoue chaque coup SAN depuis la position initiale via `python-chess` ; toute notation invalide/illégale est rejetée avant tout enregistrement.
-- **Persistance** : table `opening_repertoire` (colonne SQL `line_name` — `name` est un mot réservé sqlfluff/RF04, remappée en `name` côté `PgRepository._line_row` pour ne pas fuiter ce détail dans l'API), RLS scoping par utilisateur. `db_client`/`PgRepository` implémentent la délégation complète (create/list/due/update/delete), sans reproduire le gap `tactical_problems` de US 8.1 (§10.6).
+**Règles métier :** voir §5.26.
 
-**Frontend :** carte **OUVERTURES** dans le dashboard → vue plein écran `#openings-trainer-col` (`body.openings-trainer-active`, même mécanisme de bascule que Coach Tactique/Stats Avancées).
-- **Ajout d'une ligne** : formulaire nom + couleur + coups SAN espacés (ex. `e4 e5 Nf3 Nc6 Bb5`).
-- **Révision** : échiquier indépendant (même approche que US 8.3, `Chess`/`Chessboard` directs) qui rejoue la ligne — les coups de la couleur adverse s'enchaînent automatiquement (`_advanceOpeningLine`, boucle de `setTimeout` pilotée par `chess.turn()`, pas par la parité de l'index), l'utilisateur ne joue que les coups de sa propre couleur ; un coup incorrect fait un « snapback » et incrémente le compteur d'erreurs sans bloquer la progression. À la fin de la ligne, la qualité est déduite et soumise automatiquement (`ApiClient.reviewOpeningLine`), puis la ligne suivante due s'enchaîne — ou un message gamifié (« 🎉 Aucune ligne à réviser aujourd'hui ») si le répertoire est à jour. Une révision sans erreur alimente aussi le système XP/Streak général existant.
-- **Garde-fou anti-double-soumission** (`_otFinished`) : ajouté après un test Playwright ayant révélé qu'un scénario artificiel (simulation de coups sans attendre les `setTimeout` réels) pouvait déclencher `_finishOpeningReview` plusieurs fois pour la même ligne ; en usage normal humain cela ne se produit pas (un seul `setTimeout` en vol à la fois), mais le garde-fou élimine le risque par construction.
-- Vérifié en navigateur (Playwright + Chromium, backend/frontend locaux) : ajout d'une ligne, échiquier de révision monté, ligne rejouée sans erreur → Elo... XP +10, prochaine échéance 2026-07-02 (J+1, cohérent avec un premier succès SM-2), état vide gamifié affiché ensuite. Captures à l'appui.
-- Tests : `backend/tests/test_opening_repertoire.py` (validation + `infer_quality`), `backend/tests/test_db_opening_repertoire.py` (CRUD + isolation), `backend/tests/test_openings_trainer_api.py` (17 tests d'intégration : création/liste/due/révision/suppression, 401/404/422, isolation entre utilisateurs), `backend/tests/test_srs.py` (`sm2_schedule` + équivalence avec `review_card`), `backend/tests/test_pg_repository.py` (contrat de signature + mapping `line_name`↔`name`), `frontend/tests/api_client.test.js` (6 nouveaux tests).
+**Décisions de modélisation (spec ambiguë sur ces points précis, résolues pour obtenir un système réellement fonctionnel) :**
+- **Pas de nœud racine « position de départ, aucun coup »** : un tel nœud n'aurait rien à faire pratiquer et bloquerait le générateur de sessions dès l'import. Les nœuds sans parent (`parent_id IS NULL`) sont directement les premiers coups possibles (échiquier standard, FEN bien connue) — ce sont eux, au pluriel s'il y a plusieurs variations dès le 1ᵉʳ coup, que la spec appelle « le nœud racine ».
+- **Validation du coup joué côté serveur** (`move_san`), pas un booléen `is_success` envoyé par le client : la spec décrit `process_attempt(user_id, node_id, is_success)` comme signature de la fonction *domaine* (pure, cf. `mastery_engine.py`) — le routeur calcule lui-même `is_success` en comparant au nœud stocké, jamais une confiance aveugle au client.
+- **Transition `learning` → `review`/`mastered`** : dès la première tentative (succès ou échec), un nœud quitte son statut `learning` initial et entre dans le cycle de répétition espacée (`review`), sauf s'il atteint 100 (`mastered`). La spec ne détaille pas cette transition explicitement.
+- **Multiplicateur `srs_interval`** : ×2 par succès (croissance espacée standard) — la spec dit « multiplier » sans fixer la valeur exacte.
+- **`user_id` sur `repertoire_nodes`** : absent de la spec, ajouté pour l'isolation RLS (cohérent avec le reste du schéma).
+
+**Réutilisation** : `infer_quality` (déduction de qualité SM-2 depuis un nombre d'erreurs) a été **généralisée** depuis l'ex-`domain/opening_repertoire.py` vers `domain/srs_engine.py` — toujours utilisée par le Cimetière des Erreurs (EPIC 20, `routers/srs_flashcards.py`), qui n'a aucun rapport avec les ouvertures mais partageait cette fonction par un import direct.
+
+**ETL référentiel ECO (`scripts/seed_eco.py`)** : parse les TSV locaux `frontend/assets/data/openings/{a,b,c,d,e}.tsv` (colonnes `eco`/`name`/`pgn`, déjà rapatriés localement EPIC 13), insère dans `eco_reference` (`eco_code`, `opening_name` — pas `name`, mot-clé SQL non réservé déconseillé comme identifiant/RF04 sqlfluff, même convention que `line_name` sur l'ex-table `opening_repertoire`, `moves_sequence`), par lots, idempotent (`ON CONFLICT (moves_sequence) DO NOTHING`). Pas encore consommé par une route API — référentiel brut, prêt pour un futur enrichissement (ex. suggestion de variantes depuis `top_openings`, cf. §11).
+
+**⚠️ Frontend cassé (gap connu, cf. §8/§9) :** la carte **OUVERTURES** (`#openings-trainer-col`, `app.js:_startOpeningReview/_onOtDrop/_finishOpeningReview`, `api_client.js:createOpeningLine`/etc.) appelle encore les anciennes routes `/api/v1/openings/repertoire/*`, **supprimées** par cette migration — hors périmètre de l'US 38.1 (spec backend uniquement). Le test e2e `openings.spec.js` (EPIC 9) a été retiré (2 scénarios, dont 1 échouait réellement contre le nouveau backend) plutôt que laissé rouge. Une future US doit adapter l'UI à `/openings/trainer/*` (import PGN au lieu d'un formulaire de coups, échiquier + arbre de progression au lieu d'une liste de lignes).
+
+**Tests (EPIC 38)** : `backend/tests/test_opening_repertoire.py` (`parse_pgn_tree` — ligne unique, variations, `is_mainline`, PGN invalide), `backend/tests/test_mastery_engine.py` (rangs, `process_attempt` succès/échec, seuil de déblocage, bornes 0/100), `backend/tests/test_seed_eco.py` (mapping TSV pur), `backend/tests/test_db_opening_repertoire.py` (arbre + progression, priorité de session, isolation), `backend/tests/test_openings_trainer_api.py` (17 tests d'intégration : import/next-move/attempt, 401/404/422, anti-triche, isolation, déblocage), `backend/tests/test_srs.py` (`infer_quality` généralisée), `backend/tests/test_pg_repository.py` (contrat de signature des 7 nouvelles méthodes).
+
+<details>
+<summary><strong>Historique EPIC 9 (répertoire de lignes + SM-2, remplacé — cliquer pour dérouler)</strong></summary>
+
+**Contexte d'origine :** une fois l'intégralité du backlog EPIC 6/7/8 traité, l'utilisateur avait explicitement autorisé le développement d'**une** fonctionnalité à discrétion de l'agent, non spécifiée par une US existante. Choix retenu à l'époque : un entraîneur de répertoire d'ouvertures par répétition espacée (SM-2), qui fermait la boucle entre le diagnostic déjà existant (§4.5, `top_openings`/`successRatio` par ouverture) et un entraînement ciblé — jusque-là absent du produit malgré un moteur SM-2 déjà présent (mode Exercice tactique, cartes 100 % `localStorage`).
+
+Ancien modèle : table `opening_repertoire` (une ligne = une entrée, colonne `line_name` pour éviter le mot réservé `name`), routes `POST/GET /api/v1/openings/repertoire`, `GET .../due`, `POST .../{id}/review` (qualité SM-2 déduite du nombre d'erreurs via `infer_quality`), `DELETE .../{id}`. `domain/srs_engine.sm2_schedule` avait été **extraite** de `review_card` pour être réutilisable par ce second domaine SRS — cette extraction reste en place et sert toujours (Cimetière des Erreurs EPIC 20, mode Exercice).
+
+Frontend d'origine (désormais cassé, cf. ci-dessus) : carte **OUVERTURES** → vue plein écran `#openings-trainer-col`, formulaire nom + couleur + coups SAN espacés, échiquier de révision auto-enchaîné (`_advanceOpeningLine`), garde-fou anti-double-soumission (`_otFinished`).
+
+</details>
 
 ### 4.10 EPIC 10 — Entraîneur de Finales Essentielles — 2ᵉ fonctionnalité bonus auto-initiée
 
@@ -1431,7 +1451,7 @@ Modules **purs** (couche domaine), entièrement testés, indépendants de l'infr
 
 ### 4.18 EPIC 20 — Bibliothèque de Mémoire Tactique (Flashcards SRS auto-générées)
 
-**Fichiers :** `domain/srs_flashcards.py`, `domain/opening_repertoire.py` (`infer_quality`, réutilisée), `domain/tactics.py` (`is_correct_move`, réutilisée), `routers/srs_flashcards.py`, `routers/games.py` (câblage worker), `infrastructure/db_client.py` + `pg_repository.py`, `supabase/migrations/20260702130000_srs_flashcards_epic20.sql`, `js/api_client.js`, `js/app.js` (`#flashcards-col`), `index.html`
+**Fichiers :** `domain/srs_flashcards.py`, `domain/srs_engine.py` (`infer_quality`, réutilisée — déplacée depuis l'ex-`domain/opening_repertoire.py` par l'EPIC 38, cf. §4.9), `domain/tactics.py` (`is_correct_move`, réutilisée), `routers/srs_flashcards.py`, `routers/games.py` (câblage worker), `infrastructure/db_client.py` + `pg_repository.py`, `supabase/migrations/20260702130000_srs_flashcards_epic20.sql`, `js/api_client.js`, `js/app.js` (`#flashcards-col`), `index.html`
 
 > **Contexte :** backlog fourni par l'utilisateur (paste PO), délégué en parallèle d'EPIC 19. Objectif : utiliser la répétition espacée (SRS) sur les erreurs passées du joueur — « construire son propre dictionnaire de patterns » — plutôt que sur des problèmes curés aléatoires (EPIC 8).
 
@@ -1821,6 +1841,34 @@ puzzles = SELECT ... WHERE ... ORDER BY puzzle_id LIMIT min(limit, count) OFFSET
 ```
 **Jamais de `ORDER BY random()`** : sur une table de plusieurs millions de lignes (dump Lichess complet), un tri aléatoire forcerait un balayage complet à chaque appel. Le COUNT et le SELECT s'appuient chacun sur les index dédiés (`idx_lichess_puzzles_rating`, GIN `idx_lichess_puzzles_themes`) — seul le décalage (`offset`) est aléatoire, calculé côté application. La stratégie retenue (`"standard"` ou `"fallback"`) est logguée à chaque appel (`domain.lichess_puzzles.resolve_random_puzzles`) pour diagnostiquer les plages d'Elo/thèmes trop rares en production.
 
+### 5.26 Lotus Mastery Engine — rangs et progression par nœud (EPIC 38)
+
+```
+rangs (mastery_score) : <20 Beginner | 20-40 Novice | 40-60 Intermediate
+                       | 60-80 Advanced | 80-99 Master | 100 Legend
+
+process_attempt(mastery_score, srs_interval, is_success) :
+  succès : mastery_score = min(100, mastery_score + 15)
+           srs_interval  = max(1, srs_interval) × 2
+           status        = "mastered" si mastery_score == 100 sinon "review"
+  échec  : mastery_score = max(0, mastery_score − 20)
+           srs_interval  = 1
+           status        = "review" (jamais "mastered" sur un échec)
+  déblocage des enfants directs si mastery_score >= 40 (Intermediate),
+  qu'il s'agisse d'un succès ou d'un échec qui laisse le score au-dessus du
+  seuil — idempotent côté appelant (INSERT ... ON CONFLICT DO NOTHING),
+  aucune mécanique de re-verrouillage n'existe.
+```
+Priorité du générateur de sessions (`GET /openings/trainer/next-move`) :
+1. `status = 'review'` ET `next_review_date <= NOW()` (urgence de révision) ;
+2. `status = 'learning'` (nouvelles lignes débloquées) ;
+3. sinon `{"session_complete": true}`.
+
+`is_success` n'est **jamais** un booléen envoyé par le client : le routeur
+(`routers/openings_trainer.py`) compare le `move_san` joué au nœud stocké
+avant d'appeler `process_attempt` — même politique anti-triche que le Coach
+Tactique (EPIC 8/34).
+
 ---
 
 ## 6. Tests & Qualité
@@ -1904,16 +1952,18 @@ JWT_SECRET=ci-test-secret pytest tests/ -v
 | `test_stats_aggregator.py` | user_outcome, build_summary (catégories, ratings, couleur), gaffeRate, finales, acplTrend | US 4.1 |
 | `test_progress_history.py` | build_snapshot (cadence inconnue, filtre couleur, IDs), filter_history_by_days (bornes, dates invalides/naïves) | US 5.1 |
 | `test_games_api.py` | POST analyze (202, 400), worker→completed, réanalyse, GET game (404), stats/summary, snapshot auto, GET stats/history, **401 sans JWT sur les 6 routes, isolation entre 2 utilisateurs (get_game/réanalyse/stats/GET games/PATCH status)**, **GET /games (liste, vide, isolation)**, **dédup PGN par hash (même game_id, pas de doublon, statut réel, isolation par utilisateur, PGN différent → parties distinctes)**, **PATCH /games/{id}/status (marque/démarque, persistance, 404 non-propriétaire, 422 body invalide)**, **`GET /stats/cognitive-load` (EPIC 19 : vide, après analyse avec horloges, isolation, dégradation 200 sur erreur DB)** | US 1.1 + US 5.1 + US 6.4 + US 7.1 + US 7.2 + US 7.3 + EPIC 19 |
-| `test_pg_repository.py` | PgRepository (dsn, colonnes, contrat progress_history, `_iso` générique, **contrat `create_game`/`find_game_by_pgn_hash`**, **contrat `record_tactical_attempt`/`get_tactical_attempts` (US 8.4)**, **contrat CRUD `opening_repertoire` + mapping `line_name`↔`name` (EPIC 9)**, **contrat CRUD `srs_flashcards` (EPIC 20)**), délégation db_client (in-memory sans `DATABASE_URL`), **EPIC 25 : contrats profils/user_data/Elos/problèmes tactiques, liste blanche des colonnes d'Elo, fusion Client-Wins** | EPIC 1 + US 5.1 + US 7.2 + US 8.4 + EPIC 9 + EPIC 20 |
+| `test_pg_repository.py` | PgRepository (dsn, colonnes, contrat progress_history, `_iso` générique, **contrat `create_game`/`find_game_by_pgn_hash`**, **contrat `record_tactical_attempt`/`get_tactical_attempts` (US 8.4)**, **contrat des 7 méthodes Lotus Mastery Engine (EPIC 38, REMPLACE l'ex-contrat CRUD `opening_repertoire`/EPIC 9)**, **contrat CRUD `srs_flashcards` (EPIC 20)**), délégation db_client (in-memory sans `DATABASE_URL`), **EPIC 25 : contrats profils/user_data/Elos/problèmes tactiques, liste blanche des colonnes d'Elo, fusion Client-Wins** | EPIC 1 + US 5.1 + US 7.2 + US 8.4 + EPIC 20 + EPIC 38 |
 | `test_tactical_elo.py` | `update_elo` (+15/-15, constantes, plancher, pas de plafond) | US 8.1 |
 | `test_tactics.py` | `is_correct_move` (match exact, notation équivalente, coup faux/illégal/invalide, **EPIC 34 : repli UCI**), `select_nearest_problem` (vide, exact, plus proche haut/bas, tirage aléatoire équidistant, **EPIC 34 : `exclude_ids`**), `compute_daily_streak` (vide, série du jour, arrêt au premier échec, hier ne compte pas), `compute_stats_by_theme` (regroupement + taux par catégorie), **`advance_tactical_attempt`/`solution_sequence` (EPIC 34 : coup unique, multi-coups partiel/complet, coup faux à chaque étape, mat alternatif plus rapide toujours rejeté, séquence vide/garbage)** | US 8.1 + US 8.4 + EPIC 34 |
 | `test_db_tactics.py` | Store tactique (Elo par défaut, persistance), **intégrité des 15 problèmes du seed vérifiée par python-chess** (mat effectif, capture non défendue, **EPIC 34 : `_is_forced_mate_in_2` — réplique noire unique + mat sur la séquence complète**), sélection/filtre par catégorie, `TestTacticalAttempts` (enregistrement, isolation entre utilisateurs, reset) | US 8.1 + US 8.4 + EPIC 34 |
 | `test_tactics_api.py` | `GET /tactics/next` (sans solution, 401, filtre theme_id ×3 + 422 si inconnu), `POST /tactics/attempt` (succès/échec ±15, notation équivalente, persistance, 404, 401, isolation entre utilisateurs, `streak` croissant/remis à zéro, `time_taken` optionnel), `GET /tactics/stats` (vide, agrégation par catégorie, 401), **EPIC 34 : `TestLichessPrimarySource` (puzzle Lichess servi si joignable, repli sur seed si erreur/réponse inexploitable), `TestMultiPlyAttempt` (mat en 2 : 1er coup → `complete:false` + réplique auto-jouée, 2ᵉ coup complète + Elo/série une seule fois, coup faux réinitialise la session, mat alternatif "Qa4#" toujours rejeté), `TestVarietyExclusion` (pas de répétition du même problème sur 3 tirages consécutifs)** | US 8.1 + US 8.2 + US 8.4 + EPIC 34 |
 | `test_lichess_puzzles.py` | `angle_for_theme` (mapping des 3 thèmes, `None`, thème inconnu), `replay_pgn_to_ply` (rejeu exact, 0 coup, trop de coups, PGN illisible/vide), `parse_puzzle_payload` (payload bien formé — solution conservée intégralement —, catégorie par défaut "aleatoire", champs manquants/malformés, puzzle à un seul coup valide, 1er coup illégal/déjà joué/malformé, rating non entier — jamais d'exception), **`test_real_production_payload_regression`** (hotfix 04/07 : payload réel capturé en production, `initialPly + 1`) | EPIC 34 |
-| `test_srs.py` | `create_card`/`review_card`/`get_due_cards` (SM-2, toutes branches qualité/EF/intervalle), **`sm2_schedule` (équivalence exacte avec `review_card`, EPIC 9)** | EPIC 9 |
-| `test_opening_repertoire.py` | `validate_move_sequence` (ligne valide, vide, coup illégal, entrée invalide), `infer_quality` (0/1/2+ erreurs) | EPIC 9 |
-| `test_db_opening_repertoire.py` | Store répertoire : création (calendrier SM-2 initial), liste/isolation par utilisateur, lignes dues (bornes de date), mise à jour de calendrier, suppression (propriétaire/non-propriétaire), reset | EPIC 9 |
-| `test_openings_trainer_api.py` | `POST /openings/repertoire` (création, 422 séquence/couleur invalide, 401), `GET` (liste, isolation), `GET /due`, `POST /{id}/review` (planification J+1, échec réinitialise, 404 ligne inconnue/non-propriétaire, 401), `DELETE /{id}` (propriétaire/non-propriétaire, 404, 401) | EPIC 9 |
+| `test_srs.py` | `create_card`/`review_card`/`get_due_cards` (SM-2, toutes branches qualité/EF/intervalle), `sm2_schedule` (équivalence exacte avec `review_card`), **`infer_quality` (0/1/2+ erreurs — généralisée depuis l'ex-`domain.opening_repertoire`, EPIC 38)** | EPIC 9/20/38 |
+| `test_opening_repertoire.py` (EPIC 38, REMPLACE l'ex-EPIC 9) | `parse_pgn_tree` : ligne unique (SAN/depth/parent_index/FEN après coup), variations (2 nœuds racines, `is_mainline` sur la 1ʳᵉ seulement, y compris variation profonde hors ligne principale), entrées invalides (chaîne vide, texte quelconque, PGN sans coup) — jamais d'exception | EPIC 38 |
+| `test_db_opening_repertoire.py` (EPIC 38, REMPLACE l'ex-EPIC 9) | Store arbre + progression : création des nœuds (résolution `parent_index`→`parent_id`), enfants directs, déblocage (idempotent, isolation par utilisateur), mise à jour de progression, **priorité du générateur de sessions** (review en retard > learning > rien, isolation, `from_fen` du parent ou position initiale pour une racine), reset | EPIC 38 |
+| `test_openings_trainer_api.py` (EPIC 38, REMPLACE l'ex-EPIC 9) | `POST /openings/trainer/import` (création, 422 PGN invalide, 401), `GET /next-move` (1ᵉʳ coup immédiatement pratiquable, jamais `move_san` exposé, coups plus profonds verrouillés, session terminée, 401), `POST /attempt` (succès augmente le score, échec le diminue sans jamais exposer la solution, **le client ne peut pas s'auto-créditer un succès**, déblocage des enfants au seuil Intermediate, 404 nœud inconnu/verrouillé, isolation entre utilisateurs, 401) | EPIC 38 |
+| `test_mastery_engine.py` | `rank_for_score` (bornes exactes des 6 rangs), `process_attempt` succès (+15 borné à 100, intervalle ×2, statut `mastered` uniquement à 100, seuil de déblocage exact, `next_review_date`, rang) et échec (−20 borné à 0, intervalle remis à 1, jamais `mastered`, déblocage non re-verrouillé si le score reste au-dessus du seuil) | EPIC 38 |
+| `test_seed_eco.py` | `parse_eco_row` (mapping pur `eco`/`name`/`pgn` → `eco_code`/`opening_name`/`moves_sequence`), `ECO_TSV_FILENAMES` (5 volumes a-e) | EPIC 38 |
 | `test_db_endgames.py` | Store finales (Elo par défaut, distinct de `tactical_elo`), **intégrité des 9 positions du seed vérifiée par python-chess** (mat en 1 effectif), sélection/filtre par catégorie | EPIC 10 |
 | `test_endgames_api.py` | `GET /endgames/next` (sans solution, 401, filtre theme_id ×3 + 422 si inconnu), `POST /endgames/attempt` (succès/échec ±15, persistance, 404, 401, isolation entre utilisateurs, Elo distinct de l'Elo tactique) | EPIC 10 |
 | `test_error_profile.py` | `detect_error_occurrences` (hanging_piece/time_pressure mutuellement exclusifs, missed_mate depuis `game_moves`, isolation par couleur), `update_frequency_score` (EMA, bornes 0-100, franchissement du seuil récurrent), `is_recurring` | EPIC 11 |
@@ -1931,7 +1981,7 @@ JWT_SECRET=ci-test-secret pytest tests/ -v
 | `test_puzzles_service.py` (EPIC 37) | `resolve_random_puzzles` (thème `mateIn1` dans la plage, `limit` respecté, sans thème = filtre Elo seul), fallback (plage vide élargie de ±100, toujours vide après fallback, élargissement symétrique min/max, `rating_min` jamais négatif), `PuzzleQueryParams` (rejet `rating_max < rating_min`, bornes égales, thème inconnu, valeur enum), `PuzzleResponse` (construction, `opening_tags` par défaut), `GET /tactics/random` (503 sans base, 422 plage/thème invalide, 401 sans JWT) | US 37.1 |
 | `test_ingest_lichess_puzzles.py` (EPIC 37) | `parse_puzzle_row` (champs scalaires, `Themes`/`OpeningTags` espace → liste, champs vides → liste/`None`, cast entier) | US 37.1 |
 
-**Couverture backend :** **1113 TUs** au total (EPIC 37 : +24 TUs — moteur de sélection/fallback, schémas, route, ETL ; audit mutation testing 07/2026 : +120 TUs ; EPIC 36 : +3 TUs, repli in-memory `record_tactical_attempt`/`get_tactical_attempts`), couverture globale **89 %+** ; cœur Stats Avancées + EPIC 1/5.1/US 4.2/EPIC 19 à 92–100 % (`stats_aggregator`, `cadence`, `progress_history`, `models`, `engine`, `cognitive_load`, `srs_flashcards` à 100 %, `analysis_pipeline` 92 %, `routers/games` 92 %, `db_client` 98 %). Les requêtes SQL réelles de `pg_repository` (nécessitant une base) sont marquées `pragma: no cover`.
+**Couverture backend :** **1154 TUs** au total (EPIC 38 : +41 TUs nets — Lotus Mastery Engine remplace l'ex-EPIC 9 (test_opening_repertoire.py/test_db_opening_repertoire.py/test_openings_trainer_api.py réécrits), + `test_mastery_engine.py`/`test_seed_eco.py` ; EPIC 37 : +28 TUs — moteur de puzzles + workflow d'ingestion ; audit mutation testing 07/2026 : +120 TUs ; EPIC 36 : +3 TUs), couverture globale **89 %+** ; cœur Stats Avancées + EPIC 1/5.1/US 4.2/EPIC 19 à 92–100 % (`stats_aggregator`, `cadence`, `progress_history`, `models`, `engine`, `cognitive_load`, `srs_flashcards` à 100 %, `analysis_pipeline` 92 %, `routers/games` 92 %, `db_client` 98 %). Les requêtes SQL réelles de `pg_repository` (nécessitant une base) sont marquées `pragma: no cover`.
 
 **Architecture de test `test_auth.py` :**
 - App de test minimale (`FastAPI()` + routers auth/sync uniquement) pour éviter la dépendance `python-chess`
@@ -1966,15 +2016,14 @@ npm run test:e2e
 | Fichier | Couvre |
 |---|---|
 | `tactics.spec.js` | Coach Tactique (EPIC 8) : résolution correcte (Elo +15, série 🔥1), coup incorrect (Elo −15, **EPIC 34 :** flèche de solution au lieu du texte), bouton « Problème suivant » (EPIC 32, mis à jour EPIC 34 — l'ancien scénario attendait encore l'enchaînement automatique retiré depuis) |
-| `openings.spec.js` | Entraîneur d'Ouvertures (EPIC 9) : ajout + révision complète d'une ligne (calendrier SM-2 avancé à J+1), rejet d'une séquence illégale (422) |
 | `endgames.spec.js` | Entraîneur de Finales (EPIC 10) : mat trouvé (Elo +15), coup incorrect (Elo −15), filtre par catégorie |
 | `error_profile.spec.js` | Analyse Comportementale (EPIC 11) : 4 gaffes répétées déclenchent le bandeau Entraînement Personnalisé, clic → problème `hanging_piece` chargé, bandeau masqué sans erreur récurrente |
 | `sprint.spec.js` | Mode Tactical Sprint (EPIC 12) : coup résolu incrémente le compteur, clôture du sprint affiche le score final, bandeau Ghost affiche le meilleur score une fois activé |
 | `cognitive_flashcards.spec.js` | Charge Cognitive (EPIC 19) + Cimetière des Erreurs (EPIC 20) : gaffe analysée (evals + horloges) → insight visible dans le Dashboard Cognitif et flashcard auto-générée, rappel correct (halo vert) et incorrect (halo rouge, solution révélée), Cimetière vide sans gaffe |
 
-> **Origine :** ces 6 specs sont la version persistée des scripts de vérification Playwright ad hoc écrits (puis jetés) pendant le développement d'US 8.3/8.4, EPIC 9, EPIC 10, EPIC 11, EPIC 12, EPIC 19 et EPIC 20. Les garder comme suite rejouable évite de réécrire ce câblage à chaque nouvelle fonctionnalité et donne une vraie couverture de régression bout-en-bout, en plus des TUs Jest/pytest.
+> **Origine :** ces specs sont la version persistée des scripts de vérification Playwright ad hoc écrits (puis jetés) pendant le développement d'US 8.3/8.4, EPIC 9, EPIC 10, EPIC 11, EPIC 12, EPIC 19 et EPIC 20. Les garder comme suite rejouable évite de réécrire ce câblage à chaque nouvelle fonctionnalité et donne une vraie couverture de régression bout-en-bout, en plus des TUs Jest/pytest.
 >
-> **EPIC 34 :** `tactics.spec.js` (3/3, stabilisé — cf. §10 course corrigée) mis à jour pour refléter EPIC 32/34 (flèches au lieu du texte de solution, bouton « suivant » au lieu de l'enchaînement automatique). **Dette découverte à cette occasion, non corrigée ici (hors périmètre Coach Tactique)** : `cognitive_flashcards.spec.js` et `endgames.spec.js` attendent encore l'ancien texte « Coup incorrect. Solution » de la même façon — 4 tests en échec depuis l'EPIC 32, jamais mis à jour à l'époque. **14/18 tests E2E verts** (18/18 avant cette découverte n'était plus exact).
+> **EPIC 38 :** `openings.spec.js` (EPIC 9, Entraîneur d'Ouvertures) **retiré** — le Lotus Mastery Engine remplace les routes `/openings/repertoire/*` qu'il exerçait par `/openings/trainer/*`, et le frontend n'a pas encore été adapté (cf. §4.9/§8/§9). **16/16 tests E2E verts** (vérifié directement en session, pas seulement via la doc — l'ancienne mention d'une dette « 14/18 » de l'EPIC 34, portant sur `cognitive_flashcards.spec.js`/`endgames.spec.js`, ne reflétait plus l'état réel du dépôt et a été corrigée ici).
 
 ---
 
@@ -2153,7 +2202,6 @@ UNIQUE (user_id)
 | **Dashboard de catégories tactiques** (US 8.2) | `index.html:#tactics-col` + `app.js:_showTactics/_loadTacticalProblem` + `api_client.js:getNextTacticalProblem` | Carte TACTIQUE → vue plein écran, menu 4 catégories, badge Elo |
 | **Échiquier tactique jouable** (US 8.3) | `app.js:_initTacticsBoard/_onTacticsDrop/_submitTacticsAttempt` + `api_client.js:submitTacticalAttempt` + `index.html`/`style.css` (`.tactics-board`) | Échiquier indépendant (`Chess`/`Chessboard` directs, pas de `BoardManager`), validation de la solution 100 % serveur, feedback vert/rouge, enchaînement auto vers le problème suivant |
 | **Persistance + série du jour** (US 8.4) | `tactical_attempts` (migration) + `db_client.record_tactical_attempt`/`get_tactical_attempts` + `domain/tactics.compute_daily_streak`/`compute_stats_by_theme` + `GET /tactics/stats` + `app.js:#tactics-streak-badge` | Chaque tentative est persistée ; badge 🔥 Série (problèmes résolus d'affilée aujourd'hui) mis à jour en direct ; taux de réussite par catégorie calculable via `/tactics/stats` |
-| **Entraîneur d'Ouvertures** (EPIC 9, bonus) | `routers/openings_trainer.py` + `domain/opening_repertoire.py` + `domain/srs_engine.sm2_schedule` + `index.html:#openings-trainer-col` + `app.js:_startOpeningReview/_onOtDrop/_finishOpeningReview` | Carte OUVERTURES → vue plein écran : ajout de ligne (validée serveur), révision SRS avec échiquier auto-enchaîné, qualité SM-2 déduite automatiquement (0 notation manuelle), CRUD complet opérationnel et testé |
 | **Entraîneur de Finales Essentielles** (EPIC 10, bonus) | `routers/endgames.py` (réutilise `domain/tactics.py` + `domain/tactical_elo.py`) + `index.html:#endgame-trainer-col` + `app.js:_initEndgameBoard/_onEndgameDrop/_submitEndgameAttempt` | Carte TECHNIQUE DE MAT → vue plein écran, 3 catégories (Roi+Dame/Roi+Tour/Roi+2 Tours), Elo « finales » distinct, échiquier jouable avec feedback vert/rouge, opérationnel et testé |
 | **Indépendance des assets externes** (EPIC 13, US 12.1) | `frontend/assets/{js,css,fonts,images,data}/` + `index.html` + `app.js`/`board_manager.js` (`pieceTheme`) + `engine_worker_wasm.js` | jQuery/chess.js/chessboard.js/Chart.js/polices/pièces/ouvertures ECO servis depuis le dépôt, zéro appel `cdnjs`/`jsdelivr`/`lichess1.org`/`fonts.googleapis.com` au chargement, vérifié (zéro requête externe) |
 | **Analyse Comportementale — profil d'erreurs** (EPIC 11, US 9.1/9.2) | `domain/error_profile.py` + `routers/error_profile.py` + `routers/tactics.py:/custom` + `routers/games.py:run_analysis` + `index.html:#tactics-custom-training` + `app.js:_loadErrorProfileHint/_startCustomTraining` | Profil mis à jour après chaque partie analysée (score EMA par type d'erreur), bandeau « Entraînement Personnalisé » affiché si récurrent (score > 70), bouton chargeant un problème du thème associé, opérationnel et testé |
@@ -2172,7 +2220,8 @@ UNIQUE (user_id)
 
 ### ❌ Non câblé ou incomplet
 
-- **`GET /api/v1/tactics/random` (EPIC 37, §4.8 bis)** : backend + tests opérationnels, mais **aucun appelant frontend** — la migration Chessground (EPIC 37, Étape 8) et le module de coaching visuel (Étape 9) restent à faire avant qu'une UI ne consomme cette route. Voir §9 et §10.
+- **`GET /api/v1/tactics/random` (EPIC 37, §4.8 bis)** : backend + tests opérationnels, mais **aucun appelant frontend** — un module de coaching visuel dédié à cette route reste à écrire. Voir §9 et §10.
+- **Lotus Mastery Engine — `/api/v1/openings/trainer/*` (EPIC 38, §4.9)** : backend + tests opérationnels, mais **aucun appelant frontend** — la carte OUVERTURES existante appelle encore les anciennes routes `/openings/repertoire/*`, supprimées par cette migration (cf. §9, **régression volontaire et documentée**, pas un oubli).
 
 ---
 
@@ -2181,19 +2230,23 @@ UNIQUE (user_id)
 - **Routes backend inutilisées** (`POST /analyze`, `GET /games/{username}`, `POST /srs/review`, `POST /srs/review/full`) : **supprimées** — le frontend fait l'analyse Stockfish côté client, appelle Chess.com en direct et gère le SRS localement ; ces routes publiques n'étaient que de la surface d'attaque. Des tests verrouillent leur non-réapparition (404) et le montage intact des routers métier. `ChessComClient.get_latest_games`/`get_games_for_months` sont, eux, bien vivants (sync EPIC 23, courbe d'Elo EPIC 24).
 - **`game.endgame_accuracy` non rétro-alimenté** : rattrapage automatique en tâche de fond (`app.js:_backfillEndgameAccuracy`, max 5 parties/session, best-effort, 4 s après le boot) — la règle coach « précision finale < 60 % » couvre désormais aussi l'historique.
 - **Catalogue `lichess_puzzles` (EPIC 37)** : table + `GET /tactics/random` opérationnels, mais **table vide tant que le workflow `ingest-puzzles.yml` (§7.5) n'a pas été lancé au moins une fois** contre le dump Lichess officiel (streamé en direct, rien à télécharger/versionner manuellement). Sans exécution de l'ETL, la route répond 404 (« Aucun puzzle disponible ») quelle que soit la plage d'Elo demandée.
+- **Carte OUVERTURES cassée par le remplacement EPIC 9 → EPIC 38 (Lotus Mastery Engine, §4.9)** : `app.js:_startOpeningReview/_onOtDrop/_finishOpeningReview` et `api_client.js:createOpeningLine/getOpeningLines/getDueOpeningLines/reviewOpeningLine/deleteOpeningLine` appellent `/api/v1/openings/repertoire/*`, **supprimées** (remplacées par `/api/v1/openings/trainer/import|next-move|attempt`, modèle en arbre de nœuds plutôt qu'en lignes). Décision actée avec l'utilisateur (remplacer plutôt que coexister) ; le backend a été refait dans cette optique, l'adaptation du frontend est une **suite planifiée distincte** (§10), pas un oubli — `frontend/tests/e2e/openings.spec.js` a été retiré en conséquence (cf. §6.3) plutôt que laissé rouge. Les tests Jest de `api_client.js` sur les méthodes ci-dessus restent verts (ils testent la construction de la requête JS, pas une réponse serveur réelle) — trompeur si lu isolément, d'où ce rappel explicite.
 
 ---
 
 ## 10. Ce qui reste à développer
 
-**EPIC 37 — suites planifiées (aucune n'est un gap de câblage, ce sont les prochaines US du même chantier) :**
+**Suites planifiées (aucune n'est un gap de câblage, ce sont les prochaines US des chantiers EPIC 37/38) :**
 
 | Priorité | Chantier | Détail |
 |---|---|---|
-| 🔴 | Exécuter l'ETL en production | Workflow `.github/workflows/ingest-puzzles.yml` (§7.5) prêt — reste à ajouter le secret `DATABASE_URL` (Settings → Secrets and variables → Actions) et lancer le workflow manuellement une première fois pour que `GET /tactics/random` renvoie autre chose que 404 (cf. §9) |
-| 🟡 | Migration Chessground (EPIC 37, Étape 8) | Remplacer chessboard.js par Chessground sur `board_manager.js`/`index.html` — préalable à toute UI consommant `/tactics/random` |
-| 🟡 | Coaching visuel `drawFeedback` (EPIC 37, Étape 9) | Flèches rouge/verte (`api.setShapes()`) une fois Chessground en place |
-| 🟢 | Lotus Mastery Engine — Ouvertures (EPIC 37, Étapes 10-14) | Référentiel ECO, arbre de progression par nœud (SRS + déblocage par mastery_score), endpoint `next-move` — chantier distinct, pas commencé |
+| 🔴 | Exécuter l'ETL puzzles en production | Workflow `.github/workflows/ingest-puzzles.yml` (§7.5) prêt — reste à ajouter le secret `DATABASE_URL` (Settings → Secrets and variables → Actions) et lancer le workflow manuellement une première fois pour que `GET /tactics/random` renvoie autre chose que 404 (cf. §9) |
+| 🔴 | Adapter le frontend au Lotus Mastery Engine (EPIC 38) | La carte OUVERTURES appelle encore les routes supprimées `/openings/repertoire/*` (cf. §8/§9) — reconstruire l'UI autour d'`import` (PGN) + `next-move`/`attempt` (arbre de progression, plus une liste de lignes) |
+| 🟡 | Coaching visuel sur les échiquiers de problèmes | `AnalysisFeedback.drawFeedback`/Chessground (EPIC 37) ne couvre que l'échiquier principal — les 6 échiquiers de problèmes (Tactique, Finales, Sprint, Cimetière, Ouvertures, Exercice) restent sur chessboard.js + overlay SVG maison (`_drawProblemArrows`) |
+| 🟢 | Exécuter `seed_eco.py` en production | Table `eco_reference` prête (EPIC 38) mais non consommée par une route API — référentiel brut pour un futur enrichissement (suggestion de variantes depuis `top_openings`/`successRatio`, cf. §11.1) |
+
+**Historique — déjà fait (chantiers EPIC 37 précédemment listés ici comme « à faire ») :**
+Migration Chessground (échiquier principal) et coaching visuel `drawFeedback` (EPIC 37, US 37.3, §3.13 undecies) : ✅ implémentés et vérifiés visuellement.
 
 **Historique (gaps antérieurs, tous fermés) :**
 
@@ -2268,7 +2321,7 @@ Swipe pour naviguer entre coups, touch targets plus grands, layout vertical pour
 
 Identifier les ouvertures jouées le plus souvent, montrer leurs performances par cadence et couleur, recommander des variantes à améliorer.
 
-> **Volet entraînement implémenté (EPIC 9, §4.9)** : l'entraîneur de répertoire (ajout de lignes + révision SM-2) répond au besoin de mémorisation active. Le volet **diagnostic** décrit ci-dessus (performances par cadence/couleur sur les ouvertures *déjà jouées*, recommandation automatique de variantes à ajouter au répertoire depuis les stats existantes `top_openings`/`successRatio`) reste à faire — connecter les deux fonctionnalités serait la suite naturelle.
+> **Volet entraînement implémenté (EPIC 9 puis EPIC 38, §4.9)** : l'entraîneur d'ouvertures (import PGN + arbre de progression par nœud, Lotus Mastery Engine) répond au besoin de mémorisation active. Le volet **diagnostic** décrit ci-dessus (performances par cadence/couleur sur les ouvertures *déjà jouées*, recommandation automatique de variantes à ajouter depuis les stats existantes `top_openings`/`successRatio`, éventuellement croisées avec le référentiel `eco_reference` désormais disponible, EPIC 38) reste à faire — connecter les deux fonctionnalités serait la suite naturelle.
 
 ### 11.10 Entraîneur de finales essentielles
 
