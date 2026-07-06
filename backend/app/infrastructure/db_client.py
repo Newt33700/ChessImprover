@@ -9,6 +9,7 @@ need no real database and the domain layer stays decoupled.
 
 from __future__ import annotations
 
+import logging
 import uuid
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
@@ -16,6 +17,8 @@ from typing import Any, Dict, List, Optional
 from app.domain.gamification import apply_xp_gain
 from app.domain.tactical_elo import DEFAULT_TACTICAL_ELO
 from app.domain.tactics import select_nearest_problem
+
+logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # In-memory store (dev / test)
@@ -649,10 +652,30 @@ def record_tactical_attempt(
     time_taken: float,
 ) -> Dict[str, Any]:
     """Enregistre une tentative résolue (US 8.4), pour le calcul du taux de
-    réussite par catégorie et de la série en cours (streak)."""
+    réussite par catégorie et de la série en cours (streak).
+
+    EPIC 36 (bugfix production) : les problèmes servis depuis l'API Puzzle
+    Lichess (et le seed statique de repli) ne sont JAMAIS insérés dans la
+    table Postgres ``tactical_problems`` — ils ne vivent qu'en mémoire
+    (``add_lichess_tactical_problem``, cf. plus haut), exactement comme
+    ``get_tactical_problem`` le prévoit déjà en repli. L'INSERT dans
+    ``tactical_attempts`` (clé étrangère vers ``tactical_problems``) échoue
+    alors systématiquement en 500 (``ForeignKeyViolation``) dès qu'un
+    utilisateur résout un tel problème — y compris le mat final d'un
+    puzzle. Comme pour ``get_tactical_problem``/``get_next_tactical_problem``,
+    on retombe sur l'historique in-memory plutôt que de laisser planter la
+    requête : cette tentative ne sera pas visible dans les stats côté
+    Postgres, mais Elo/série/XP restent corrects pour l'utilisateur.
+    """
     repo = _pg()
     if repo is not None:  # pragma: no cover - nécessite DATABASE_URL
-        return repo.record_tactical_attempt(user_id, problem_id, category, success, time_taken)
+        try:
+            return repo.record_tactical_attempt(user_id, problem_id, category, success, time_taken)
+        except Exception as exc:
+            logger.warning(
+                "record_tactical_attempt: échec Postgres (problem_id=%r probablement absent de "
+                "tactical_problems — puzzle Lichess/seed in-memory) : %r", problem_id, exc,
+            )
     attempt = {
         "attempt_id": str(uuid.uuid4()),
         "user_id": user_id,
@@ -667,10 +690,21 @@ def record_tactical_attempt(
 
 
 def get_tactical_attempts(user_id: str) -> List[Dict[str, Any]]:
-    """Historique des tentatives d'un utilisateur (US 8.4), du plus ancien au plus récent."""
+    """Historique des tentatives d'un utilisateur (US 8.4), du plus ancien au plus récent.
+
+    EPIC 36 : repli in-memory si le dépôt Postgres échoue — même garde-fou
+    que ``record_tactical_attempt`` ci-dessus. Appelé juste après lui dans
+    ``submit_attempt`` (calcul de la série) : sans ce repli, une tentative
+    tombée en fallback (problème jamais persisté côté Postgres) ferait
+    planter la requête une seconde fois, juste après avoir été « sauvée »
+    par le repli de ``record_tactical_attempt``.
+    """
     repo = _pg()
     if repo is not None:  # pragma: no cover - nécessite DATABASE_URL
-        return repo.get_tactical_attempts(user_id)
+        try:
+            return repo.get_tactical_attempts(user_id)
+        except Exception as exc:
+            logger.warning("get_tactical_attempts: échec Postgres, repli in-memory : %r", exc)
     return [a for a in _tactical_attempts if a["user_id"] == user_id]
 
 

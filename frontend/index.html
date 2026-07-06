@@ -807,29 +807,34 @@
     <div class="tactics-topbar">
       <button class="btn-icon" aria-label="Retour" onclick="window.app?._hideTactics()">←</button>
       <h2 class="tactics-title">Coach Tactique</h2>
+      <div class="tactics-timer-badge" id="tactics-timer-badge" hidden>⏱ 0:00</div>
       <div class="tactics-streak-badge" id="tactics-streak-badge">🔥 0</div>
       <div class="tactics-elo-badge" id="tactics-elo-badge">Elo — </div>
     </div>
 
-    <div class="tactics-themes" id="tactics-themes">
-      <button class="tactics-theme-btn active" data-theme="">Aléatoire</button>
-      <button class="tactics-theme-btn" data-theme="mate_in_1">Mat en 1</button>
-      <button class="tactics-theme-btn" data-theme="mate_in_2">Mat en 2</button>
-      <button class="tactics-theme-btn" data-theme="hanging_piece">Pièces non protégées</button>
-    </div>
+    <div class="tactics-layout">
+      <div class="db-card tactics-problem-card">
+        <div class="db-card-body" id="tactics-problem-body">
+          <p class="empty-state">Connectez-vous pour accéder au Coach Tactique.</p>
+        </div>
+      </div>
 
-    <!-- US 25.3 (EPIC 25) : taux de réussite par thème (GET /tactics/stats) -->
-    <div class="tactics-stats-panel" id="tactics-stats-panel" hidden></div>
+      <div class="tactics-side-panel">
+        <div class="tactics-themes" id="tactics-themes">
+          <button class="tactics-theme-btn active" data-theme="">Aléatoire</button>
+          <button class="tactics-theme-btn" data-theme="mate_in_1">Mat en 1</button>
+          <button class="tactics-theme-btn" data-theme="mate_in_2">Mat en 2</button>
+          <button class="tactics-theme-btn" data-theme="hanging_piece">Pièces non protégées</button>
+        </div>
 
-    <!-- EPIC 11 (US 9.2) : bandeau visible seulement si un profil d'erreur récurrent est détecté -->
-    <div class="tactics-custom-training" id="tactics-custom-training" hidden>
-      <p class="tactics-custom-hint" id="tactics-custom-hint"></p>
-      <button class="btn btn--accent btn--sm" id="btn-custom-training">Entraînement Personnalisé</button>
-    </div>
+        <!-- US 25.3 (EPIC 25) : taux de réussite par thème (GET /tactics/stats) -->
+        <div class="tactics-stats-panel" id="tactics-stats-panel" hidden></div>
 
-    <div class="db-card tactics-problem-card">
-      <div class="db-card-body" id="tactics-problem-body">
-        <p class="empty-state">Connectez-vous pour accéder au Coach Tactique.</p>
+        <!-- EPIC 11 (US 9.2) : bandeau visible seulement si un profil d'erreur récurrent est détecté -->
+        <div class="tactics-custom-training" id="tactics-custom-training" hidden>
+          <p class="tactics-custom-hint" id="tactics-custom-hint"></p>
+          <button class="btn btn--accent btn--sm" id="btn-custom-training">Entraînement Personnalisé</button>
+        </div>
       </div>
     </div>
   </div>

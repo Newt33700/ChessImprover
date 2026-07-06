@@ -2353,6 +2353,39 @@ body.exercise-active #exercise-col { display: block; }
   margin-right: var(--space-sm);
 }
 
+/* EPIC 36 — chronomètre du problème en cours (Coach Tactique) */
+.tactics-timer-badge {
+  background: var(--bg-700);
+  color: var(--text-secondary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 4px 10px;
+  font-size: 0.8rem;
+  font-weight: 700;
+  font-family: var(--font-data, var(--font-mono, monospace));
+  margin-right: var(--space-sm);
+}
+
+/* EPIC 36 — indicateur de trait (Blancs/Noirs), au-dessus de l'échiquier */
+.tactics-turn-indicator {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  margin: 0 auto var(--space-sm);
+  font-size: 0.85rem;
+  font-weight: 700;
+  color: var(--text-secondary);
+}
+.tactics-turn-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  border: 1.5px solid var(--border);
+  background: #fff;
+}
+.tactics-turn-indicator--black .tactics-turn-dot { background: #1b1b1b; }
+
 .tactics-themes {
   display: flex;
   flex-wrap: wrap;
@@ -2413,6 +2446,9 @@ body.exercise-active #exercise-col { display: block; }
 }
 
 .tactics-problem-card { max-width: 480px; margin: 0 auto; }
+/* EPIC 36 — dans le Coach Tactique, la largeur de la carte est pilotée par
+   `.tactics-layout` (grille) plutôt que par ce max-width générique. */
+#tactics-col .tactics-problem-card { max-width: none; margin: 0; }
 .tactics-fen {
   font-family: var(--font-mono, monospace);
   font-size: 0.8rem;
@@ -2434,14 +2470,37 @@ body.exercise-active #exercise-col { display: block; }
 
 .tactics-board {
   position: relative; /* EPIC 32 : ancre l'overlay de flèches .problem-arrows */
-  width: 100%;
-  max-width: 420px;
+  /* EPIC 36 — bornée aussi par la hauteur de viewport (dvh) : sur un écran
+     bas (ex. fenêtre non maximisée), l'échiquier reste toujours entièrement
+     visible sans avoir à défiler, plutôt que d'être coupé en bas. */
+  width: min(420px, 92vw, 60dvh);
   margin: var(--space-md) auto;
   border-radius: var(--radius-sm);
   transition: box-shadow 0.2s;
 }
 .tactics-board--success { box-shadow: 0 0 0 4px rgba(129,182,76,0.6); }
 .tactics-board--error { box-shadow: 0 0 0 4px rgba(202,52,49,0.6); }
+
+/* EPIC 36 — Coach Tactique : échiquier + thèmes/stats côte à côte sur les
+   écrans assez larges (ex. laptop), pour ne plus empiler tout le contenu
+   verticalement au-dessus de l'échiquier (cause du bug UX rapporté : sur un
+   écran bas, l'échiquier était poussé sous la ligne de flottaison par les
+   thèmes/stats/bandeaux affichés avant lui). */
+.tactics-layout {
+  display: block;
+}
+@media (min-width: 760px) {
+  .tactics-layout {
+    display: grid;
+    grid-template-columns: minmax(320px, 480px) 1fr;
+    gap: var(--space-xl);
+    align-items: start;
+  }
+  #tactics-col { max-width: 1000px; }
+  #tactics-col .tactics-board { width: min(440px, 44vw, 68dvh); }
+}
+.tactics-side-panel .tactics-themes { margin-bottom: var(--space-md); }
+.tactics-side-panel .tactics-custom-training { margin-bottom: 0; }
 
 /* EPIC 32 — flèches solution/coup joué sur les échiquiers de problèmes */
 .problem-arrows {
