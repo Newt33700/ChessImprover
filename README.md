@@ -2121,6 +2121,22 @@ Job : ingest (ubuntu-latest, timeout 180 min, concurrency group anti-double-run)
 
 **Secret requis :** `DATABASE_URL` (**même secret** que §7.4 depuis EPIC 39). À ajouter dans *Settings → Secrets and variables → Actions* avant le premier run ; le job échoue explicitement (`::error::`) si absent plutôt que de tenter une connexion invalide.
 
+### 7.5 ter Ingestion ponctuelle du référentiel ECO (EPIC 38/39)
+
+**Fichier :** `.github/workflows/seed-eco.yml`
+**Déclencheur :** manuel uniquement (`workflow_dispatch`, onglet Actions → « Seed ECO Reference » → Run workflow).
+
+```
+Job : seed (ubuntu-latest, timeout 30 min)
+  → pip install -r backend/requirements.txt
+  → télécharge le certificat racine du cluster CockroachDB ($HOME/.postgresql/root.crt)
+  → python -m scripts.seed_eco
+    (lit les TSV déjà présents dans frontend/assets/data/openings/*.tsv,
+    aucun accès réseau externe nécessaire contrairement à §7.5)
+```
+
+**Secret requis :** `DATABASE_URL` (même secret que §7.4/§7.5). Créé après la bascule CockroachDB (EPIC 39) pour peupler `eco_reference` sans dépendre d'une exécution locale de `seed_eco.py` par l'utilisateur.
+
 > Créé après un constat en session : ni le sandbox Claude Code (réseau sortant restreint) ni cette session n'ont un accès simultané à Internet (Lichess) et à `DATABASE_URL` — ce workflow tourne sur l'infrastructure GitHub Actions, qui a les deux dès que le secret est configuré.
 
 ### 7.5 bis Migration d'hébergement Postgres — Supabase → CockroachDB (EPIC 39)
