@@ -29,7 +29,15 @@ module.exports = {
       timeout: 30_000,
       // Le backend refuse de démarrer avec le JWT_SECRET par défaut hors debug
       // (fail-fast, audit 07/2026) — on fournit un secret de test explicite.
-      env: { ...process.env, JWT_SECRET: process.env.JWT_SECRET || "e2e-test-secret" },
+      // DISABLE_LICHESS_PUZZLES : le Coach Tactique (EPIC 34) interroge l'API
+      // Puzzle Lichess en priorité ; en CI (réseau sortant autorisé), un vrai
+      // puzzle Lichess écraserait le seed local déterministe que ces tests
+      // stubbent (FEN fixes), les rendant flaky. Forcer le seed local ici.
+      env: {
+        ...process.env,
+        JWT_SECRET: process.env.JWT_SECRET || "e2e-test-secret",
+        DISABLE_LICHESS_PUZZLES: "1",
+      },
     },
     {
       command: "python3 -m http.server 8080",

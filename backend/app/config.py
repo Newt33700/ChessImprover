@@ -34,6 +34,14 @@ class Settings(BaseSettings):
     stockfish_path: Optional[str] = None
     engine_depth: int = 14
 
+    # EPIC 34 — Coach Tactique : désactive l'appel réseau à l'API Puzzle
+    # Lichess (source primaire de /tactics/next) pour ne servir que le seed
+    # local déterministe. Utilisé par les tests E2E Playwright, dont les
+    # scénarios pilotent un stub `Chess.move()` sur des FEN fixes du seed —
+    # un vrai puzzle Lichess (FEN/Elo arbitraires) les casserait, ce qui
+    # n'arrive qu'en CI où le réseau sortant est autorisé.
+    disable_lichess_puzzles: bool = False
+
     class Config:
         env_file = ".env"
         env_file_encoding = "utf-8"
