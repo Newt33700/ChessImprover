@@ -622,3 +622,50 @@ class PgRepository:
         row = dict(row)
         row["id"] = str(row["id"])
         return self._iso(row)
+
+    # -- lichess_puzzles (EPIC 37 — Moteur de Puzzles) -----------------------
+    #
+    # `lichess_puzzles` compte des millions de lignes (dump complet ingéré) :
+    # contrairement à `tactical_problems` ci-dessus, `ORDER BY random()` y
+    # forcerait un tri complet de la table à chaque appel — interdit par la
+    # spec. La sélection aléatoire se fait donc en deux requêtes bornées par
+    # index (`idx_lichess_puzzles_rating` / GIN `idx_lichess_puzzles_themes`) :
+    # un COUNT filtré, puis un SELECT ... LIMIT/OFFSET à un décalage tiré côté
+    # Python (cf. `domain.lichess_puzzles.resolve_random_puzzles`).
+
+    @staticmethod
+    def _puzzle_filter_sql(theme: Optional[str]) -> "tuple[str, tuple]":
+        """Clause ``WHERE`` commune à ``count_puzzles``/``get_random_puzzles``."""
+        if theme is not None:
+            return "WHERE rating BETWEEN %s AND %s AND themes @> ARRAY[%s]", (theme,)
+        return "WHERE rating BETWEEN %s AND %s", ()
+
+    def count_puzzles(
+        self, rating_min: int, rating_max: int, theme: Optional[str] = None
+    ) -> int:  # pragma: no cover - nécessite une base réelle
+        where_sql, extra_params = self._puzzle_filter_sql(theme)
+        sql = f"SELECT COUNT(*) AS count FROM lichess_puzzles {where_sql}"
+        with self._connect() as conn, conn.cursor() as cur:
+            cur.execute(sql, (rating_min, rating_max) + extra_params)
+            row = cur.fetchone()
+        return int(row["count"])
+
+    def get_random_puzzles(
+        self,
+        rating_min: int,
+        rating_max: int,
+        theme: Optional[str],
+        limit: int,
+        offset: int,
+    ) -> List[Dict[str, Any]]:  # pragma: no cover - nécessite une base réelle
+        """``limit`` lignes à partir de ``offset`` (déjà tiré aléatoirement par
+        l'appelant) — jamais de tri sur la table entière."""
+        where_sql, extra_params = self._puzzle_filter_sql(theme)
+        sql = (
+            f"SELECT * FROM lichess_puzzles {where_sql} "
+            "ORDER BY puzzle_id LIMIT %s OFFSET %s"
+        )
+        params = (rating_min, rating_max) + extra_params + (limit, offset)
+        with self._connect() as conn, conn.cursor() as cur:
+            cur.execute(sql, params)
+            return [dict(r) for r in cur.fetchall()]

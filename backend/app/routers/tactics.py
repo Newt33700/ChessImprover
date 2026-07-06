@@ -15,18 +15,19 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime, timezone
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 
 from app.domain.error_profile import ERROR_TYPE_TO_TACTICAL_THEMES, ERROR_TYPES
-from app.domain.lichess_puzzles import angle_for_theme, parse_puzzle_payload
+from app.domain.lichess_puzzles import angle_for_theme, parse_puzzle_payload, resolve_random_puzzles
 from app.domain.models import (
     TacticalAttemptRequest,
     TacticalAttemptResult,
     TacticalProblemPublic,
     TacticalStatsResponse,
 )
+from app.domain.puzzles_models import LichessTheme, PuzzleResponse
 from app.domain.tactical_elo import update_elo
 from app.domain.tactics import (
     TACTICAL_THEMES,
@@ -118,6 +119,46 @@ async def next_problem(
         category=problem["category"],
         difficulty_elo=problem["difficulty_elo"],
     )
+
+
+def _get_puzzle_repo():
+    """Dépôt du catalogue `lichess_puzzles` si ``DATABASE_URL`` est configuré,
+    ``None`` sinon — ce catalogue (EPIC 37, ingéré via
+    ``scripts/ingest_lichess_puzzles.py``) n'a pas d'équivalent in-memory :
+    contrairement au reste de ``db_client``, il n'existe qu'en base."""
+    if not settings.database_url:
+        return None
+    from app.infrastructure.pg_repository import PgRepository
+
+    return PgRepository(settings.database_url)
+
+
+@router.get("/random", response_model=List[PuzzleResponse])
+async def random_puzzles(
+    rating_min: int = Query(1000, ge=0, le=3500),
+    rating_max: int = Query(1600, ge=0, le=3500),
+    theme: Optional[LichessTheme] = Query(None),
+    limit: int = Query(1, ge=1, le=50),
+    user_id: str = Depends(get_current_user_id),
+) -> List[PuzzleResponse]:
+    """US 37.1 — puzzles tirés du catalogue local `lichess_puzzles`, dans une
+    plage d'Elo donnée. Élargit automatiquement la plage de ±100 (fallback)
+    si aucun puzzle ne correspond exactement (cf. `resolve_random_puzzles`).
+    """
+    if rating_max < rating_min:
+        raise HTTPException(status_code=422, detail="rating_max doit être >= rating_min")
+
+    repo = _get_puzzle_repo()
+    if repo is None:
+        raise HTTPException(
+            status_code=503, detail="Catalogue de puzzles indisponible (base non configurée)."
+        )
+
+    theme_value = theme.value if theme is not None else None
+    puzzles, _strategy = resolve_random_puzzles(repo, rating_min, rating_max, theme_value, limit)
+    if not puzzles:
+        raise HTTPException(status_code=404, detail="Aucun puzzle disponible pour ces critères.")
+    return [PuzzleResponse(**puzzle) for puzzle in puzzles]
 
 
 @router.post("/attempt", response_model=TacticalAttemptResult)

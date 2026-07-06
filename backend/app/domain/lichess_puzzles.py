@@ -36,11 +36,19 @@ aucun élément de ``solution`` n'est un coup à auto-jouer avant de commencer.
 
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional
+import logging
+import random
+from typing import Any, Dict, List, Optional, Protocol, Tuple
 
 import chess
 import chess.pgn
 import io
+
+logger = logging.getLogger(__name__)
+
+#: EPIC 37 (US 37.1) — largeur de l'élargissement Elo quand la plage demandée
+#: ne contient aucun puzzle du catalogue local `lichess_puzzles`.
+PUZZLE_FALLBACK_ELO_WINDOW = 100
 
 #: theme_id interne -> "angle" Lichess (paramètre de /api/puzzle/next).
 #: ``None`` (thème "Aléatoire" côté UI) omet le paramètre — Lichess sert
@@ -128,3 +136,60 @@ def parse_puzzle_payload(payload: Dict[str, Any], category: Optional[str]) -> Op
         "difficulty_elo": rating,
         "lichess_id": puzzle_id,
     }
+
+
+class PuzzleRepository(Protocol):  # pragma: no cover - contrat structurel
+    """Contrat minimal attendu de `PgRepository` par `resolve_random_puzzles` —
+    typage structurel (`Protocol`) plutôt qu'un import direct de
+    l'infrastructure, pour garder ce module testable avec un simple double."""
+
+    def count_puzzles(
+        self, rating_min: int, rating_max: int, theme: Optional[str] = None
+    ) -> int: ...
+
+    def get_random_puzzles(
+        self, rating_min: int, rating_max: int, theme: Optional[str], limit: int, offset: int,
+    ) -> List[Dict[str, Any]]: ...
+
+
+def resolve_random_puzzles(
+    repo: PuzzleRepository,
+    rating_min: int,
+    rating_max: int,
+    theme: Optional[str],
+    limit: int,
+) -> Tuple[List[Dict[str, Any]], str]:
+    """Sélectionne jusqu'à ``limit`` puzzles du catalogue `lichess_puzzles`,
+    tirés uniformément dans ``[rating_min, rating_max]`` (US 37.1).
+
+    Jamais de ``ORDER BY random()`` (coûteux sur une table de plusieurs
+    millions de lignes) : un COUNT filtré détermine la taille de la page,
+    puis un décalage aléatoire est tiré côté Python pour un unique
+    ``SELECT ... LIMIT/OFFSET`` — les deux s'appuient sur les index
+    (`idx_lichess_puzzles_rating` / GIN `idx_lichess_puzzles_themes`).
+
+    Si la plage d'Elo demandée ne contient aucun puzzle (thème rare à un Elo
+    précis), retombe sur un fallback élargissant la plage de
+    ``±PUZZLE_FALLBACK_ELO_WINDOW`` avant de renoncer. Retourne
+    ``(puzzles, strategy)`` avec ``strategy`` dans ``{"standard", "fallback"}``
+    pour que l'appelant/les logs distinguent les deux cas.
+    """
+    strategy = "standard"
+    count = repo.count_puzzles(rating_min, rating_max, theme)
+    if count == 0:
+        rating_min = max(0, rating_min - PUZZLE_FALLBACK_ELO_WINDOW)
+        rating_max = rating_max + PUZZLE_FALLBACK_ELO_WINDOW
+        strategy = "fallback"
+        count = repo.count_puzzles(rating_min, rating_max, theme)
+
+    logger.info(
+        "tactics/random: stratégie=%s rating=[%d,%d] theme=%r count=%d",
+        strategy, rating_min, rating_max, theme, count,
+    )
+    if count == 0:
+        return [], strategy
+
+    effective_limit = min(limit, count)
+    offset = random.randint(0, count - effective_limit)
+    puzzles = repo.get_random_puzzles(rating_min, rating_max, theme, effective_limit, offset)
+    return puzzles, strategy
