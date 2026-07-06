@@ -1429,3 +1429,22 @@ Reste à faire, consigné en Backlog (README §11) : migration complète des 5 a
 - Exécution de `seed_eco.py`/de la migration en production (même limitation que l'EPIC 37 : cette session sandbox n'a ni l'accès réseau ni les identifiants de production).
 
 **Validation EPIC 38 :** backend **1154/1154 pytest** (+41 TUs nets sur la base 1113 post-EPIC 37 — net d'un remplacement complet, pas une simple addition), `flake8` propre sur les fichiers modifiés/créés, `sqlfluff` propre sur les 2 nouvelles migrations, frontend **16/16 Playwright e2e** (18 - 2 scénarios `openings.spec.js` retirés, aucune régression ailleurs).
+
+### US 38.2 : Adaptation du frontend au Lotus Mastery Engine
+
+**Contexte** : suite explicitement demandée par l'utilisateur (« oui ») après confirmation que la régression frontend de l'US 38.1 était un compromis accepté. Reconstruit la carte OUVERTURES autour du nouveau contrat API (`/openings/trainer/import|next-move|attempt`) au lieu de l'ancien (`/openings/repertoire/*`, supprimé).
+
+**Amélioration backend au passage** : `OpeningAttemptResult` ne portait ni `success` ni `solution` — le frontend n'aurait eu aucun moyen de savoir si la tentative avait réussi, ni d'afficher le coup attendu après un échec (contrairement au Coach Tactique/Entraîneur de Finales). Ajout de `success: bool` et `solution: Optional[str]` (révélée **uniquement** après un échec, jamais par avance) — cohérent avec `TacticalAttemptResult`, pas une déviation du principe anti-triche (le verdict reste calculé côté serveur).
+
+**Statut :** ✅ Implémenté :
+
+- **`api_client.js`** : `createOpeningLine`/`getOpeningLines`/`getDueOpeningLines`/`reviewOpeningLine`/`deleteOpeningLine` (ex-EPIC 9) remplacées par `importRepertoire`/`getNextOpeningMove`/`submitOpeningAttempt`.
+- **`app.js`** : `_submitOpeningImport` (import PGN, plus formulaire nom+couleur+coups), `_loadNextOpeningMove` (session Lotus Mastery — rang + score de maîtrise affichés, message gamifié si `session_complete`), `_initOpeningBoard`/`_onOtDragStart`/`_onOtDrop` (échiquier indépendant, même fabrique `_createProblemBoard` que l'Entraîneur de Finales US 8.3), `_submitOpeningAttempt` (halo vert/rouge, flèches de solution sur échec via `_showProblemSolution`, bouton « suivant » explicite via `_offerNextProblem` — mêmes conventions EPIC 32 que les autres modules de problèmes, pas de réinvention). La grille d'ouvertures populaires (EPIC 27) pré-remplit désormais le PGN au lieu d'une liste de coups + couleur.
+- **`index.html`** : formulaire nom + `textarea` PGN (remplace nom+couleur+coups) ; carte « Mon répertoire » (liste de lignes) retirée — aucun endpoint équivalent dans le nouveau modèle en arbre.
+- **`style.css`** : `.ot-color-choice`/`.ot-line-*` (obsolètes) remplacées par `.ot-pgn-input`/`.ot-mastery-badges`/`.ot-mastery-score`.
+- **Tests** : `api_client.test.js` — 6 tests EPIC 9 remplacés par 5 tests EPIC 38 (import/next-move/attempt, succès + rejets HTTP).
+- **Vérification visuelle réelle** (Playwright, Chromium, backend + frontend locaux, pas de stub) : import PGN (Ruy Lopez, 5 nœuds) → échiquier de pratique monté (position initiale, orientation blancs) → coup faux (halo rouge, message d'échec, `session_complete` après clic « suivant » — cohérent avec le cooldown SRS d'1 jour sur le seul nœud débloqué) → nouvel import (Italian Game) → coup juste (halo vert, maîtrise 0→15, rang Beginner, XP crédité 8→10). Zéro erreur console sur l'ensemble du parcours.
+
+**Hors périmètre de cette US** : pas de nouveau test e2e Playwright pour ce flux (`openings.spec.js` reste retiré, cf. §10 README) — couverture actuelle = vérification manuelle + Jest `api_client.test.js`.
+
+**Validation US 38.2 :** frontend **434/434 Jest** (net stable : 6 tests EPIC 9 remplacés par 5 EPIC 38), backend **1155/1155 pytest** (+1 test sur les nouveaux champs `success`/`solution`), `flake8` propre, vérification visuelle manuelle bout-en-bout (import → échec → session terminée → nouvel import → succès).
