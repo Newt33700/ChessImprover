@@ -1479,3 +1479,16 @@ Reste à faire, consigné en Backlog (README §11) : migration complète des 5 a
 - YAML validé (`yaml.safe_load`) sur les deux workflows modifiés.
 
 **Validation US 39.1 :** YAML valide sur les 2 workflows modifiés ; aucun test Python impacté (fichiers `.yml` uniquement, pas de logique applicative nouvelle — la logique de nettoyage RLS/trigger déjà testée en EPIC 39 est réutilisée telle quelle).
+
+### US 39.2 : Correctif TLS — certificat racine CockroachDB manquant sur les runners CI
+
+**Contexte** : premier run réel de `deploy-database.yml` (déclenché manuellement une fois le cluster créé et le secret `DATABASE_URL` renseigné par l'utilisateur) — échec à la connexion, pas au lint : `psycopg.OperationalError: ... root certificate file "/home/runner/.postgresql/root.crt" does not exist`. La chaîne de connexion CockroachDB Cloud utilise `sslmode=verify-full`, qui exige un certificat racine local absent par défaut sur un runner GitHub Actions neuf (et dans l'image Docker Render).
+
+**Statut :** ✅ Implémenté :
+- **`deploy-database.yml`** et **`ingest-puzzles.yml`** : nouvelle étape « Download CockroachDB CA certificate » avant l'exécution du script Python — `curl --create-dirs -o "$HOME/.postgresql/root.crt" 'https://cockroachlabs.cloud/clusters/206ab806-09a1-4320-8a47-2080e53e9b40/cert'` (endpoint officiel CockroachDB Cloud, certificat spécifique à ce cluster).
+- **`backend/Dockerfile`** : même téléchargement ajouté au build (`curl` ajouté aux paquets apt installés aux côtés de `stockfish`), pour que le backend déployé sur Render (qui utilise la même `DATABASE_URL` en production) puisse se connecter sans ce même échec.
+- Alternative envisagée et écartée : `sslrootcert=system` (modifier le DSN pour utiliser le magasin de certificats du système) aurait évité de coupler le pipeline à l'identifiant du cluster, mais l'utilisateur a fourni directement la commande officielle CockroachDB (certificat par cluster) — approche retenue par cohérence avec sa demande.
+
+**Hors périmètre** : ce sandbox n'a pas accès pour re-générer ce certificat si le cluster CockroachDB est un jour recréé (nouvel identifiant) — l'URL du certificat dans les 3 fichiers devra alors être mise à jour manuellement.
+
+**Validation US 39.2 :** YAML validé sur les 2 workflows ; `Dockerfile` non testable en CI (pas de build Docker dans ce sandbox) — à valider par le prochain déploiement Render réel.
