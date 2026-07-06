@@ -2111,13 +2111,15 @@ Job 2 : push-migrations (main seulement, dépend de lint-migrations)
 **Déclencheur :** manuel uniquement (`workflow_dispatch`, onglet Actions → « Ingest Lichess Puzzles » → Run workflow) — pas de déclenchement automatique, ce n'est pas un pipeline de déploiement mais un job à la demande pour peupler/rafraîchir `lichess_puzzles`.
 
 ```
-Job : ingest (ubuntu-latest, timeout 180 min, concurrency group anti-double-run)
+Job : ingest (ubuntu-latest, timeout 300 min, concurrency group anti-double-run)
   → pip install -r backend/requirements.txt
   → télécharge le certificat racine du cluster CockroachDB ($HOME/.postgresql/root.crt)
   → python -m scripts.ingest_lichess_puzzles [dump_url]
     (dump_url optionnel, input du workflow ; vide = DEFAULT_PUZZLE_DUMP_URL,
     le dump officiel https://database.lichess.org/lichess_db_puzzle.csv.zst)
 ```
+
+**Timeout à 300 min** (relevé de 180) : premier run réel contre CockroachDB (07/2026) — dump officiel à 6 057 356 puzzles, débit observé ~34 000 lignes/min, soit ~178 min estimées au total. 180 min laissait une marge quasi nulle ; relevé à 300 min (le maximum accepté par les runners GitHub-hosted est 360 min) pour absorber la variance réseau/CockroachDB sans faire échouer un run qui aurait autrement réussi.
 
 **Secret requis :** `DATABASE_URL` (**même secret** que §7.4 depuis EPIC 39). À ajouter dans *Settings → Secrets and variables → Actions* avant le premier run ; le job échoue explicitement (`::error::`) si absent plutôt que de tenter une connexion invalide.
 
