@@ -455,52 +455,51 @@ describe("Entraîneur de Finales (EPIC 10)", () => {
   });
 });
 
-describe("Entraîneur d'Ouvertures (EPIC 9)", () => {
-  test("createOpeningLine POST /api/v1/openings/repertoire", async () => {
+describe("Lotus Mastery Engine — Entraîneur d'Ouvertures (EPIC 38, REMPLACE l'ex-EPIC 9)", () => {
+  test("importRepertoire POST /api/v1/openings/trainer/import", async () => {
     global.fetch = jest.fn().mockResolvedValue({
       ok: true,
-      json: async () => ({ id: "l1", name: "Ruy Lopez", color: "white", moves: ["e4"], ease_factor: 2.5, interval_days: 1, repetitions: 0, due_date: "2026-07-01" }),
+      json: async () => ({ repertoire_id: "r1", node_count: 5 }),
     });
-    const out = await ApiClient.createOpeningLine({ name: "Ruy Lopez", color: "white", moves: ["e4"] });
-    expect(global.fetch.mock.calls[0][0]).toBe("/api/v1/openings/repertoire");
+    const out = await ApiClient.importRepertoire({ repertoireName: "Ruy Lopez", pgn: "1. e4 e5 2. Nf3 Nc6 3. Bb5" });
+    expect(global.fetch.mock.calls[0][0]).toBe("/api/v1/openings/trainer/import");
     expect(global.fetch.mock.calls[0][1].method).toBe("POST");
-    expect(JSON.parse(global.fetch.mock.calls[0][1].body)).toEqual({ name: "Ruy Lopez", color: "white", moves: ["e4"] });
-    expect(out.id).toBe("l1");
+    expect(JSON.parse(global.fetch.mock.calls[0][1].body)).toEqual({
+      repertoire_name: "Ruy Lopez", pgn: "1. e4 e5 2. Nf3 Nc6 3. Bb5",
+    });
+    expect(out.node_count).toBe(5);
   });
 
-  test("createOpeningLine rejette sur HTTP non-ok (422)", async () => {
+  test("importRepertoire rejette sur HTTP non-ok (422)", async () => {
     global.fetch = jest.fn().mockResolvedValue({ ok: false, status: 422 });
-    await expect(ApiClient.createOpeningLine({ name: "X", color: "white", moves: ["e4"] })).rejects.toThrow("HTTP 422");
+    await expect(ApiClient.importRepertoire({ repertoireName: "X", pgn: "garbage" })).rejects.toThrow("HTTP 422");
   });
 
-  test("getOpeningLines GET /api/v1/openings/repertoire", async () => {
-    global.fetch = jest.fn().mockResolvedValue({ ok: true, json: async () => ([]) });
-    await ApiClient.getOpeningLines();
-    expect(global.fetch.mock.calls[0][0]).toBe("/api/v1/openings/repertoire");
-  });
-
-  test("getDueOpeningLines GET /api/v1/openings/repertoire/due", async () => {
-    global.fetch = jest.fn().mockResolvedValue({ ok: true, json: async () => ([]) });
-    await ApiClient.getDueOpeningLines();
-    expect(global.fetch.mock.calls[0][0]).toBe("/api/v1/openings/repertoire/due");
-  });
-
-  test("reviewOpeningLine POST .../review avec mistake_count", async () => {
+  test("getNextOpeningMove GET /api/v1/openings/trainer/next-move", async () => {
     global.fetch = jest.fn().mockResolvedValue({
       ok: true,
-      json: async () => ({ id: "l1", ease_factor: 2.6, interval_days: 1, repetitions: 1, due_date: "2026-07-02" }),
+      json: async () => ({ session_complete: false, node_id: "n1", fen: "start", rank: "Beginner" }),
     });
-    await ApiClient.reviewOpeningLine("l1", 0);
-    expect(global.fetch.mock.calls[0][0]).toBe("/api/v1/openings/repertoire/l1/review");
-    expect(JSON.parse(global.fetch.mock.calls[0][1].body)).toEqual({ mistake_count: 0 });
+    const out = await ApiClient.getNextOpeningMove();
+    expect(global.fetch.mock.calls[0][0]).toBe("/api/v1/openings/trainer/next-move");
+    expect(out.node_id).toBe("n1");
   });
 
-  test("deleteOpeningLine DELETE /api/v1/openings/repertoire/{id}", async () => {
-    global.fetch = jest.fn().mockResolvedValue({ ok: true, json: async () => ({ deleted: true }) });
-    const out = await ApiClient.deleteOpeningLine("l1");
-    expect(global.fetch.mock.calls[0][0]).toBe("/api/v1/openings/repertoire/l1");
-    expect(global.fetch.mock.calls[0][1].method).toBe("DELETE");
-    expect(out).toEqual({ deleted: true });
+  test("submitOpeningAttempt POST /api/v1/openings/trainer/attempt avec node_id + move_san", async () => {
+    global.fetch = jest.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ node_id: "n1", success: true, status: "review", mastery_score: 15, srs_interval: 2, rank: "Beginner", unlocked_children: 0, solution: null }),
+    });
+    const out = await ApiClient.submitOpeningAttempt("n1", "e4");
+    expect(global.fetch.mock.calls[0][0]).toBe("/api/v1/openings/trainer/attempt");
+    expect(global.fetch.mock.calls[0][1].method).toBe("POST");
+    expect(JSON.parse(global.fetch.mock.calls[0][1].body)).toEqual({ node_id: "n1", move_san: "e4" });
+    expect(out.success).toBe(true);
+  });
+
+  test("submitOpeningAttempt rejette sur HTTP non-ok", async () => {
+    global.fetch = jest.fn().mockResolvedValue({ ok: false, status: 404 });
+    await expect(ApiClient.submitOpeningAttempt("missing", "e4")).rejects.toThrow("HTTP 404");
   });
 });
 

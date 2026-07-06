@@ -529,10 +529,10 @@ class ChessImproverApp {
       this._renderGhostOverlay();
     });
 
-    // Entraîneur d'Ouvertures (EPIC 9) — ajout d'une ligne au répertoire
+    // Entraîneur d'Ouvertures — Lotus Mastery Engine (EPIC 38) : import PGN
     document.getElementById("ot-add-form")?.addEventListener("submit", (e) => {
       e.preventDefault();
-      this._submitOpeningLine();
+      this._submitOpeningImport();
     });
 
     // Entraîneur de Finales (EPIC 10) — sélection de thème
@@ -3380,11 +3380,16 @@ class ChessImproverApp {
     }
   }
 
-  // ─── Entraîneur d'Ouvertures — Répertoire + SRS (EPIC 9) ──────────────
+  // ─── Entraîneur d'Ouvertures — Lotus Mastery Engine (EPIC 38, US 38.1) ─
+  // REMPLACE le répertoire de lignes + SRS SM-2 (EPIC 9) : un PGN importé
+  // devient un arbre de positions, chaque coup individuel a sa propre
+  // progression (mastery_score, déblocage des enfants). Même architecture
+  // que l'Entraîneur de Finales (US 8.3) : échiquier indépendant,
+  // validation de la solution 100 % serveur.
 
   _showOpeningsTrainer() {
     this._setActiveView("openings-trainer");
-    this._loadOpeningsTrainerView();
+    this._loadNextOpeningMove();
     this._renderOpeningsGrid(); // EPIC 27 (US 27.4) : grille visuelle
   }
 
@@ -3449,188 +3454,136 @@ class ChessImproverApp {
     grid.querySelectorAll("[data-opening-index]").forEach((btn) => {
       btn.addEventListener("click", () => {
         const o = openings[parseInt(btn.dataset.openingIndex, 10)];
-        const nameInput  = document.getElementById("ot-name");
-        const movesInput = document.getElementById("ot-moves");
-        if (nameInput)  nameInput.value  = o.name;
-        if (movesInput) movesInput.value = o.moves.join(" ");
+        const nameInput = document.getElementById("ot-name");
+        const pgnInput = document.getElementById("ot-pgn");
+        if (nameInput) nameInput.value = o.name;
+        // EPIC 38 : `parse_pgn_tree` (python-chess) accepte une séquence SAN
+        // sans numéros de coup — pas besoin de les reconstruire ici.
+        if (pgnInput) pgnInput.value = o.moves.join(" ");
         document.getElementById("ot-add-form")?.scrollIntoView({ behavior: "smooth", block: "center" });
       });
     });
   }
 
-  /** Valide (chess.js) puis soumet une nouvelle ligne de répertoire (US 9.1). */
-  async _submitOpeningLine() {
+  /** Valide (best-effort) puis importe un PGN comme nouveau répertoire (US 38.1). */
+  async _submitOpeningImport() {
     const feedback = document.getElementById("ot-add-feedback");
     const nameInput = document.getElementById("ot-name");
-    const movesInput = document.getElementById("ot-moves");
-    const color = document.querySelector('input[name="ot-color"]:checked')?.value || "white";
-    const moves = (movesInput?.value || "").trim().split(/\s+/).filter(Boolean);
-
-    if (!nameInput?.value || moves.length === 0) return;
+    const pgnInput = document.getElementById("ot-pgn");
+    if (!nameInput?.value || !(pgnInput?.value || "").trim()) return;
     if (feedback) feedback.textContent = "";
     try {
-      await ApiClient.createOpeningLine({ name: nameInput.value, color, moves });
+      const result = await ApiClient.importRepertoire({
+        repertoireName: nameInput.value, pgn: pgnInput.value.trim(),
+      });
       nameInput.value = "";
-      movesInput.value = "";
-      if (feedback) feedback.textContent = "Ligne ajoutée au répertoire !";
-      this._loadOpeningsTrainerView();
+      pgnInput.value = "";
+      if (feedback) feedback.textContent = `Répertoire importé (${result.node_count} positions) !`;
+      this._loadNextOpeningMove();
     } catch {
-      if (feedback) feedback.textContent = "Séquence de coups invalide — vérifiez la notation SAN.";
+      if (feedback) feedback.textContent = "PGN invalide — vérifiez la notation (variations entre parenthèses acceptées).";
     }
   }
 
-  /** Recharge la liste du répertoire + relance la file de révision du jour. */
-  async _loadOpeningsTrainerView() {
-    if (!window.ApiClient || !ApiClient.isConfigured() || !window.Auth?.isLoggedIn()) {
-      const reviewBody = document.getElementById("ot-review-body");
-      if (reviewBody) reviewBody.innerHTML = `<p class="empty-state">Connectez-vous pour accéder à l'entraîneur d'ouvertures.</p>`;
-      return;
-    }
-    try {
-      const [lines, due] = await Promise.all([
-        ApiClient.getOpeningLines(),
-        ApiClient.getDueOpeningLines(),
-      ]);
-      this._renderOpeningLinesList(lines);
-      this._otDueQueue = due;
-      this._advanceOpeningReviewQueue();
-    } catch {
-      /* best-effort */
-    }
-  }
-
-  _renderOpeningLinesList(lines) {
-    const list = document.getElementById("ot-lines-list");
-    if (!list) return;
-    if (!lines.length) {
-      list.innerHTML = `<p class="empty-state">Aucune ligne pour l'instant.</p>`;
-      return;
-    }
-    list.innerHTML = lines.map((line) => `
-      <div class="ot-line-row">
-        <span class="ot-line-name">${line.name}</span>
-        <span class="ot-line-color">${line.color === "white" ? "Blancs" : "Noirs"}</span>
-        <span class="ot-line-due">Prochaine révision : ${line.due_date}</span>
-        <button class="btn-icon" aria-label="Supprimer" onclick="window.app?._deleteOpeningLine('${line.id}')">🗑</button>
-      </div>
-    `).join("");
-  }
-
-  async _deleteOpeningLine(lineId) {
-    try {
-      await ApiClient.deleteOpeningLine(lineId);
-      this._loadOpeningsTrainerView();
-    } catch { /* best-effort */ }
-  }
-
-  /** Prend la prochaine ligne due dans la file, ou affiche un état vide gamifié. */
-  _advanceOpeningReviewQueue() {
+  /** Charge le prochain nœud à travailler (générateur de sessions, US 38.1). */
+  async _loadNextOpeningMove() {
     const body = document.getElementById("ot-review-body");
     if (!body) return;
-    if (!this._otDueQueue || this._otDueQueue.length === 0) {
-      body.innerHTML = `<p class="empty-state">🎉 Aucune ligne à réviser aujourd'hui — révisez-en une nouvelle demain !</p>`;
+    if (!window.ApiClient || !ApiClient.isConfigured() || !window.Auth?.isLoggedIn()) {
+      body.innerHTML = `<p class="empty-state">Connectez-vous pour accéder à l'entraîneur d'ouvertures.</p>`;
       return;
     }
-    this._startOpeningReview(this._otDueQueue.shift());
+    body.innerHTML = `<p class="empty-state">Chargement…</p>`;
+    try {
+      const next = await ApiClient.getNextOpeningMove();
+      if (next.session_complete) {
+        body.innerHTML = `<p class="empty-state">🎉 Rien à travailler pour l'instant — importez un répertoire ou revenez plus tard !</p>`;
+        return;
+      }
+      this._otNode = next;
+      this._otSolved = false;
+      body.innerHTML = `
+        <div class="ot-mastery-badges">
+          <span class="tactics-category-badge">${next.rank}</span>
+          <span class="ot-mastery-score">Maîtrise : ${next.mastery_score}</span>
+        </div>
+        <div class="tactics-board" id="ot-board"></div>
+        <p class="tactics-feedback" id="ot-feedback"></p>
+      `;
+      this._initOpeningBoard(next);
+    } catch {
+      body.innerHTML = this._emptyStateHtml(
+        "Impossible de charger la prochaine position pour le moment.",
+        { label: "Réessayer", onclick: "window.app?._loadNextOpeningMove()" },
+      );
+    }
   }
 
-  /**
-   * Rejoue une ligne de répertoire sur un échiquier indépendant (même
-   * approche que le Coach Tactique, US 8.3) : les coups de l'adversaire
-   * s'enchaînent automatiquement, l'utilisateur doit jouer les siens. Les
-   * erreurs sont comptées pour déduire automatiquement la qualité SM-2
-   * (US 9.2) — aucune notation manuelle, pour rester ludique.
-   */
-  _startOpeningReview(line) {
-    const body = document.getElementById("ot-review-body");
-    if (!body || typeof Chess === "undefined" || typeof Chessboard === "undefined") return;
-    this._otLine = line;
-    this._otChess = new Chess();
-    this._otMoveIndex = 0;
-    this._otMistakes = 0;
-    this._otFinished = false;
-    this._otPlayerColor = line.color === "white" ? "w" : "b";
-
-    body.innerHTML = `
-      <p class="ot-review-title">${line.name} — ${line.color === "white" ? "Blancs" : "Noirs"}</p>
-      <div class="tactics-board" id="ot-board"></div>
-      <p class="tactics-feedback" id="ot-feedback"></p>
-    `;
+  _initOpeningBoard(node) {
+    if (typeof Chess === "undefined" || typeof Chessboard === "undefined") return;
+    this._otChess = new Chess(node.fen);
     this._otBoard = this._createProblemBoard("ot-board", {
-      position: "start",
-      orientation: line.color,
+      position: node.fen,
+      orientation: this._otChess.turn() === "w" ? "white" : "black",
       onDragStart: (src, piece) => this._onOtDragStart(src, piece),
       onDrop: (src, tgt) => this._onOtDrop(src, tgt),
       onSnapEnd: () => this._otBoard.position(this._otChess.fen()),
       getChess: () => this._otChess,
     });
-    this._advanceOpeningLine();
   }
 
   _onOtDragStart(src, piece) {
-    if (!this._otChess || this._otChess.game_over()) return false;
+    if (this._otSolved || !this._otChess || this._otChess.game_over()) return false;
     const turn = this._otChess.turn();
-    if (turn !== this._otPlayerColor) return false;
     if ((turn === "w" && piece.startsWith("b")) || (turn === "b" && piece.startsWith("w"))) return false;
     return true;
   }
 
   _onOtDrop(src, tgt) {
-    const expectedSan = this._otLine.moves[this._otMoveIndex];
+    if (this._otSolved) return "snapback";
     const move = this._otChess.move({ from: src, to: tgt, promotion: "q" });
     if (move === null) return "snapback";
+    this._otSolved = true;
+    this._otLastMove = { from: move.from, to: move.to }; // EPIC 32
+    this._submitOpeningAttempt(move.san);
+  }
+
+  /**
+   * Valide le coup joué côté serveur (jamais un verdict de succès envoyé
+   * par le client, US 38.1) et applique le moteur de maîtrise. Même
+   * conventions UX que l'Entraîneur de Finales (US 8.3, EPIC 32) : halo
+   * vert/rouge, flèches de solution sur échec, bouton « suivant » explicite
+   * plutôt qu'un enchaînement automatique.
+   */
+  async _submitOpeningAttempt(san) {
+    const boardEl = document.getElementById("ot-board");
     const feedback = document.getElementById("ot-feedback");
-    if (move.san !== expectedSan) {
-      this._otChess.undo();
-      this._otMistakes++;
-      if (feedback) feedback.textContent = `Pas le bon coup — réessayez.`;
-      return "snapback";
-    }
-    if (feedback) feedback.textContent = "";
-    this._otMoveIndex++;
-    setTimeout(() => this._advanceOpeningLine(), 300);
-  }
-
-  /** Enchaîne automatiquement les coups adverses jusqu'au tour du joueur ou la fin de la ligne. */
-  _advanceOpeningLine() {
-    if (this._otMoveIndex >= this._otLine.moves.length) {
-      this._finishOpeningReview();
-      return;
-    }
-    if (this._otChess.turn() === this._otPlayerColor) return; // attend le coup du joueur
-    this._otChess.move(this._otLine.moves[this._otMoveIndex]);
-    this._otMoveIndex++;
-    this._otBoard.position(this._otChess.fen());
-    setTimeout(() => this._advanceOpeningLine(), 400);
-  }
-
-  async _finishOpeningReview() {
-    if (this._otFinished) return; // garde-fou : ne jamais soumettre deux fois la même révision
-    this._otFinished = true;
-    const body = document.getElementById("ot-review-body");
+    const node = this._otNode;
     try {
-      const result = await ApiClient.reviewOpeningLine(this._otLine.id, this._otMistakes);
-      if (this._otMistakes === 0) {
+      const result = await ApiClient.submitOpeningAttempt(node.node_id, san);
+      const badge = document.querySelector("#ot-review-body .tactics-category-badge");
+      if (badge) badge.textContent = result.rank;
+      const scoreEl = document.querySelector("#ot-review-body .ot-mastery-score");
+      if (scoreEl) scoreEl.textContent = `Maîtrise : ${result.mastery_score}`;
+      boardEl?.classList.add(result.success ? "tactics-board--success" : "tactics-board--error");
+      if (feedback) {
+        feedback.classList.add(result.success ? "tactics-feedback--success" : "tactics-feedback--error");
+        feedback.textContent = result.success
+          ? (result.unlocked_children > 0 ? "Bravo — nouvelle(s) position(s) débloquée(s) !" : "Bravo, bon coup !")
+          : "❌ Raté — la flèche verte montre le coup attendu, l'orange votre coup.";
+      }
+      if (result.success) {
         const { xp, level } = XPSystem.add(XP_PER_EXERCISE);
         this._renderXP(xp, level);
         StreakSystem.record();
+      } else {
+        this._showProblemSolution("ot-board", this._otBoard, node.fen, this._otLastMove, result.solution);
       }
-      if (body) {
-        body.innerHTML = `<p class="empty-state">Ligne terminée ! Prochaine révision : ${result.due_date}.</p>`;
-      }
+      this._offerNextProblem(feedback, "Position suivante →", () => this._loadNextOpeningMove());
     } catch {
-      if (body) body.innerHTML = `<p class="empty-state">Erreur lors de l'enregistrement de la révision.</p>`;
+      if (feedback) feedback.textContent = "Erreur lors de la validation du coup.";
+      this._otSolved = false;
     }
-    setTimeout(() => this._advanceOpeningReviewQueue(), 1200);
-    this._loadOpeningsTrainerViewListOnly();
-  }
-
-  /** Rafraîchit uniquement la liste (pas la file de révision en cours). */
-  async _loadOpeningsTrainerViewListOnly() {
-    try {
-      const lines = await ApiClient.getOpeningLines();
-      this._renderOpeningLinesList(lines);
-    } catch { /* best-effort */ }
   }
 
   // ─── Entraîneur de Finales Essentielles (EPIC 10, fonctionnalité bonus) ──

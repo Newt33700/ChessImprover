@@ -131,11 +131,23 @@ class TestSubmitAttempt:
         )
         assert r.status_code == 200
         body = r.json()
+        assert body["success"] is True
         assert body["mastery_score"] == 15
         assert body["status"] == "review"
         assert body["srs_interval"] == 2
 
-    def test_wrong_move_decreases_mastery_score_and_never_reveals_the_solution(self):
+    def test_correct_move_never_includes_a_solution_field(self):
+        token = _signup_and_token()
+        _import(token)
+        node_id = self._first_node_id(token)
+        r = client.post(
+            "/api/v1/openings/trainer/attempt",
+            json={"node_id": node_id, "move_san": "e4"},
+            headers=_auth(token),
+        )
+        assert r.json()["solution"] is None
+
+    def test_wrong_move_decreases_mastery_score_and_reveals_the_solution_after_the_fact(self):
         token = _signup_and_token()
         _import(token)
         node_id = self._first_node_id(token)
@@ -145,8 +157,11 @@ class TestSubmitAttempt:
             headers=_auth(token),
         )
         body = r.json()
+        assert body["success"] is False
         assert body["mastery_score"] == 0  # borné à 0, pas -20
-        assert "move_san" not in body
+        # La solution n'est révélée qu'APRÈS un échec (comme le Coach
+        # Tactique) — jamais avant, jamais sur un succès (test ci-dessus).
+        assert body["solution"] == "e4"
 
     def test_client_reported_success_flag_is_ignored_server_side_validates(self):
         # Même si un client malveillant envoie un move_san incorrect, il ne

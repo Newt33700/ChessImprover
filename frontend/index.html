@@ -410,7 +410,7 @@
             </div>
           </div>
           <div class="db-card-body" id="db-body-openings-trainer">
-            <p class="empty-state">Mémorisez vos lignes d'ouverture avec un calendrier de révision adaptatif.</p>
+            <p class="empty-state">Importez un répertoire PGN et maîtrisez-le coup par coup (Lotus Mastery Engine).</p>
             <button class="btn btn--accent btn--full btn--sm" onclick="window.app?._showOpeningsTrainer()">Entraîneur d'Ouvertures →</button>
           </div>
         </div>
@@ -868,7 +868,7 @@
     </div>
   </div>
 
-  <!-- ── ENTRAÎNEUR D'OUVERTURES (EPIC 9, plein écran, body.openings-trainer-active) ── -->
+  <!-- ── ENTRAÎNEUR D'OUVERTURES — Lotus Mastery Engine (EPIC 38, plein écran, body.openings-trainer-active) ── -->
   <div class="openings-trainer-col" id="openings-trainer-col">
     <div class="tactics-topbar">
       <button class="btn-icon" aria-label="Retour" onclick="window.app?._hideOpeningsTrainer()">←</button>
@@ -886,15 +886,12 @@
 
     <div class="db-card ot-add-card">
       <div class="db-card-body">
-        <h3 class="ot-section-title">Ajouter une ligne</h3>
+        <h3 class="ot-section-title">Importer un répertoire (PGN)</h3>
         <form id="ot-add-form" class="ot-add-form">
           <input type="text" id="ot-name" placeholder="Nom (ex. Ruy Lopez)" required maxlength="80" />
-          <div class="ot-color-choice">
-            <label><input type="radio" name="ot-color" value="white" checked /> Blancs</label>
-            <label><input type="radio" name="ot-color" value="black" /> Noirs</label>
-          </div>
-          <input type="text" id="ot-moves" placeholder="Coups SAN séparés par des espaces (ex. e4 e5 Nf3 Nc6 Bb5)" required />
-          <button type="submit" class="btn btn--accent btn--sm">Ajouter au répertoire</button>
+          <textarea id="ot-pgn" class="ot-pgn-input" rows="3" required
+            placeholder="PGN (ex. 1. e4 e5 2. Nf3 Nc6 3. Bb5) — variations entre parenthèses acceptées"></textarea>
+          <button type="submit" class="btn btn--accent btn--sm">Importer</button>
         </form>
         <p class="ot-feedback" id="ot-add-feedback"></p>
       </div>
@@ -903,13 +900,6 @@
     <div class="db-card ot-review-card">
       <div class="db-card-body" id="ot-review-body">
         <p class="empty-state">Connectez-vous pour accéder à l'entraîneur d'ouvertures.</p>
-      </div>
-    </div>
-
-    <div class="db-card ot-list-card">
-      <div class="db-card-body">
-        <h3 class="ot-section-title">Mon répertoire</h3>
-        <div id="ot-lines-list"><p class="empty-state">Aucune ligne pour l'instant.</p></div>
       </div>
     </div>
   </div>
