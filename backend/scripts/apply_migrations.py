@@ -63,18 +63,23 @@ def strip_unsupported_statements(sql: str) -> str:
 def split_statements(sql: str) -> List[str]:
     """Découpe un script SQL en instructions individuelles sur `;`.
 
+    Retire d'abord les lignes de commentaire `--` en entier, PUIS découpe
+    sur `;` — dans cet ordre précisément : un commentaire en français peut
+    contenir un point-virgule dans son texte (ex. « EPIC 3) ; 1000 par
+    défaut... »), et découper sur `;` avant de retirer les commentaires
+    couperait la ligne en deux, laissant fuiter la moitié qui ne commence
+    plus par `--` comme si c'était du SQL réel.
+
     Suppose qu'aucun bloc dollar-quoté (`$$...$$`) ne subsiste — c'est le
-    cas après `strip_unsupported_statements`, seul appelant prévu. Filtre
-    les fragments vides ou ne contenant que des commentaires `--`.
+    cas après `strip_unsupported_statements`, seul appelant prévu.
     """
+    lines = [
+        line for line in sql.splitlines() if not line.strip().startswith("--")
+    ]
+    without_comments = "\n".join(lines)
     statements = []
-    for raw in sql.split(";"):
-        lines = [
-            line
-            for line in raw.splitlines()
-            if not line.strip().startswith("--")
-        ]
-        statement = "\n".join(lines).strip()
+    for raw in without_comments.split(";"):
+        statement = raw.strip()
         if statement:
             statements.append(statement)
     return statements
