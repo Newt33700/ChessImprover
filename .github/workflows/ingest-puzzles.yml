@@ -3,9 +3,9 @@
 # Déclenchement manuel uniquement (workflow_dispatch) : ce n'est pas un
 # pipeline exécuté à chaque push, mais un job à la demande pour peupler (ou
 # rafraîchir) la table `lichess_puzzles`. Nécessite le secret DATABASE_URL
-# (à ajouter dans Settings > Secrets and variables > Actions — DISTINCT des
-# secrets SUPABASE_* de deploy-database.yml, qui servent au CLI `supabase`
-# pour les migrations, pas à une connexion Postgres directe).
+# (à ajouter dans Settings > Secrets and variables > Actions — même secret
+# que `deploy-database.yml` depuis EPIC 39, la connexion Postgres directe du
+# backend, pas un secret propre à Supabase).
 name: Ingest Lichess Puzzles
 
 on:
