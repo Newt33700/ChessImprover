@@ -66,27 +66,35 @@ class TestPgRepository:
         get_sig = inspect.signature(PgRepository.get_tactical_attempts)
         assert list(get_sig.parameters) == ["self", "user_id"]
 
-    def test_opening_repertoire_methods_exist(self):
-        # Verrouille le contrat EPIC 9 : les méthodes doivent exister avec
+    def test_lotus_mastery_engine_methods_exist(self):
+        # Verrouille le contrat EPIC 38 (REMPLACE l'ex-contrat EPIC 9
+        # opening_repertoire ci-dessus) : les méthodes doivent exister avec
         # cette signature, indépendamment de toute connexion réelle.
         import inspect
 
-        create_sig = inspect.signature(PgRepository.create_opening_line)
-        assert list(create_sig.parameters) == ["self", "user_id", "name", "color", "moves"]
+        insert_sig = inspect.signature(PgRepository.insert_repertoire_nodes)
+        assert list(insert_sig.parameters) == ["self", "nodes"]
 
-        get_sig = inspect.signature(PgRepository.get_opening_lines)
-        assert list(get_sig.parameters) == ["self", "user_id"]
+        get_node_sig = inspect.signature(PgRepository.get_repertoire_node)
+        assert list(get_node_sig.parameters) == ["self", "node_id"]
 
-        due_sig = inspect.signature(PgRepository.get_due_opening_lines)
-        assert list(due_sig.parameters) == ["self", "user_id", "today"]
+        children_sig = inspect.signature(PgRepository.get_direct_children)
+        assert list(children_sig.parameters) == ["self", "node_id"]
 
-        update_sig = inspect.signature(PgRepository.update_opening_line_schedule)
+        unlock_sig = inspect.signature(PgRepository.unlock_nodes)
+        assert list(unlock_sig.parameters) == ["self", "user_id", "node_ids"]
+
+        progress_sig = inspect.signature(PgRepository.get_node_progress)
+        assert list(progress_sig.parameters) == ["self", "user_id", "node_id"]
+
+        update_sig = inspect.signature(PgRepository.update_node_progress)
         assert list(update_sig.parameters) == [
-            "self", "line_id", "ease_factor", "interval_days", "repetitions", "due_date",
+            "self", "user_id", "node_id", "mastery_score", "srs_interval",
+            "status", "next_review_date",
         ]
 
-        delete_sig = inspect.signature(PgRepository.delete_opening_line)
-        assert list(delete_sig.parameters) == ["self", "line_id", "user_id"]
+        next_sig = inspect.signature(PgRepository.get_next_training_node)
+        assert list(next_sig.parameters) == ["self", "user_id", "now_iso"]
 
     def test_error_profile_methods_exist(self):
         # Verrouille le contrat EPIC 11 : les méthodes doivent exister avec
@@ -210,11 +218,6 @@ class TestPgRepository:
         )
         assert merged["games"][0]["src"] == "client"  # le client écrase
         assert {c["id"] for c in merged["srs_cards"]} == {"c1", "c2"}
-
-    def test_line_row_maps_line_name_column_to_name_key(self):
-        row = {"id": "1", "line_name": "Ruy Lopez", "color": "white"}
-        mapped = PgRepository._line_row(row)
-        assert mapped == {"id": "1", "name": "Ruy Lopez", "color": "white"}
 
     def test_iso_converts_any_datetime_field(self):
         import datetime as _dt

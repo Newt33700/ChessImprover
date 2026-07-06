@@ -1,4 +1,8 @@
-"""Tests unitaires — store répertoire d'ouvertures (EPIC 9, US 9.1/9.2)."""
+"""Tests unitaires — store Lotus Mastery Engine (EPIC 38, US 38.1).
+
+REMPLACE l'ex-store EPIC 9 (répertoire de lignes + SRS SM-2, ci-dessus dans
+l'historique du dépôt) par l'arbre de nœuds + progression.
+"""
 
 from __future__ import annotations
 
@@ -14,85 +18,145 @@ def reset_db():
     db_client._reset_store()
 
 
-class TestCreateOpeningLine:
-    def test_returns_line_with_default_srs_schedule(self):
-        line = db_client.create_opening_line("u1", "Ruy Lopez", "white", ["e4", "e5", "Nf3", "Nc6", "Bb5"])
-        assert line["name"] == "Ruy Lopez"
-        assert line["color"] == "white"
-        assert line["moves"] == ["e4", "e5", "Nf3", "Nc6", "Bb5"]
-        assert line["ease_factor"] == 2.5
-        assert line["interval_days"] == 1
-        assert line["repetitions"] == 0
-        assert "due_date" in line and "id" in line
+def _sample_nodes():
+    """Un mini-arbre à 3 nœuds : 1. e4 e5 2. Nf3 — chacun enfant du précédent."""
+    return [
+        {"parent_index": None, "move_san": "e4", "move_fen": "fen-e4", "depth_level": 1, "is_mainline": True},
+        {"parent_index": 0, "move_san": "e5", "move_fen": "fen-e5", "depth_level": 2, "is_mainline": True},
+        {"parent_index": 1, "move_san": "Nf3", "move_fen": "fen-nf3", "depth_level": 3, "is_mainline": True},
+    ]
 
 
-class TestGetOpeningLines:
-    def test_returns_only_own_lines(self):
-        db_client.create_opening_line("u1", "A", "white", ["e4"])
-        db_client.create_opening_line("u2", "B", "black", ["d4"])
-        lines_u1 = db_client.get_opening_lines("u1")
-        assert len(lines_u1) == 1
-        assert lines_u1[0]["name"] == "A"
+class TestCreateRepertoireNodes:
+    def test_assigns_a_real_id_to_each_node(self):
+        created = db_client.create_repertoire_nodes("u1", "repA", _sample_nodes())
+        assert len(created) == 3
+        assert all(n["id"] for n in created)
+        assert len({n["id"] for n in created}) == 3  # tous distincts
 
-    def test_unknown_user_has_empty_repertoire(self):
-        assert db_client.get_opening_lines("does-not-exist") == []
+    def test_resolves_parent_index_to_the_previously_created_id(self):
+        created = db_client.create_repertoire_nodes("u1", "repA", _sample_nodes())
+        assert created[0]["parent_id"] is None
+        assert created[1]["parent_id"] == created[0]["id"]
+        assert created[2]["parent_id"] == created[1]["id"]
 
-
-class TestGetOpeningLine:
-    def test_returns_known_line(self):
-        line = db_client.create_opening_line("u1", "A", "white", ["e4"])
-        assert db_client.get_opening_line(line["id"])["name"] == "A"
-
-    def test_unknown_id_returns_none(self):
-        assert db_client.get_opening_line("missing") is None
+    def test_stamps_repertoire_id_and_user_id_on_every_node(self):
+        created = db_client.create_repertoire_nodes("u1", "repA", _sample_nodes())
+        assert all(n["repertoire_id"] == "repA" and n["user_id"] == "u1" for n in created)
 
 
-class TestGetDueOpeningLines:
-    def test_new_line_is_due_today(self):
-        line = db_client.create_opening_line("u1", "A", "white", ["e4"])
-        due = db_client.get_due_opening_lines("u1", line["due_date"])
-        assert [line_["id"] for line_ in due] == [line["id"]]
+class TestGetRepertoireNodeAndChildren:
+    def test_get_repertoire_node_returns_known_node(self):
+        created = db_client.create_repertoire_nodes("u1", "repA", _sample_nodes())
+        node = db_client.get_repertoire_node(created[0]["id"])
+        assert node["move_san"] == "e4"
 
-    def test_line_due_in_the_future_is_excluded(self):
-        line = db_client.create_opening_line("u1", "A", "white", ["e4"])
-        db_client.update_opening_line_schedule(line["id"], 2.6, 6, 2, "2099-01-01")
-        assert db_client.get_due_opening_lines("u1", "2026-07-01") == []
+    def test_get_repertoire_node_unknown_id_returns_none(self):
+        assert db_client.get_repertoire_node("missing") is None
 
-    def test_only_returns_own_lines(self):
-        line1 = db_client.create_opening_line("u1", "A", "white", ["e4"])
-        db_client.create_opening_line("u2", "B", "black", ["d4"])
-        due = db_client.get_due_opening_lines("u1", line1["due_date"])
-        assert len(due) == 1
+    def test_get_direct_children_returns_only_immediate_children(self):
+        created = db_client.create_repertoire_nodes("u1", "repA", _sample_nodes())
+        children = db_client.get_direct_children(created[0]["id"])
+        assert [c["id"] for c in children] == [created[1]["id"]]
 
-
-class TestUpdateOpeningLineSchedule:
-    def test_persists_new_schedule(self):
-        line = db_client.create_opening_line("u1", "A", "white", ["e4"])
-        updated = db_client.update_opening_line_schedule(line["id"], 2.6, 6, 1, "2026-07-08")
-        assert updated["ease_factor"] == 2.6
-        assert updated["interval_days"] == 6
-        assert updated["repetitions"] == 1
-        assert updated["due_date"] == "2026-07-08"
-
-    def test_unknown_line_returns_none(self):
-        assert db_client.update_opening_line_schedule("missing", 2.6, 6, 1, "2026-07-08") is None
+    def test_get_direct_children_of_a_leaf_is_empty(self):
+        created = db_client.create_repertoire_nodes("u1", "repA", _sample_nodes())
+        assert db_client.get_direct_children(created[2]["id"]) == []
 
 
-class TestDeleteOpeningLine:
-    def test_owner_can_delete(self):
-        line = db_client.create_opening_line("u1", "A", "white", ["e4"])
-        assert db_client.delete_opening_line(line["id"], "u1") is True
-        assert db_client.get_opening_line(line["id"]) is None
+class TestUnlockNodes:
+    def test_unlocking_creates_a_learning_progress_row(self):
+        created = db_client.create_repertoire_nodes("u1", "repA", _sample_nodes())
+        unlocked = db_client.unlock_nodes("u1", [created[0]["id"]])
+        assert unlocked == 1
+        progress = db_client.get_node_progress("u1", created[0]["id"])
+        assert progress["status"] == "learning"
+        assert progress["mastery_score"] == 0
+        assert progress["srs_interval"] == 1
 
-    def test_non_owner_cannot_delete(self):
-        line = db_client.create_opening_line("u1", "A", "white", ["e4"])
-        assert db_client.delete_opening_line(line["id"], "u2") is False
-        assert db_client.get_opening_line(line["id"]) is not None
+    def test_unlocking_an_already_unlocked_node_is_idempotent(self):
+        created = db_client.create_repertoire_nodes("u1", "repA", _sample_nodes())
+        db_client.unlock_nodes("u1", [created[0]["id"]])
+        second = db_client.unlock_nodes("u1", [created[0]["id"]])
+        assert second == 0
 
-    def test_unknown_line_returns_false(self):
-        assert db_client.delete_opening_line("missing", "u1") is False
+    def test_unlocking_never_touches_a_node_locked_for_another_user(self):
+        created = db_client.create_repertoire_nodes("u1", "repA", _sample_nodes())
+        db_client.unlock_nodes("u1", [created[0]["id"]])
+        assert db_client.get_node_progress("u2", created[0]["id"]) is None
 
-    def test_reset_store_clears_lines(self):
-        db_client.create_opening_line("u1", "A", "white", ["e4"])
+    def test_get_node_progress_unknown_returns_none(self):
+        assert db_client.get_node_progress("u1", "missing") is None
+
+
+class TestUpdateNodeProgress:
+    def test_persists_new_mastery_state(self):
+        created = db_client.create_repertoire_nodes("u1", "repA", _sample_nodes())
+        db_client.unlock_nodes("u1", [created[0]["id"]])
+        updated = db_client.update_node_progress(
+            "u1", created[0]["id"], 65, 8, "review", "2026-07-10T00:00:00+00:00",
+        )
+        assert updated["mastery_score"] == 65
+        assert updated["srs_interval"] == 8
+        assert updated["status"] == "review"
+        assert db_client.get_node_progress("u1", created[0]["id"])["mastery_score"] == 65
+
+    def test_creates_a_row_if_none_existed_yet(self):
+        created = db_client.create_repertoire_nodes("u1", "repA", _sample_nodes())
+        updated = db_client.update_node_progress(
+            "u1", created[1]["id"], 15, 2, "review", "2026-07-10T00:00:00+00:00",
+        )
+        assert updated["mastery_score"] == 15
+
+
+class TestGetNextTrainingNode:
+    def test_learning_node_is_served_with_from_fen_of_its_parent(self):
+        created = db_client.create_repertoire_nodes("u1", "repA", _sample_nodes())
+        db_client.unlock_nodes("u1", [created[1]["id"]])  # e5, parent = e4
+        entry = db_client.get_next_training_node("u1", "2026-07-10T00:00:00+00:00")
+        assert entry["node_id"] == created[1]["id"]
+        assert entry["from_fen"] == "fen-e4"
+        assert entry["move_fen"] == "fen-e5"
+
+    def test_root_node_from_fen_is_the_standard_starting_position(self):
+        created = db_client.create_repertoire_nodes("u1", "repA", _sample_nodes())
+        db_client.unlock_nodes("u1", [created[0]["id"]])  # e4, racine
+        entry = db_client.get_next_training_node("u1", "2026-07-10T00:00:00+00:00")
+        assert entry["from_fen"] == "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"
+
+    def test_overdue_review_takes_priority_over_learning(self):
+        created = db_client.create_repertoire_nodes("u1", "repA", _sample_nodes())
+        db_client.unlock_nodes("u1", [created[0]["id"], created[1]["id"]])
+        # created[0] reste "learning" ; created[1] passe en révision, déjà due.
+        db_client.update_node_progress(
+            "u1", created[1]["id"], 20, 2, "review", "2020-01-01T00:00:00+00:00",
+        )
+        entry = db_client.get_next_training_node("u1", "2026-07-10T00:00:00+00:00")
+        assert entry["node_id"] == created[1]["id"]
+
+    def test_review_not_yet_due_falls_back_to_learning(self):
+        created = db_client.create_repertoire_nodes("u1", "repA", _sample_nodes())
+        db_client.unlock_nodes("u1", [created[0]["id"], created[1]["id"]])
+        db_client.update_node_progress(
+            "u1", created[1]["id"], 20, 30, "review", "2099-01-01T00:00:00+00:00",
+        )
+        entry = db_client.get_next_training_node("u1", "2026-07-10T00:00:00+00:00")
+        assert entry["node_id"] == created[0]["id"]
+
+    def test_nothing_due_or_learning_returns_none(self):
+        db_client.create_repertoire_nodes("u1", "repA", _sample_nodes())
+        assert db_client.get_next_training_node("u1", "2026-07-10T00:00:00+00:00") is None
+
+    def test_never_returns_another_users_node(self):
+        created = db_client.create_repertoire_nodes("u1", "repA", _sample_nodes())
+        db_client.unlock_nodes("u1", [created[0]["id"]])
+        assert db_client.get_next_training_node("u2", "2026-07-10T00:00:00+00:00") is None
+
+
+class TestResetStore:
+    def test_reset_store_clears_nodes_and_progress(self):
+        created = db_client.create_repertoire_nodes("u1", "repA", _sample_nodes())
+        db_client.unlock_nodes("u1", [created[0]["id"]])
         db_client._reset_store()
-        assert db_client.get_opening_lines("u1") == []
+        assert db_client.get_repertoire_node(created[0]["id"]) is None
+        assert db_client.get_node_progress("u1", created[0]["id"]) is None

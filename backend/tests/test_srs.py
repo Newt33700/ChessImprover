@@ -13,6 +13,7 @@ from app.domain.srs_engine import (
     EF_MIN,
     create_card,
     get_due_cards,
+    infer_quality,
     review_card,
     sm2_schedule,
 )
@@ -322,3 +323,19 @@ class TestSm2ScheduleMatchesReviewCard:
     def test_returns_typed_dict_with_expected_keys(self):
         result = sm2_schedule(2.5, 1, 0, 5, date(2026, 7, 1))
         assert set(result) == {"ease_factor", "interval", "repetitions", "due_date"}
+
+
+class TestInferQuality:
+    """Généralisée depuis l'ex-``domain.opening_repertoire`` (EPIC 9,
+    remplacé par le Lotus Mastery Engine, EPIC 38) — toujours utilisée par
+    ``routers.srs_flashcards``."""
+
+    def test_no_mistakes_is_perfect_recall(self):
+        assert infer_quality(0) == 5
+
+    def test_one_mistake_is_middling_recall(self):
+        assert infer_quality(1) == 3
+
+    def test_two_or_more_mistakes_is_failed_recall(self):
+        assert infer_quality(2) == 1
+        assert infer_quality(5) == 1

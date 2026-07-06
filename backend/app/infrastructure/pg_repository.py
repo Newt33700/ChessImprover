@@ -239,73 +239,107 @@ class PgRepository:
             cur.execute(sql, (user_id,))
             return [self._iso(dict(r)) for r in cur.fetchall()]
 
-    # -- opening_repertoire (EPIC 9) -------------------------------------------
+    # -- Lotus Mastery Engine : repertoire_nodes / user_node_progress (EPIC 38) -
+    # REMPLACE opening_repertoire (EPIC 9) ci-dessus — table non supprimée par
+    # la migration (pas de DROP destructif), simplement plus utilisée ici.
 
-    @staticmethod
-    def _line_row(row: Dict[str, Any]) -> Dict[str, Any]:
-        row = dict(row)
-        row["name"] = row.pop("line_name")
-        return row
-
-    def create_opening_line(
-        self, user_id: str, name: str, color: str, moves: List[str]
-    ) -> Dict[str, Any]:  # pragma: no cover - nécessite une base réelle
-        from psycopg.types.json import Json
-
+    def insert_repertoire_nodes(self, nodes: List[Dict[str, Any]]) -> None:  # pragma: no cover
+        """Insère l'arbre déjà entièrement formé (ID + parent_id résolus par
+        `db_client.create_repertoire_nodes`, commun aux deux backends)."""
         sql = (
-            "INSERT INTO opening_repertoire (user_id, line_name, color, moves) "
-            "VALUES (%s::uuid, %s, %s, %s) RETURNING *"
+            "INSERT INTO repertoire_nodes "
+            "(id, repertoire_id, user_id, parent_id, move_san, move_fen, depth_level, is_mainline) "
+            "VALUES (%s::uuid, %s::uuid, %s::uuid, %s::uuid, %s, %s, %s, %s)"
+        )
+        params = [
+            (n["id"], n["repertoire_id"], n["user_id"], n["parent_id"],
+             n["move_san"], n["move_fen"], n["depth_level"], n["is_mainline"])
+            for n in nodes
+        ]
+        with self._connect() as conn, conn.cursor() as cur:
+            cur.executemany(sql, params)
+            conn.commit()
+
+    def get_repertoire_node(self, node_id: str) -> Optional[Dict[str, Any]]:  # pragma: no cover
+        sql = "SELECT * FROM repertoire_nodes WHERE id = %s::uuid"
+        with self._connect() as conn, conn.cursor() as cur:
+            cur.execute(sql, (node_id,))
+            row = cur.fetchone()
+            return self._iso(dict(row)) if row else None
+
+    def get_direct_children(self, node_id: str) -> List[Dict[str, Any]]:  # pragma: no cover
+        sql = "SELECT * FROM repertoire_nodes WHERE parent_id = %s::uuid"
+        with self._connect() as conn, conn.cursor() as cur:
+            cur.execute(sql, (node_id,))
+            return [self._iso(dict(r)) for r in cur.fetchall()]
+
+    def unlock_nodes(self, user_id: str, node_ids: List[str]) -> int:  # pragma: no cover
+        """Débloque chaque nœud (statut `learning`), idempotent — retourne le
+        nombre réellement inséré (ceux déjà débloqués sont ignorés)."""
+        sql = (
+            "INSERT INTO user_node_progress "
+            "(user_id, node_id, status, mastery_score, srs_interval, next_review_date) "
+            "VALUES (%s::uuid, %s::uuid, 'learning', 0, 1, now()) "
+            "ON CONFLICT (user_id, node_id) DO NOTHING"
+        )
+        unlocked = 0
+        with self._connect() as conn, conn.cursor() as cur:
+            for node_id in node_ids:
+                cur.execute(sql, (user_id, node_id))
+                unlocked += cur.rowcount
+            conn.commit()
+        return unlocked
+
+    def get_node_progress(self, user_id: str, node_id: str) -> Optional[Dict[str, Any]]:  # pragma: no cover
+        sql = "SELECT * FROM user_node_progress WHERE user_id = %s::uuid AND node_id = %s::uuid"
+        with self._connect() as conn, conn.cursor() as cur:
+            cur.execute(sql, (user_id, node_id))
+            row = cur.fetchone()
+            return self._iso(dict(row)) if row else None
+
+    def update_node_progress(
+        self, user_id: str, node_id: str, mastery_score: int, srs_interval: int,
+        status: str, next_review_date: str,
+    ) -> Dict[str, Any]:  # pragma: no cover - nécessite une base réelle
+        sql = (
+            "INSERT INTO user_node_progress "
+            "(user_id, node_id, status, mastery_score, srs_interval, next_review_date) "
+            "VALUES (%s::uuid, %s::uuid, %s, %s, %s, %s::timestamptz) "
+            "ON CONFLICT (user_id, node_id) DO UPDATE SET "
+            "status = EXCLUDED.status, mastery_score = EXCLUDED.mastery_score, "
+            "srs_interval = EXCLUDED.srs_interval, next_review_date = EXCLUDED.next_review_date "
+            "RETURNING *"
         )
         with self._connect() as conn, conn.cursor() as cur:
-            cur.execute(sql, (user_id, name, color, Json(moves)))
+            cur.execute(sql, (user_id, node_id, status, mastery_score, srs_interval, next_review_date))
             row = dict(cur.fetchone())
             conn.commit()
-        return self._iso(self._line_row(row))
+        return self._iso(row)
 
-    def get_opening_lines(self, user_id: str) -> List[Dict[str, Any]]:  # pragma: no cover
-        sql = "SELECT * FROM opening_repertoire WHERE user_id = %s::uuid"
-        with self._connect() as conn, conn.cursor() as cur:
-            cur.execute(sql, (user_id,))
-            return [self._iso(self._line_row(r)) for r in cur.fetchall()]
-
-    def get_opening_line(self, line_id: str) -> Optional[Dict[str, Any]]:  # pragma: no cover
-        sql = "SELECT * FROM opening_repertoire WHERE id = %s::uuid"
-        with self._connect() as conn, conn.cursor() as cur:
-            cur.execute(sql, (line_id,))
-            row = cur.fetchone()
-            return self._iso(self._line_row(dict(row))) if row else None
-
-    def get_due_opening_lines(
-        self, user_id: str, today: str
-    ) -> List[Dict[str, Any]]:  # pragma: no cover - nécessite une base réelle
-        sql = (
-            "SELECT * FROM opening_repertoire "
-            "WHERE user_id = %s::uuid AND due_date <= %s::date"
-        )
-        with self._connect() as conn, conn.cursor() as cur:
-            cur.execute(sql, (user_id, today))
-            return [self._iso(self._line_row(r)) for r in cur.fetchall()]
-
-    def update_opening_line_schedule(
-        self, line_id: str, ease_factor: float, interval_days: int, repetitions: int, due_date: str
+    def get_next_training_node(
+        self, user_id: str, now_iso: str
     ) -> Optional[Dict[str, Any]]:  # pragma: no cover - nécessite une base réelle
+        """Priorité (US 38.1) : `review` en retard d'abord, puis `learning`.
+        `from_fen` : position du parent, ou la position initiale standard
+        pour un nœud racine (`parent_id IS NULL`)."""
+        default_fen = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"
         sql = (
-            "UPDATE opening_repertoire SET ease_factor = %s, interval_days = %s, "
-            "repetitions = %s, due_date = %s::date WHERE id = %s::uuid RETURNING *"
+            "SELECT unp.*, rn.move_fen, rn.depth_level, rn.is_mainline, "
+            f"COALESCE(parent.move_fen, '{default_fen}') AS from_fen "
+            "FROM user_node_progress unp "
+            "JOIN repertoire_nodes rn ON rn.id = unp.node_id "
+            "LEFT JOIN repertoire_nodes parent ON parent.id = rn.parent_id "
+            "WHERE unp.user_id = %s::uuid AND ("
+            "unp.status = 'learning' "
+            "OR (unp.status = 'review' AND unp.next_review_date <= %s::timestamptz)"
+            ") "
+            "ORDER BY (unp.status = 'review') DESC, unp.next_review_date ASC "
+            "LIMIT 1"
         )
         with self._connect() as conn, conn.cursor() as cur:
-            cur.execute(sql, (ease_factor, interval_days, repetitions, due_date, line_id))
+            cur.execute(sql, (user_id, now_iso))
             row = cur.fetchone()
-            conn.commit()
-            return self._iso(self._line_row(dict(row))) if row else None
-
-    def delete_opening_line(self, line_id: str, user_id: str) -> bool:  # pragma: no cover
-        sql = "DELETE FROM opening_repertoire WHERE id = %s::uuid AND user_id = %s::uuid"
-        with self._connect() as conn, conn.cursor() as cur:
-            cur.execute(sql, (line_id, user_id))
-            deleted = cur.rowcount > 0
-            conn.commit()
-            return deleted
+            return self._iso(dict(row)) if row else None
 
     # -- EPIC 11 : profils d'erreur comportementale (US 9.1/9.2) -------------
 

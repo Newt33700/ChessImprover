@@ -13,8 +13,7 @@ from typing import List
 from fastapi import APIRouter, Depends, HTTPException
 
 from app.domain.models import FlashcardPublic, FlashcardReviewRequest, FlashcardReviewResult
-from app.domain.opening_repertoire import infer_quality
-from app.domain.srs_engine import sm2_schedule
+from app.domain.srs_engine import infer_quality, sm2_schedule
 from app.domain.tactics import is_correct_move
 from app.infrastructure import db_client
 from app.routers.deps import get_current_user_id

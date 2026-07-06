@@ -62,6 +62,22 @@ def sm2_schedule(
         "due_date": today + timedelta(days=new_interval),
     }
 
+
+def infer_quality(mistake_count: int) -> int:
+    """Déduit une qualité SM-2 (0-5) du nombre d'erreurs commises pendant une
+    révision — pas de notation manuelle, pour rester ludique. Généralisé
+    depuis l'ex-``domain.opening_repertoire`` (EPIC 9) — réutilisé par
+    ``routers.srs_flashcards`` ; l'EPIC 9 lui-même a été remplacé par le
+    Lotus Mastery Engine (EPIC 38, ``domain.mastery_engine``, qui ne
+    réutilise pas cette fonction : sa propre progression n'est pas basée
+    sur SM-2).
+    """
+    if mistake_count <= 0:
+        return 5
+    if mistake_count == 1:
+        return 3
+    return 1
+
 # Qualité de réponse (0-5) :
 #   0 = pas de souvenir
 #   1 = incorrect, reconnaît après indice
