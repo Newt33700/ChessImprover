@@ -3,8 +3,12 @@
  *
  * Utilise le vrai moteur chess.js vendorisé (assets/js/chess-0.10.3.js,
  * API snake_case : game_over(), in_checkmate(), ...) pour éviter tout
- * décalage avec le comportement réel en production. Worker et
- * Chessboard sont mockés (pas de vrai WebWorker / DOM dans Jest).
+ * décalage avec le comportement réel en production. Worker et Chessground
+ * sont mockés (pas de vrai WebWorker / DOM dans Jest).
+ *
+ * EPIC 37 : chessboard.js → Chessground. Le fake `set(config)` enregistre le
+ * dernier appel pour vérifier `movable.dests`/`movable.color` (source de
+ * vérité des règles, calculée depuis chess.js) sans dépendre du DOM réel.
  */
 
 const path = require("path");
@@ -22,14 +26,14 @@ class FakeWorker {
   emit(data) { if (this.onmessage) this.onmessage({ data }); }
 }
 
-function makeFakeBoardWidget() {
+function makeFakeChessground() {
   return {
-    _fen: "start",
-    fen() { return this._fen === "start" ? new Chess().fen() : this._fen; },
-    position(fen) { if (fen && fen !== "start") this._fen = fen; },
-    flip: jest.fn(),
-    resize: jest.fn(),
+    lastConfig: null,
+    set: jest.fn(function (config) { this.lastConfig = config; }),
+    toggleOrientation: jest.fn(),
+    redrawAll: jest.fn(),
     destroy: jest.fn(),
+    setShapes: jest.fn(),
   };
 }
 
@@ -41,7 +45,7 @@ beforeEach(() => {
 
   global.Chess = Chess;
   global.Worker = FakeWorker;
-  global.Chessboard = jest.fn(() => makeFakeBoardWidget());
+  global.Chessground = jest.fn(() => makeFakeChessground());
 
   listeners = {};
   global.document = {
@@ -80,40 +84,91 @@ function loadBoardManager() {
 }
 
 describe("BoardManager — construction", () => {
-  test("s'initialise sans erreur et crée un board + un worker WASM", () => {
+  test("s'initialise sans erreur et crée un board Chessground + un worker WASM", () => {
     const BoardManager = loadBoardManager();
     const bm = new BoardManager("board", () => {}, () => {});
-    expect(Chessboard).toHaveBeenCalledWith("board", expect.any(Object));
+    expect(Chessground).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({
+      fen: new Chess().fen(),
+      orientation: "white",
+      events: expect.objectContaining({ move: expect.any(Function) }),
+    }));
     expect(bm.worker).toBeInstanceOf(FakeWorker);
     expect(bm.worker.url).toBe("js/engine_worker_wasm.js");
+  });
+
+  test("configure des brushes rouge (0.6) et vert (0.8) pour les flèches de feedback", () => {
+    const BoardManager = loadBoardManager();
+    // eslint-disable-next-line no-unused-vars
+    const bm = new BoardManager("board", () => {}, () => {});
+    const config = Chessground.mock.calls[0][1];
+    expect(config.drawable.brushes.red).toMatchObject({ opacity: 0.6 });
+    expect(config.drawable.brushes.green).toMatchObject({ opacity: 0.8 });
+  });
+});
+
+describe("BoardManager — _currentMovableColor / _syncBoard", () => {
+  test("verrouille tout déplacement en mode review", () => {
+    const BoardManager = loadBoardManager();
+    const bm = new BoardManager("board", () => {}, () => {});
+    bm.startReview([]);
+    expect(bm._currentMovableColor()).toBeUndefined();
+    expect(bm.board.set).toHaveBeenLastCalledWith(expect.objectContaining({
+      movable: expect.objectContaining({ color: undefined }),
+    }));
+  });
+
+  test("mode sandbox : autorise la couleur du joueur à son tour", () => {
+    const BoardManager = loadBoardManager();
+    const bm = new BoardManager("board", () => {}, () => {});
+    bm.startSandbox(new Chess().fen(), "w");
+    expect(bm._currentMovableColor()).toBe("white");
+  });
+
+  test("mode sandbox : bloque quand ce n'est pas le tour du joueur", () => {
+    const BoardManager = loadBoardManager();
+    const bm = new BoardManager("board", () => {}, () => {});
+    bm.startSandbox(new Chess().fen(), "b");
+    expect(bm._currentMovableColor()).toBeUndefined();
+  });
+
+  test("_computeDests reflète les coups légaux chess.js (Map from → [to...])", () => {
+    const BoardManager = loadBoardManager();
+    const bm = new BoardManager("board", () => {}, () => {});
+    const dests = bm._computeDests(bm.chess);
+    expect(dests.get("e2")).toEqual(expect.arrayContaining(["e3", "e4"]));
   });
 });
 
 describe("BoardManager — mode Sandbox (régression bug isGameOver)", () => {
-  test("_onDragStart ne plante pas et autorise le trait du joueur", () => {
-    const BoardManager = loadBoardManager();
-    const bm = new BoardManager("board", () => {}, () => {});
-    bm.startSandbox(new Chess().fen(), "w");
-
-    expect(() => bm._onDragStart("e2", "wP")).not.toThrow();
-    expect(bm._onDragStart("e2", "wP")).toBe(true);
-  });
-
-  test("_onDragStart refuse de bouger une pièce noire quand c'est aux blancs de jouer", () => {
-    const BoardManager = loadBoardManager();
-    const bm = new BoardManager("board", () => {}, () => {});
-    bm.startSandbox(new Chess().fen(), "w");
-    expect(bm._onDragStart("e7", "bP")).toBe(false);
-  });
-
-  test("_onDrop joue le coup, déclenche onMove et ne plante pas en fin de partie", () => {
+  test("_onCgMove joue un coup légal et déclenche onMove", () => {
     const BoardManager = loadBoardManager();
     const onMove = jest.fn();
     const bm = new BoardManager("board", onMove, () => {});
-    // Position à un coup du mat (fou's mate) pour vérifier game_over() après coup
+    bm.startSandbox(new Chess().fen(), "w");
+
+    expect(() => bm._onCgMove("e2", "e4")).not.toThrow();
+    expect(onMove).toHaveBeenCalledWith(expect.objectContaining({ from: "e2", to: "e4" }), expect.any(String));
+  });
+
+  test("_onCgMove ne plante pas si la position de départ est déjà terminée (fou's mate, régression bug isGameOver)", () => {
+    const BoardManager = loadBoardManager();
+    const onMove = jest.fn();
+    const bm = new BoardManager("board", onMove, () => {});
+    // Position déjà mat (fou's mate) — aucun coup légal, `_onCgMove` doit
+    // rester un no-op silencieux plutôt que de planter sur `game_over()`.
     bm.startSandbox("rnb1kbnr/pppp1ppp/8/4p3/6Pq/5P2/PPPPP2P/RNBQKBNR w KQkq - 1 3", "w");
 
-    expect(() => bm._onDrop("e1", "e2")).not.toThrow();
+    expect(() => bm._onCgMove("e1", "e2")).not.toThrow();
+    expect(onMove).not.toHaveBeenCalled();
+  });
+
+  test("_onCgMove ne fait rien si le coup n'est pas légal (dests désynchronisé, filet de sécurité)", () => {
+    const BoardManager = loadBoardManager();
+    const onMove = jest.fn();
+    const bm = new BoardManager("board", onMove, () => {});
+    bm.startSandbox(new Chess().fen(), "w");
+    expect(() => bm._onCgMove("e7", "e5")).not.toThrow(); // pièce noire, pas aux blancs de jouer
+    expect(onMove).not.toHaveBeenCalled();
   });
 
   test("_sandboxPlayEngineMove ne plante pas quand la partie est terminée", () => {
@@ -140,13 +195,6 @@ describe("BoardManager — mode Review", () => {
     expect(bm.analysisQueue).toEqual(
       expect.arrayContaining([new Chess().fen(), "fen1", "fen2"])
     );
-  });
-
-  test("_onDragStart interdit tout déplacement en mode review", () => {
-    const BoardManager = loadBoardManager();
-    const bm = new BoardManager("board", () => {}, () => {});
-    bm.startReview([]);
-    expect(bm._onDragStart("e2", "wP")).toBe(false);
   });
 
   test("goToMove ignore les index hors bornes", () => {
@@ -183,6 +231,7 @@ describe("BoardManager — mode Ghost", () => {
     bm.startGhost(startFen, ["Nf3"], "b");
 
     expect(bm.mode).toBe("ghost");
+    expect(bm.board.toggleOrientation).toHaveBeenCalled(); // playerColor "b"
     jest.advanceTimersByTime(600);
     expect(bm.ghostMoveIndex).toBe(1);
   });
@@ -206,6 +255,7 @@ describe("BoardManager — utilitaires", () => {
     const handler = jest.fn();
     document.addEventListener("board:flip", handler);
     bm.flipBoard();
+    expect(bm.board.toggleOrientation).toHaveBeenCalledTimes(1);
     expect(bm.flipped).toBe(true);
     expect(handler).toHaveBeenCalledTimes(1);
     expect(handler.mock.calls[0][0].detail).toEqual({ flipped: true });
@@ -219,7 +269,14 @@ describe("BoardManager — utilitaires", () => {
     expect(bm.getCurrentFen()).toBe(new Chess().fen());
   });
 
-  test("destroy arrête le worker proprement", () => {
+  test("refreshTheme force un redraw (thème pièces piloté par CSS depuis EPIC 37)", () => {
+    const BoardManager = loadBoardManager();
+    const bm = new BoardManager("board", () => {}, () => {});
+    bm.refreshTheme();
+    expect(bm.board.redrawAll).toHaveBeenCalled();
+  });
+
+  test("destroy arrête le worker et détruit le board Chessground", () => {
     const BoardManager = loadBoardManager();
     const bm = new BoardManager("board", () => {}, () => {});
     const worker = bm.worker;
@@ -228,6 +285,7 @@ describe("BoardManager — utilitaires", () => {
     bm.destroy();
     expect(postSpy).toHaveBeenCalledWith("stop");
     expect(termSpy).toHaveBeenCalled();
+    expect(bm.board.destroy).toHaveBeenCalled();
   });
 });
 

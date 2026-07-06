@@ -1,8 +1,17 @@
 /**
  * Chess Improver – Gestionnaire d'échiquier
- * Gère chess.js + chessboard.js pour 3 modes :
+ * Gère chess.js + Chessground (EPIC 37 — ex-chessboard.js) pour 3 modes :
  *   1. Mode Review  : relecture coup par coup avec colorisation
  *   3. Mode Ghost   : rejouer depuis la gaffe avec les coups adverses historiques
+ *
+ * Chessground ne valide aucun coup lui-même (contrairement à chessboard.js,
+ * qui laissait déposer n'importe où puis rejetait via onDrop) : chaque mise à
+ * jour de position fournit `movable.dests` (calculé depuis chess.js, seule
+ * source de vérité des règles), donc tout coup que l'UI autorise est légal
+ * par construction — plus de « snapback ». Le clic-clic (sélection + case
+ * d'arrivée en surbrillance) est natif à la lib, `tap_move.js` (EPIC 33)
+ * n'est donc plus attaché ici (il reste utilisé par les échiquiers de
+ * problèmes ad-hoc d'`app.js`, restés sur chessboard.js).
  */
 
 class BoardManager {
@@ -60,48 +69,90 @@ class BoardManager {
   // -------------------------------------------------------------------------
 
   _initBoard() {
-    const config = {
-      draggable: true,
-      position: "start",
-      onDragStart: (src, piece) => this._onDragStart(src, piece),
-      onDrop: (src, tgt) => this._onDrop(src, tgt),
-      onSnapEnd: () => this._onSnapEnd(),
-      pieceTheme: window.ThemeService
-        ? ThemeService.getPieceThemePath()
-        : "assets/images/pieces/{piece}.svg",
-    };
-    this.board = Chessboard(this.containerId, config);
-    window.addEventListener("resize", () => this.board.resize());
-
-    // EPIC 33 — Mode tap (clic pièce → clic case d'arrivée) en plus du
-    // glisser-déposer, réutilisant les mêmes règles que le drag (voir
-    // tap_move.js) pour ne jamais désynchroniser les deux modes de saisie.
-    if (window.TapMove) {
-      TapMove.attach(document.getElementById(this.containerId), {
-        getChess: () => this.chess,
-        canPick: (sq, piece) => this._onDragStart(sq, piece) !== false,
-        tryMove: (src, tgt) => this._onDrop(src, tgt),
-        onMoved: () => this._onSnapEnd(),
-      });
-    }
+    const el = document.getElementById(this.containerId);
+    this.board = Chessground(el, {
+      fen: this.chess.fen(),
+      orientation: "white",
+      highlight: { lastMove: true, check: true },
+      animation: { enabled: true, duration: 200 },
+      movable: { free: false, color: undefined, dests: new Map(), showDests: true },
+      // Rouge/Vert (EPIC 37, US 37.1) : coup joué (erreur) / suggestion
+      // moteur, dessinés par `AnalysisFeedback.drawFeedback` (app.js).
+      drawable: {
+        brushes: {
+          red:    { key: "r", color: "#ca3431", opacity: 0.6, lineWidth: 10 },
+          green:  { key: "g", color: "#81b64c", opacity: 0.8, lineWidth: 10 },
+          blue:   { key: "b", color: "#3b82f6", opacity: 0.6, lineWidth: 10 },
+          yellow: { key: "y", color: "#eab308", opacity: 0.6, lineWidth: 10 },
+        },
+      },
+      events: { move: (orig, dest) => this._onCgMove(orig, dest) },
+    });
+    // Chessground se redimensionne lui-même en CSS (conteneur en %), sauf
+    // s'il a été mesuré alors que caché (`display:none`) — un redraw après
+    // resize reste un filet de sécurité peu coûteux (même motif que l'ancien
+    // `board.resize()` sur chessboard.js).
+    window.addEventListener("resize", () => this.board.redrawAll());
   }
 
   /**
-   * EPIC 18 (US 18.3) — Reconstruit l'échiquier en place (même position,
-   * même orientation) avec le thème de pièces actuellement sélectionné.
-   * chessboard.js 1.0.0 ne supporte pas de changer `pieceTheme` après
-   * construction — la seule option fiable est de détruire puis recréer le
-   * widget, ce qui reste immédiat (pas de re-fetch réseau, SVG déjà en cache
-   * navigateur).
+   * EPIC 18 (US 18.3) — Thème de pièces : depuis EPIC 37, entièrement piloté
+   * par CSS (classe `body.theme-*`, cf. style.css), Chessground n'a donc rien
+   * à reconstruire. Conservé pour compatibilité d'API (appelants existants
+   * d'`app.js`) — force juste un redraw défensif.
    */
   refreshTheme() {
+    this.board?.redrawAll();
+  }
+
+  /** Recalcule `movable.dests` (règles chess.js) pour la position courante. */
+  _computeDests(chess) {
+    const dests = new Map();
+    chess.moves({ verbose: true }).forEach((m) => {
+      if (!dests.has(m.from)) dests.set(m.from, []);
+      dests.get(m.from).push(m.to);
+    });
+    return dests;
+  }
+
+  /**
+   * Couleur autorisée à jouer sur l'échiquier, selon le mode courant —
+   * remplace l'ancien `_onDragStart` (qui refusait la préhension au cas par
+   * cas) : Chessground n'autorise que les cases de `movable.dests`, pour la
+   * couleur `movable.color` — undefined bloque tout déplacement.
+   */
+  _currentMovableColor() {
+    if (this.mode === "review" || !this.mode) return undefined;
+    const turn = this.chess.turn() === "w" ? "white" : "black";
+    if (this.mode === "ghost") {
+      return this.chess.turn() === this.ghostPlayerColor ? turn : undefined;
+    }
+    if (this.mode === "sandbox") {
+      return this.chess.turn() === this.sandboxPlayerColor ? turn : undefined;
+    }
+    return turn;
+  }
+
+  /**
+   * Synchronise Chessground sur l'état courant de `this.chess` : position,
+   * trait, échec, et surtout `movable.dests` (sans quoi plus aucun coup ne
+   * serait proposé après le premier). À appeler après CHAQUE changement de
+   * position, qu'il vienne d'un coup joué ou d'une navigation programmatique
+   * (Review, Ghost, Sandbox).
+   */
+  _syncBoard(fen) {
     if (!this.board) return;
-    const fen = this.board.fen();
-    const wasFlipped = this.flipped;
-    this.board.destroy();
-    this._initBoard();
-    this.board.position(fen, false);
-    if (wasFlipped) this.board.flip();
+    const turnColor = this.chess.turn() === "w" ? "white" : "black";
+    const gameOver = this.chess.game_over();
+    this.board.set({
+      fen,
+      turnColor,
+      check: !gameOver && this.chess.in_check() ? turnColor : false,
+      movable: {
+        color: gameOver ? undefined : this._currentMovableColor(),
+        dests: gameOver ? new Map() : this._computeDests(this.chess),
+      },
+    });
   }
 
   _initWorker() {
@@ -312,34 +363,23 @@ class BoardManager {
 
 
   // -------------------------------------------------------------------------
-  // Drag & Drop handlers
+  // Coup joué sur l'échiquier (glisser-déposer OU clic-clic natif Chessground)
   // -------------------------------------------------------------------------
 
-  _onDragStart(src, piece) {
-    if (this.mode === "review") return false;  // pas de déplacement en review
-    if (this.chess.game_over()) return false;
-
-    const isWhitePiece = piece.startsWith("w");
-    const isWhiteTurn = this.chess.turn() === "w";
-    if (isWhitePiece !== isWhiteTurn) return false;
-
-    // Ghost : bloquer si c'est le tour de l'adversaire
-    if (this.mode === "ghost" && this.chess.turn() !== this.ghostPlayerColor) {
-      return false;
-    }
-    // Sandbox (Game-Salvage) : bloquer pendant que le moteur réfléchit
-    if (this.mode === "sandbox" && this.chess.turn() !== this.sandboxPlayerColor) {
-      return false;
-    }
-    return true;
-  }
-
-  _onDrop(src, tgt) {
-    // Tenter le coup
-    const move = this.chess.move({ from: src, to: tgt, promotion: "q" });
-    if (!move) return "snapback";
+  /**
+   * Appelé par Chessground (`events.move`) une fois le coup déjà joué côté
+   * UI — toujours légal par construction puisque `orig`/`dest` viennent
+   * forcément de `movable.dests` (calculé depuis chess.js). `chess.move`
+   * reste néanmoins la source de vérité (met à jour l'historique/FEN) ; un
+   * retour `null` ici trahirait un dests désynchronisé (filet de sécurité,
+   * ne devrait jamais arriver en pratique).
+   */
+  _onCgMove(orig, dest) {
+    const move = this.chess.move({ from: orig, to: dest, promotion: "q" });
+    if (!move) return;
 
     const fen = this.chess.fen();
+    this._syncBoard(fen);
     if (this.onMove) this.onMove(move, fen);
 
     // Déclencher l'analyse Stockfish
@@ -354,12 +394,6 @@ class BoardManager {
     if (this.mode === "sandbox" && !this.chess.game_over()) {
       this._requestSandboxEngineMove();
     }
-
-    return undefined;
-  }
-
-  _onSnapEnd() {
-    this.board.position(this.chess.fen());
   }
 
   // -------------------------------------------------------------------------
@@ -378,7 +412,7 @@ class BoardManager {
     // US 22.1 : nouvelle partie = nouvel état de dédoublonnage
     if (window.AnalysisFeedback) this.feedbackState = AnalysisFeedback.createState();
     this.chess.reset();
-    this.board.position("start");
+    this._syncBoard(this.chess.fen());
 
     const startFen = new Chess().fen();
     this._queueAnalysis(startFen);
@@ -393,7 +427,7 @@ class BoardManager {
       this.chess.move(this.reviewMoves[i].san);
     }
     this.reviewIndex = index;
-    this.board.position(this.chess.fen());
+    this._syncBoard(this.chess.fen());
     this._updateReviewHighlight();
   }
 
@@ -457,8 +491,8 @@ class BoardManager {
     this.ghostPlayerColor = playerColor;
     this.ghostMoveIndex = 0;
     this.chess.load(startFen);
-    this.board.position(startFen);
-    if (playerColor === "b") this.board.flip();
+    this._syncBoard(startFen);
+    if (playerColor === "b") this.board.toggleOrientation();
 
     // Si c'est l'adversaire qui joue en premier, jouer son coup immédiatement
     if (this.chess.turn() !== playerColor) {
@@ -480,7 +514,7 @@ class BoardManager {
     }
 
     this.ghostMoveIndex++;
-    this.board.position(this.chess.fen(), false);
+    this._syncBoard(this.chess.fen());
 
     // Vérifier si la séquence est terminée
     if (this.ghostMoveIndex >= this.ghostOpponentMoves.length) {
@@ -532,8 +566,8 @@ class BoardManager {
     this.mode = "sandbox";
     this.sandboxPlayerColor = playerColor;
     this.chess.load(fen);
-    this.board.position(fen);
-    if (playerColor === "b") this.board.flip();
+    this._syncBoard(fen);
+    if (playerColor === "b") this.board.toggleOrientation();
   }
 
   _requestSandboxEngineMove() {
@@ -553,8 +587,8 @@ class BoardManager {
     const promotion = uciMove.length > 4 ? uciMove.slice(4) : "q";
     const move = this.chess.move({ from, to, promotion });
     if (!move) return;
-    this.board.position(this.chess.fen(), false);
     const fen = this.chess.fen();
+    this._syncBoard(fen);
     if (this.onMove) this.onMove(move, fen);
     this._requestAnalysis(fen);
   }
@@ -572,16 +606,17 @@ class BoardManager {
   // -------------------------------------------------------------------------
 
   flipBoard() {
-    this.board.flip();
+    this.board.toggleOrientation();
     this.flipped = !this.flipped;
     document.dispatchEvent(new CustomEvent("board:flip", { detail: { flipped: this.flipped } }));
   }
-  reset() { this.chess.reset(); this.board.position("start"); }
+  reset() { this.chess.reset(); this._syncBoard(this.chess.fen()); }
 
   getCurrentFen() { return this.chess.fen(); }
 
   destroy() {
     if (this.worker) { this.worker.postMessage("stop"); this.worker.terminate(); }
+    this.board?.destroy();
   }
 }
 

@@ -1057,32 +1057,23 @@ class ChessImproverApp {
     }, 250);
   }
 
-  /** Flèches du POC v0 : coup joué (orange) + suggestion moteur (verte) si différente. */
+  /**
+   * Flèches du POC v0 : coup joué (rouge) + suggestion moteur (verte) si
+   * différente. EPIC 37 : dessinées par Chessground (`AnalysisFeedback.
+   * drawFeedback`, `cg.setShapes()`) plutôt qu'un overlay SVG maison —
+   * l'échiquier principal est seul concerné (les échiquiers de problèmes
+   * ad-hoc, ex. `_drawProblemArrows`, restent sur chessboard.js + SVG).
+   */
   _drawReviewArrows(index) {
-    const svg = document.getElementById("board-arrows");
-    if (!svg) return;
-    svg.querySelectorAll("line").forEach((l) => l.remove());
+    if (typeof window.AnalysisFeedback?.drawFeedback !== "function") return;
     const move = this.currentGame?.moves?.[index];
-    if (!move?.from || !move?.to || !/^[a-h][1-8]$/.test(move.to)) return;
-    const flipped = this.boardMgr?.flipped || false;
-    const draw = (from, to, color, marker) => {
-      const a = this._squareCenter(from, flipped);
-      const b = this._squareCenter(to, flipped);
-      const line = document.createElementNS("http://www.w3.org/2000/svg", "line");
-      line.setAttribute("x1", a.x); line.setAttribute("y1", a.y);
-      line.setAttribute("x2", b.x); line.setAttribute("y2", b.y);
-      line.setAttribute("stroke", color);
-      line.setAttribute("stroke-width", "2.4");
-      line.setAttribute("stroke-linecap", "round");
-      line.setAttribute("opacity", "0.8");
-      line.setAttribute("marker-end", `url(#${marker})`);
-      svg.appendChild(line);
-    };
-    draw(move.from, move.to, "#e8a33d", "arrow-head-played");
-    const best = this._bestMoveForIndex(index);
-    if (best && !(best.from === move.from && best.to === move.to)) {
-      draw(best.from, best.to, "#81b64c", "arrow-head-best");
+    if (!move?.from || !move?.to || !/^[a-h][1-8]$/.test(move.to)) {
+      AnalysisFeedback.drawFeedback(this.boardMgr?.board, null, null);
+      return;
     }
+    const best = this._bestMoveForIndex(index);
+    const bestDiffers = best && !(best.from === move.from && best.to === move.to);
+    AnalysisFeedback.drawFeedback(this.boardMgr?.board, move, bestDiffers ? best : null);
   }
 
   /** Barre d'évaluation (POC v0) : part blanche = probabilité de gain des Blancs. */
@@ -2751,9 +2742,12 @@ class ChessImproverApp {
     if (empty)  empty.hidden  = true;
     if (active) active.hidden = false;
     document.body.classList.add("board-active");
-    // Chessboard.js lit offsetWidth — forcer le reflow après que l'élément soit visible
+    // EPIC 37 : Chessground se redimensionne en CSS, mais garde en mémoire
+    // les dimensions mesurées à la construction — un redraw forcé après que
+    // l'élément soit devenu visible (`display:none → block`) évite un
+    // échiquier figé à une taille obsolète (même motif que chessboard.js).
     if (this.boardMgr?.board) {
-      requestAnimationFrame(() => this.boardMgr.board.resize());
+      requestAnimationFrame(() => this.boardMgr.board.redrawAll());
     }
   }
 
@@ -4073,9 +4067,8 @@ class ChessImproverApp {
     // (Ghost, Sauvetage…) on nettoie pour ne pas polluer le plateau jouable.
     const legend = document.getElementById("arrow-legend");
     if (legend) legend.hidden = label !== "Review";
-    if (label !== "Review") {
-      document.getElementById("board-arrows")
-        ?.querySelectorAll("line").forEach((l) => l.remove());
+    if (label !== "Review" && typeof window.AnalysisFeedback?.drawFeedback === "function") {
+      AnalysisFeedback.drawFeedback(this.boardMgr?.board, null, null);
     }
   }
 
