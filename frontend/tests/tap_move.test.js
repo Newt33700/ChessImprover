@@ -77,11 +77,39 @@ class FakeSquareEl {
   closest(selector) { return selector === "[data-square]" ? this : null; }
 }
 
+// EPIC 36 (bugfix tap-move) : `attach` résout désormais la case tapée via
+// `container.ownerDocument.elementsFromPoint(x, y)` (coordonnées), plus
+// jamais via `event.target` — cf. tap_move.js pour le pourquoi (chessboard.js
+// détache la pièce cliquée de sa case dès le mousedown). Le faux DOM associe
+// donc une position (x, y) à chaque case ; `click(sq)` simule un tap complet
+// (pointerdown puis pointerup immobile sur la même case) et `drag(from, to)`
+// un vrai glisser (déplacement > seuil, sans case résolue au pointerup).
+// Le `pointerup` est écouté sur `ownerDocument` (pas le conteneur, cf.
+// tap_move.js) : le faux document a donc lui aussi son propre registre
+// d'écouteurs, distinct de celui du conteneur.
+class FakeDocument {
+  constructor(squares) {
+    this.squares = squares;
+    this._listeners = {};
+  }
+  elementsFromPoint(x) {
+    const el = Object.values(this.squares).find((sqEl) => sqEl.x === x);
+    return el ? [el] : [];
+  }
+  addEventListener(type, handler) { this._listeners[type] = handler; }
+  removeEventListener(type, handler) { if (this._listeners[type] === handler) delete this._listeners[type]; }
+}
+
 class FakeContainer {
   constructor(squareIds) {
     this.squares = {};
-    squareIds.forEach((sq) => { this.squares[sq] = new FakeSquareEl(sq); });
+    squareIds.forEach((sq, i) => {
+      const el = new FakeSquareEl(sq);
+      el.x = i * 50; // une position x distincte par case, suffisant pour le calcul de distance
+      this.squares[sq] = el;
+    });
     this._listeners = {};
+    this.ownerDocument = new FakeDocument(this.squares);
   }
   querySelector(selector) {
     const m = selector.match(/\[data-square="([^"]+)"\]/);
@@ -94,9 +122,18 @@ class FakeContainer {
   contains(el) { return Object.values(this.squares).includes(el); }
   addEventListener(type, handler) { this._listeners[type] = handler; }
   removeEventListener(type, handler) { if (this._listeners[type] === handler) delete this._listeners[type]; }
+  /** Simule un tap complet : pointerdown + pointerup immobile sur `sq`. */
   click(sq) {
-    const handler = this._listeners.click;
-    if (handler) handler({ target: this.squares[sq] });
+    const x = this.squares[sq]?.x ?? 0;
+    this._listeners.pointerdown?.({ clientX: x, clientY: 0 });
+    this.ownerDocument._listeners.pointerup?.({ clientX: x, clientY: 0 });
+  }
+  /** Simule un vrai glisser-déposer (déplacement > seuil) entre deux cases. */
+  drag(fromSq, toSq) {
+    const fromX = this.squares[fromSq]?.x ?? 0;
+    const toX = this.squares[toSq]?.x ?? 0;
+    this._listeners.pointerdown?.({ clientX: fromX, clientY: 0 });
+    this.ownerDocument._listeners.pointerup?.({ clientX: toX, clientY: 0 });
   }
 }
 
@@ -160,7 +197,7 @@ describe("TapMove.attach", () => {
   test("ne fait rien si les options requises manquent", () => {
     const container = new FakeContainer(["e2"]);
     expect(() => TapMove.attach(container, {})).not.toThrow();
-    expect(container._tapHandler).toBeUndefined();
+    expect(container._tapHandlers).toBeUndefined();
   });
 
   test("sélectionne une pièce jouable puis joue le coup légal sur la case tapée ensuite", () => {
@@ -209,6 +246,31 @@ describe("TapMove.attach", () => {
     const tryMove = jest.fn();
     TapMove.attach(container, { getChess: () => null, canPick: () => true, tryMove });
     container.click("e2");
+    expect(tryMove).not.toHaveBeenCalled();
+  });
+
+  // EPIC 36 (bugfix) : chessboard.js détache la pièce cliquée de sa case dès
+  // le pointerdown pour son propre glisser-déposer — même un tap immobile
+  // provoque ce détachement. `attach` ne doit donc jamais dépendre de
+  // `event.target` (qui désignerait alors la pièce flottante, hors case) et
+  // doit résoudre la case par coordonnées à la place.
+  test("un vrai glisser (déplacement > seuil) ne déclenche pas tryMove — déjà géré par chessboard.js", () => {
+    const container = new FakeContainer(["e2", "e4", "d5"]);
+    const chess = makeChess();
+    const tryMove = jest.fn(() => "played");
+    TapMove.attach(container, { getChess: () => chess, canPick: (sq) => sq === "e2", tryMove });
+
+    container.drag("e2", "e4");
+    expect(tryMove).not.toHaveBeenCalled();
+  });
+
+  test("un pointerup sans pointerdown préalable (ex. pointercancel) est ignoré", () => {
+    const container = new FakeContainer(["e2"]);
+    const chess = makeChess();
+    const tryMove = jest.fn();
+    TapMove.attach(container, { getChess: () => chess, canPick: (sq) => sq === "e2", tryMove });
+
+    container.ownerDocument._listeners.pointerup?.({ clientX: 0, clientY: 0 });
     expect(tryMove).not.toHaveBeenCalled();
   });
 });

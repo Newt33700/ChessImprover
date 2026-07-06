@@ -2711,6 +2711,15 @@ class ChessImproverApp {
     Object.values(VIEW_BODY_CLASSES).forEach((cls) => document.body.classList.remove(cls));
     const bodyClass = VIEW_BODY_CLASSES[key];
     if (bodyClass) document.body.classList.add(bodyClass);
+
+    // EPIC 36 — le chronomètre du Coach Tactique ne doit tourner QUE pendant
+    // que cette vue est effectivement affichée, quel que soit le chemin de
+    // navigation emprunté pour la quitter (bouton retour, sidebar, hash…).
+    if (key !== "tactics") {
+      this._stopTacticsTimer();
+      const timerBadge = document.getElementById("tactics-timer-badge");
+      if (timerBadge) timerBadge.hidden = true;
+    }
   }
 
   /**
@@ -3024,6 +3033,7 @@ class ChessImproverApp {
       if (badge) badge.textContent = `Elo ${problem.difficulty_elo}`;
       body.innerHTML = `
         <span class="tactics-category-badge">${problem.category.replace(/_/g, " ")}</span>
+        <div class="tactics-turn-indicator" id="tactics-turn-indicator"></div>
         <div class="tactics-board" id="tactics-board"></div>
         <p class="tactics-feedback" id="tactics-feedback"></p>
       `;
@@ -3032,6 +3042,7 @@ class ChessImproverApp {
       this._initTacticsBoard(problem);
     } catch {
       if (loadToken !== this._tacticsLoadToken) return;
+      this._stopTacticsTimer();
       // US 22.4 : plus d'erreur brute qui fige l'interface — état vide propre
       // avec action de relance immédiate.
       body.innerHTML = this._emptyStateHtml(
@@ -3102,6 +3113,43 @@ class ChessImproverApp {
     // problèmes multi-coups — ex. mat en 2 — dont la position à rejouer en
     // cas d'échec n'est plus forcément celle du tout premier coup).
     this._tacticsPlyFen = problem.fen;
+    this._updateTacticsTurnIndicator();
+    this._startTacticsTimer();
+  }
+
+  /** EPIC 36 — « Trait aux Blancs/Noirs », pour lever l'ambiguïté rapportée
+   * par les utilisateurs sur qui doit jouer (utile notamment quand
+   * l'orientation de l'échiquier ne suffit pas à le deviner d'un coup d'œil). */
+  _updateTacticsTurnIndicator() {
+    const el = document.getElementById("tactics-turn-indicator");
+    if (!el || !this._tacticsChess) return;
+    const isWhite = this._tacticsChess.turn() === "w";
+    el.classList.toggle("tactics-turn-indicator--black", !isWhite);
+    el.innerHTML = `<span class="tactics-turn-dot"></span>${isWhite ? "Trait aux Blancs" : "Trait aux Noirs"}`;
+  }
+
+  /** EPIC 36 — chronomètre du problème en cours (visible, contrairement à
+   * `_tacticsStartTime` qui n'alimentait que `time_taken` côté serveur). */
+  _startTacticsTimer() {
+    this._stopTacticsTimer();
+    const badge = document.getElementById("tactics-timer-badge");
+    if (!badge) return;
+    badge.hidden = false;
+    const tick = () => {
+      const elapsed = Math.floor((Date.now() - this._tacticsStartTime) / 1000);
+      const m = Math.floor(elapsed / 60);
+      const s = String(elapsed % 60).padStart(2, "0");
+      badge.textContent = `⏱ ${m}:${s}`;
+    };
+    tick();
+    this._tacticsTimerInterval = setInterval(tick, 1000);
+  }
+
+  _stopTacticsTimer() {
+    if (this._tacticsTimerInterval) {
+      clearInterval(this._tacticsTimerInterval);
+      this._tacticsTimerInterval = null;
+    }
   }
 
   _onTacticsDragStart(src, piece) {
@@ -3141,6 +3189,7 @@ class ChessImproverApp {
         if (result.opponent_move) this._tacticsChess.move(result.opponent_move);
         if (result.fen) this._tacticsBoard.position(result.fen);
         this._tacticsPlyFen = result.fen || this._tacticsChess.fen();
+        this._updateTacticsTurnIndicator();
         if (feedback) {
           feedback.classList.remove("tactics-feedback--error");
           feedback.classList.add("tactics-feedback--success");
@@ -3150,6 +3199,7 @@ class ChessImproverApp {
         return;
       }
 
+      this._stopTacticsTimer();
       const badge = document.getElementById("tactics-elo-badge");
       if (badge) badge.textContent = `Elo ${result.new_elo}`;
       const streakBadge = document.getElementById("tactics-streak-badge");

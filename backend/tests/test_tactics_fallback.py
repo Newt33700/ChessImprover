@@ -145,6 +145,28 @@ class TestDbClientFallback:
         problem = db_client.get_next_endgame_problem(900, category="rook_mate")
         assert problem is not None
 
+    def test_record_tactical_attempt_falls_back_on_fk_violation(self, monkeypatch):
+        """Bug réel (EPIC 36) : les problèmes servis depuis Lichess (ou le
+        seed local) ne sont jamais insérés dans la table Postgres
+        `tactical_problems` — seulement gardés en mémoire. L'INSERT dans
+        `tactical_attempts` (clé étrangère vers `tactical_problems`) échoue
+        alors en `ForeignKeyViolation` ; ``_UserAwareRepo`` nu ne fournit pas
+        `record_tactical_attempt`, ce qui lève une AttributeError — même
+        symptôme générique que doit absorber le repli in-memory."""
+        monkeypatch.setattr(db_client, "_pg", lambda: _UserAwareRepo())
+        attempt = db_client.record_tactical_attempt(
+            "u1", "lichess-problem-id", "mate_in_1", True, 3.0
+        )
+        assert attempt["problem_id"] == "lichess-problem-id"
+        assert attempt["success"] is True
+
+    def test_get_tactical_attempts_falls_back_on_broken_repo(self, monkeypatch):
+        monkeypatch.setattr(db_client, "_pg", lambda: _UserAwareRepo())
+        db_client.record_tactical_attempt("u1", "p1", "mate_in_1", True, 1.0)
+        attempts = db_client.get_tactical_attempts("u1")
+        assert len(attempts) == 1
+        assert attempts[0]["problem_id"] == "p1"
+
 
 class TestApiNeverFreezesUi:
     """La route /next répond 200 même avec un dépôt Postgres cassé/vide."""
@@ -195,3 +217,26 @@ class TestApiNeverFreezesUi:
         token = _signup_and_token()
         r = client.get("/api/v1/endgames/next", headers=_auth(token))
         assert r.status_code == 200
+
+    def test_attempt_survives_fk_violation_on_tactical_attempts_insert(self, monkeypatch):
+        """Reproduit exactement le bug de production (logs Render) :
+        `POST /api/v1/tactics/attempt` renvoyait 500 (`psycopg.errors.
+        ForeignKeyViolation` sur `tactical_attempts_problem_id_fkey`) car le
+        problème résolu (Lichess/seed) n'existe qu'en mémoire, jamais dans la
+        table Postgres `tactical_problems` — y compris sur le dernier coup
+        d'un mat. ``_UserAwareRepo`` nu simule un dépôt Postgres joignable
+        mais sans aucune des méthodes tactiques : la route doit rester en
+        200 de bout en bout (lecture ET écriture de la tentative)."""
+        token = _signup_and_token()
+        monkeypatch.setattr(db_client, "_pg", lambda: _UserAwareRepo())
+        r = client.get("/api/v1/tactics/next", headers=_auth(token))
+        pid = r.json()["id"]
+        r2 = client.post(
+            "/api/v1/tactics/attempt",
+            json={"problem_id": pid, "move": "a3"},
+            headers=_auth(token),
+        )
+        assert r2.status_code == 200
+        body = r2.json()
+        assert "success" in body
+        assert "streak" in body
