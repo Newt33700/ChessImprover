@@ -576,6 +576,97 @@ body.theme-cyber-tactics .piece-417db {
   transition: filter 0.15s ease-in-out;
 }
 
+/* EPIC 37 (US 37.1) — Échiquier principal migré vers Chessground (chessboard.js
+   reste utilisé par les échiquiers de problèmes ad-hoc d'app.js, hors
+   périmètre de cette migration). Chessground ne fournit aucune coloration de
+   plateau/pièces par défaut (design volontaire côté lib, cf. chessground.base.css
+   vendorisé) : damier + pièces sont entièrement pilotés ici, en réutilisant les
+   mêmes variables/classes ThemeService que chessboard.js (aucun nouveau
+   mécanisme de thème à maintenir). */
+
+/* Damier en pur CSS (dégradés) plutôt qu'une image : suit `--board-square-*`
+   instantanément au changement de thème (US 18.2), sans regénérer d'asset. */
+.board-container cg-board {
+  background-image:
+    linear-gradient(45deg, var(--board-square-dark) 25%, transparent 25%),
+    linear-gradient(-45deg, var(--board-square-dark) 25%, transparent 25%),
+    linear-gradient(45deg, transparent 75%, var(--board-square-dark) 75%),
+    linear-gradient(-45deg, transparent 75%, var(--board-square-dark) 75%);
+  background-color: var(--board-square-light);
+  background-size: 25% 25%;
+  background-position: 0 0, 0 12.5%, 12.5% -12.5%, -12.5% 0;
+}
+
+/* Pièces : Chessground rend chaque pièce comme <piece class="{color} {role}">
+   (pas d'<img>) — mappage explicite par thème vers les mêmes SVG que
+   chessboard.js (assets/pieces/{theme}/{w,b}{K,Q,R,B,N,P}.svg). */
+body.theme-cburnett .board-container piece.white.king   { background-image: url("../assets/pieces/cburnett/wK.svg"); }
+body.theme-cburnett .board-container piece.white.queen  { background-image: url("../assets/pieces/cburnett/wQ.svg"); }
+body.theme-cburnett .board-container piece.white.rook   { background-image: url("../assets/pieces/cburnett/wR.svg"); }
+body.theme-cburnett .board-container piece.white.bishop { background-image: url("../assets/pieces/cburnett/wB.svg"); }
+body.theme-cburnett .board-container piece.white.knight { background-image: url("../assets/pieces/cburnett/wN.svg"); }
+body.theme-cburnett .board-container piece.white.pawn   { background-image: url("../assets/pieces/cburnett/wP.svg"); }
+body.theme-cburnett .board-container piece.black.king   { background-image: url("../assets/pieces/cburnett/bK.svg"); }
+body.theme-cburnett .board-container piece.black.queen  { background-image: url("../assets/pieces/cburnett/bQ.svg"); }
+body.theme-cburnett .board-container piece.black.rook   { background-image: url("../assets/pieces/cburnett/bR.svg"); }
+body.theme-cburnett .board-container piece.black.bishop { background-image: url("../assets/pieces/cburnett/bB.svg"); }
+body.theme-cburnett .board-container piece.black.knight { background-image: url("../assets/pieces/cburnett/bN.svg"); }
+body.theme-cburnett .board-container piece.black.pawn   { background-image: url("../assets/pieces/cburnett/bP.svg"); }
+
+body.theme-cyber-tactics .board-container piece.white.king   { background-image: url("../assets/pieces/cyber-tactics/wK.svg"); }
+body.theme-cyber-tactics .board-container piece.white.queen  { background-image: url("../assets/pieces/cyber-tactics/wQ.svg"); }
+body.theme-cyber-tactics .board-container piece.white.rook   { background-image: url("../assets/pieces/cyber-tactics/wR.svg"); }
+body.theme-cyber-tactics .board-container piece.white.bishop { background-image: url("../assets/pieces/cyber-tactics/wB.svg"); }
+body.theme-cyber-tactics .board-container piece.white.knight { background-image: url("../assets/pieces/cyber-tactics/wN.svg"); }
+body.theme-cyber-tactics .board-container piece.white.pawn   { background-image: url("../assets/pieces/cyber-tactics/wP.svg"); }
+body.theme-cyber-tactics .board-container piece.black.king   { background-image: url("../assets/pieces/cyber-tactics/bK.svg"); }
+body.theme-cyber-tactics .board-container piece.black.queen  { background-image: url("../assets/pieces/cyber-tactics/bQ.svg"); }
+body.theme-cyber-tactics .board-container piece.black.rook   { background-image: url("../assets/pieces/cyber-tactics/bR.svg"); }
+body.theme-cyber-tactics .board-container piece.black.bishop { background-image: url("../assets/pieces/cyber-tactics/bB.svg"); }
+body.theme-cyber-tactics .board-container piece.black.knight { background-image: url("../assets/pieces/cyber-tactics/bN.svg"); }
+body.theme-cyber-tactics .board-container piece.black.pawn   { background-image: url("../assets/pieces/cyber-tactics/bP.svg"); }
+
+/* Lueur néon Cyber-Tactics (US 18.1) : équivalent de `.piece-417db` ci-dessus,
+   adapté au sélecteur `<piece>` de Chessground. */
+body.theme-cyber-tactics .board-container piece {
+  filter:
+    drop-shadow(0 0 3px rgba(56, 103, 214, 0.65))
+    drop-shadow(0 0 9px rgba(56, 103, 214, 0.35));
+  transition: filter 0.15s ease-in-out;
+}
+
+/* Curseur de préhension cohérent avec chessboard.js (US 8.3 et suivants). */
+.board-container cg-board square.move-dest {
+  cursor: pointer;
+}
+
+/* Surbrillance case sélectionnée + destinations légales (EPIC 33) sur le
+   board principal : Chessground gère nativement la sélection (remplace
+   `tap_move.js` ici, cf. §3.13 undecies), mais ne fournit aucun style visuel
+   par défaut — mêmes classes visuelles (point/anneau vert) que les 6 boards
+   de problèmes restés sur `tap_move.js`, pour un langage cohérent partout. */
+.board-container cg-board square.selected {
+  box-shadow: inset 0 0 0 4px rgba(129, 182, 76, 0.75);
+}
+.board-container cg-board square.move-dest::after {
+  content: "";
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 28%;
+  height: 28%;
+  border-radius: 50%;
+  background: rgba(129, 182, 76, 0.55);
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+}
+.board-container cg-board square.move-dest.oc {
+  box-shadow: inset 0 0 0 4px rgba(129, 182, 76, 0.55);
+}
+.board-container cg-board square.move-dest.oc::after {
+  content: none; /* anneau seul (via box-shadow ci-dessus), pas de point superposé */
+}
+
 .btn--full { width: 100%; margin-top: var(--space-sm); }
 .btn--sm { font-size: 0.78rem; padding: 5px 10px; }
 .btn--lg { font-size: 0.95rem; font-weight: 700; padding: 12px 18px; }
@@ -913,16 +1004,10 @@ input[type="text"]::placeholder { color: var(--text-muted); }
 .eval-bar-value.on-black { top: 4px;    color: #e8edf4; }
 .eval-bar-value.on-white { bottom: 4px; color: #2f2c29; }
 
-/* Flèches coup joué / suggestion moteur (POC v0) */
-.board-arrows {
-  position: absolute;
-  inset: 0;
-  width: 100%;
-  height: 100%;
-  pointer-events: none;
-  z-index: 90;
-}
-
+/* Flèches coup joué / suggestion moteur (POC v0 ; EPIC 37 : dessinées par
+   Chessground via `AnalysisFeedback.drawFeedback`/`setShapes`, plus par un
+   overlay SVG maison — le legend ci-dessous reste, lui, indépendant du
+   mécanisme de rendu des flèches). */
 .arrow-legend {
   display: flex;
   align-items: center;
@@ -938,7 +1023,7 @@ input[type="text"]::placeholder { color: var(--text-muted); }
   height: 4px;
   border-radius: 2px;
 }
-.arrow-key--played { background: #e8a33d; }
+.arrow-key--played { background: var(--col-blunder); }
 .arrow-key--best   { background: var(--green); margin-left: var(--space-md); }
 
 @keyframes badge-pop {

@@ -6,12 +6,21 @@
  * dizaines d'événements `move:accuracy` identiques, donc autant d'alertes
  * empilées au-dessus de l'échiquier (bug « toast-spamming », Image 1).
  *
- * Ce module PUR (aucune dépendance DOM) centralise deux décisions :
+ * Ce module est PUR à l'exception de `drawFeedback` (EPIC 37, US 37.1) —
+ * seule fonction qui touche le monde extérieur, et seulement via l'API
+ * Chessground reçue en paramètre (jamais `document`/`window` directement),
+ * donc testable avec un simple double (`{ setShapes: jest.fn() }`).
+ *
  *   - `shouldDispatch` : n'émettre `move:accuracy` que si le résultat du coup
  *     a réellement changé depuis la dernière émission (dédoublonnage) ;
  *   - `shouldAlert`    : ne déclencher l'alerte Coach (bandeau + beep + voix)
  *     qu'UNE SEULE fois par coup et par partie, quelle que soit la
- *     classification raffinée ensuite par le moteur.
+ *     classification raffinée ensuite par le moteur ;
+ *   - `drawFeedback`   : flèches rouge (coup joué/erreur, opacité 0.6) et
+ *     verte (suggestion moteur, opacité 0.8) sur l'échiquier principal, à la
+ *     place de l'ancien overlay SVG maison (les brushes `red`/`green` sont
+ *     configurées avec ces opacités à la construction du board, cf.
+ *     `board_manager.js:_initBoard`).
  */
 
 const AnalysisFeedback = (() => {
@@ -146,8 +155,38 @@ const AnalysisFeedback = (() => {
     }
   }
 
+  // ── EPIC 37 (US 37.1) — Coaching visuel : flèches sur l'échiquier ──
+
+  /** Vrai si `m` a la forme minimale `{from, to}` (cases algébriques). */
+  function _isSquarePair(m) {
+    return !!(m && /^[a-h][1-8]$/.test(m.from || "") && /^[a-h][1-8]$/.test(m.to || ""));
+  }
+
+  /**
+   * Dessine (ou efface) les flèches de feedback sur l'échiquier principal :
+   * rouge pour `playedMove` (le coup joué, s'il est en erreur), verte pour
+   * `bestMove` (la suggestion moteur). `cg` est l'instance Chessground
+   * (`board_manager.js:this.board`) — `null`/sans `setShapes` ne fait rien
+   * (échiquier pas encore prêt). `playedMove`/`bestMove` : `{from, to}` ou
+   * `null`/`undefined` pour ne pas dessiner cette flèche (ex. hors Review,
+   * ou coup joué == suggestion moteur, cf. appelant `app.js:_drawReviewArrows`).
+   * Les couleurs/opacités (rouge 0.6, verte 0.8) sont celles configurées dans
+   * `drawable.brushes` à la construction du board, pas ici.
+   */
+  function drawFeedback(cg, playedMove, bestMove) {
+    if (!cg || typeof cg.setShapes !== "function") return;
+    const shapes = [];
+    if (_isSquarePair(playedMove)) {
+      shapes.push({ orig: playedMove.from, dest: playedMove.to, brush: "red" });
+    }
+    if (_isSquarePair(bestMove)) {
+      shapes.push({ orig: bestMove.from, dest: bestMove.to, brush: "green" });
+    }
+    cg.setShapes(shapes);
+  }
+
   return {
-    createState, shouldDispatch, shouldAlert,
+    createState, shouldDispatch, shouldAlert, drawFeedback,
     evalForPlayer, exerciseQuality, isExerciseMoveCorrect,
     describeMoveFr, explainMoveFr,
   };

@@ -12,6 +12,10 @@
   <title>Chess Improver</title>
   <link href="assets/css/fonts.css" rel="stylesheet"/>
   <link rel="stylesheet" href="assets/css/chessboard-1.0.0.min.css"/>
+  <!-- EPIC 37 : Chessground (échiquier principal) — chessboard.js reste
+       chargé ci-dessus pour les échiquiers de problèmes (Tactique, Finales,
+       Sprint, Cimetière, Ouvertures), hors périmètre de cette migration. -->
+  <link rel="stylesheet" href="assets/css/chessground.base.css"/>
   <link rel="stylesheet" href="css/style.css"/>
 </head>
 <body>
@@ -509,17 +513,11 @@
                 <span id="eval-bar-value" class="eval-bar-value on-black">0.0</span>
               </div>
               <div class="board-area">
+                <!-- EPIC 37 : Chessground (assets/js/chessground.min.js) — les
+                     flèches coup joué/suggestion sont désormais dessinées par
+                     la lib elle-même (`AnalysisFeedback.drawFeedback`,
+                     `cg.setShapes()`), plus par un overlay SVG maison. -->
                 <div id="board" class="board-container"></div>
-                <svg id="board-arrows" class="board-arrows" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
-                  <defs>
-                    <marker id="arrow-head-played" viewBox="0 0 10 10" refX="6" refY="5" markerWidth="3.2" markerHeight="3.2" orient="auto-start-reverse">
-                      <path d="M 0 0 L 10 5 L 0 10 z" fill="#e8a33d"/>
-                    </marker>
-                    <marker id="arrow-head-best" viewBox="0 0 10 10" refX="6" refY="5" markerWidth="3.2" markerHeight="3.2" orient="auto-start-reverse">
-                      <path d="M 0 0 L 10 5 L 0 10 z" fill="#81b64c"/>
-                    </marker>
-                  </defs>
-                </svg>
                 <div id="move-badge" class="move-badge"></div>
               </div>
             </div>
@@ -1019,6 +1017,7 @@
 <script src="assets/js/jquery-3.7.1.min.js"></script>
 <script src="assets/js/chess-0.10.3.js"></script>
 <script src="assets/js/chessboard-1.0.0.min.js"></script>
+<script src="assets/js/chessground.min.js"></script>
 <script src="assets/js/chart-4.4.0.umd.js"></script>
 <script src="js/db.js"></script>
 <script src="js/theme_service.js"></script>

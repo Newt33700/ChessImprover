@@ -233,3 +233,41 @@ describe("AnalysisFeedback.explainMoveFr (EPIC 31 — explication pédagogique)"
     expect(AnalysisFeedback.explainMoveFr(undefined)).toBeNull();
   });
 });
+
+describe("AnalysisFeedback.drawFeedback — flèches Chessground (EPIC 37, US 37.1)", () => {
+  function fakeCg() {
+    return { setShapes: jest.fn() };
+  }
+
+  test("coup joué (rouge) + suggestion moteur (verte) différente", () => {
+    const cg = fakeCg();
+    AnalysisFeedback.drawFeedback(cg, { from: "e2", to: "e4" }, { from: "d2", to: "d4" });
+    expect(cg.setShapes).toHaveBeenCalledWith([
+      { orig: "e2", dest: "e4", brush: "red" },
+      { orig: "d2", dest: "d4", brush: "green" },
+    ]);
+  });
+
+  test("uniquement le coup joué si aucune suggestion moteur (bestMove null)", () => {
+    const cg = fakeCg();
+    AnalysisFeedback.drawFeedback(cg, { from: "e2", to: "e4" }, null);
+    expect(cg.setShapes).toHaveBeenCalledWith([{ orig: "e2", dest: "e4", brush: "red" }]);
+  });
+
+  test("aucune flèche si playedMove et bestMove sont null (efface les précédentes)", () => {
+    const cg = fakeCg();
+    AnalysisFeedback.drawFeedback(cg, null, null);
+    expect(cg.setShapes).toHaveBeenCalledWith([]);
+  });
+
+  test("ignore un playedMove/bestMove malformé (case invalide) sans planter", () => {
+    const cg = fakeCg();
+    expect(() => AnalysisFeedback.drawFeedback(cg, { from: "z9", to: "e4" }, undefined)).not.toThrow();
+    expect(cg.setShapes).toHaveBeenCalledWith([]);
+  });
+
+  test("cg absent ou sans setShapes → no-op, jamais d'exception", () => {
+    expect(() => AnalysisFeedback.drawFeedback(null, { from: "e2", to: "e4" }, null)).not.toThrow();
+    expect(() => AnalysisFeedback.drawFeedback({}, { from: "e2", to: "e4" }, null)).not.toThrow();
+  });
+});

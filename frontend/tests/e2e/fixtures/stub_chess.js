@@ -38,6 +38,17 @@ window.$.extend = function() { return {}; };
 window.Chessboard = function() {
   return { position: function(){}, destroy: function(){}, orientation: function(){}, resize: function(){} };
 };
+// EPIC 37 : échiquier principal (board_manager.js) migré vers Chessground —
+// les échiquiers de problèmes exercés par ces specs e2e restent sur
+// chessboard.js (stub ci-dessus), mais board_manager.js est instancié dès le
+// boot de l'appli (indépendamment de la vue affichée), donc ce stub doit
+// exister pour que `new BoardManager(...)` ne plante jamais en E2E.
+window.Chessground = function() {
+  return {
+    set: function(){}, toggleOrientation: function(){}, redrawAll: function(){},
+    destroy: function(){}, setShapes: function(){},
+  };
+};
 window.Chart = function() {
   return { destroy: function(){}, update: function(){}, data: {} };
 };
