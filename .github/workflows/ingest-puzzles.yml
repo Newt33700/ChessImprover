@@ -22,7 +22,7 @@ jobs:
   ingest:
     name: Ingest lichess_db_puzzle.csv.zst
     runs-on: ubuntu-latest
-    timeout-minutes: 180
+    timeout-minutes: 300
     concurrency:
       group: ingest-lichess-puzzles
       cancel-in-progress: false
