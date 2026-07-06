@@ -1354,3 +1354,26 @@ Reste à faire, consigné en Backlog (README §11) : migration complète des 5 a
 - **Chronomètre visible** : badge `⏱ m:ss` à côté des badges Elo/Série, démarré au chargement du problème, arrêté à la résolution (ou en quittant la vue) — `time_taken` remonté au serveur existait déjà, mais n'était jusqu'ici jamais affiché à l'utilisateur.
 
 **Validation EPIC 36 :** backend **1089/1089 pytest** (+3 TUs), frontend **425/425 Jest** (+2 TUs) et **18/18 Playwright e2e** (tactics/endgames/sprint/flashcards/openings/error_profile — aucune régression de la restructuration HTML du Coach Tactique).
+
+## EPIC 37 : Moteur de Puzzles — catalogue Lichess local (US 37.1)
+
+**Contexte** : spec transmise pour la phase « optimisation, rendre le projet plus pro » — 3 epics (Moteur de Puzzles backend, Refonte UI/Chessground, « Lotus Mastery Engine » ouvertures). La branche assignée à cette session (`claude/chessimprover-puzzles-engine-bd8gt9`) et son nom ciblent spécifiquement le Moteur de Puzzles : seule l'US 37.1 (Étapes 1-7 de la spec — migration, schémas, dépôt, service+fallback, endpoint, tests, ETL) est traitée ici. La refonte UI Chessground/coaching visuel et le Lotus Mastery Engine (ouvertures) restent à faire dans des US/branches dédiées ultérieures — cf. §10 du README.
+
+**Décision d'architecture actée avec l'utilisateur avant implémentation** : la spec demandait explicitement « Pydantic v2 », mais tout le backend est figé en Pydantic v1 (`pydantic>=1.10,<2.0`, FastAPI plafonné `<0.112` précisément pour éviter Pydantic v2, cf. commentaire `requirements.txt`). Une migration globale vers Pydantic v2 aurait été un chantier transverse à part entière, risquant une régression sur ~1100 tests existants pour une seule US. Question posée à l'utilisateur (règle CLAUDE.md #3 — ne jamais présumer sur une ambiguïté d'API/stack) : réponse **rester en Pydantic v1** pour ce module, cohérent avec le reste du code (`domain/models.py`).
+
+**Statut :** ✅ Implémenté (backend uniquement — US 37.1) :
+
+- **Migration** (`supabase/migrations/20260706000000_puzzles_service.sql`) : table `lichess_puzzles` (catalogue en lecture seule, pas de RLS — aucune ligne n'appartient à un utilisateur, lu uniquement côté serveur), index B-Tree sur `rating`, GIN sur `themes` (`themes @> ARRAY[...]`).
+- **Schémas** (`domain/puzzles_models.py`) : `LichessTheme` (16 valeurs — mateIn1-4, fork, pin, skewer, deflection, attraction, clearance, decoy, hangingPiece, trappedPiece, endgame, opening, middlegame), `PuzzleQueryParams` (validateur `rating_max >= rating_min`), `PuzzleResponse`.
+- **Dépôt** (`infrastructure/pg_repository.py`, méthodes ajoutées à `PgRepository`) : `count_puzzles`/`get_random_puzzles`. **Interdiction stricte de `ORDER BY random()`** respectée : un `COUNT(*)` filtré détermine la taille de la page, l'offset est tiré côté Python (`random.randint`), puis un unique `SELECT ... LIMIT/OFFSET` — jamais de tri sur la table entière (plusieurs millions de lignes attendues après ingestion complète).
+- **Service** (`domain/lichess_puzzles.py:resolve_random_puzzles`) : si la plage d'Elo demandée ne contient aucun puzzle, élargit automatiquement à `±100` avant de renoncer (404). La stratégie (`"standard"`/`"fallback"`) est logguée à chaque appel. Fonction pure vis-à-vis de la base (dépôt injecté via `Protocol` structurel) — testée avec un double en mémoire, sans connexion Postgres réelle.
+- **Endpoint** (`routers/tactics.py:GET /api/v1/tactics/random`) : `?rating_min=&rating_max=&theme=&limit=`, JWT requis (cohérent avec le reste de `tactics.py`). 422 si `rating_max < rating_min` ou thème inconnu, 503 si `DATABASE_URL` non configuré, 404 si aucun puzzle même après fallback.
+- **ETL** (`scripts/ingest_lichess_puzzles.py`) : décompresse le dump public Lichess (`.csv.zst`) en flux (`zstandard`, jamais chargé entièrement en mémoire), parse via `csv.DictReader` (pas de pandas), insère par lots de 10 000 lignes (`ON CONFLICT (puzzle_id) DO NOTHING`, ré-exécutable). `parse_puzzle_row` (fonction pure) éclate `Themes`/`OpeningTags` (tags séparés par des espaces dans le CSV source) en `TEXT[]` — testée sans fichier ni base réelle.
+- **Tests** : `tests/test_puzzles_service.py` (17 TUs — sélection standard incluant le thème `mateIn1`, mécanisme de fallback ±100 y compris le cas où il ne trouve toujours rien, validation des schémas, route API) et `tests/test_ingest_lichess_puzzles.py` (7 TUs — mapping CSV pur).
+
+**Hors périmètre de cette US (documenté au README §10 comme suites planifiées, pas des gaps de câblage)** :
+- Exécution de l'ETL contre un vrai dump Lichess en production — la table reste vide tant qu'il n'a pas tourné au moins une fois.
+- Migration Chessground + coaching visuel (`drawFeedback`, flèches rouge/verte) — Étapes 8-9 de la spec, EPIC UI distinct.
+- « Lotus Mastery Engine » (référentiel ECO, arbre de progression par nœud, SRS, endpoint `next-move`) — Étapes 10-14, domaine fonctionnel distinct (ouvertures vs tactique), mérite sa propre US/branche plutôt que d'être mélangé au Moteur de Puzzles.
+
+**Validation EPIC 37 :** backend **1113/1113 pytest** (+24 TUs sur la base 1089 post-EPIC 36), `flake8` propre sur les fichiers modifiés/créés, aucune régression sur la suite existante.
