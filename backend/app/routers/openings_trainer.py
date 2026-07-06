@@ -112,9 +112,11 @@ async def submit_attempt(
 
     return OpeningAttemptResult(
         node_id=body.node_id,
+        success=is_success,
         status=result["status"],
         mastery_score=result["mastery_score"],
         srs_interval=result["srs_interval"],
         rank=result["rank"],
         unlocked_children=unlocked_children,
+        solution=None if is_success else node["move_san"],
     )

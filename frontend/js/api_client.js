@@ -195,50 +195,40 @@ const ApiClient = (() => {
   }
 
   /**
-   * Ajoute une ligne au répertoire d'ouvertures (EPIC 9, US 9.1). Le backend
-   * rejoue la séquence coup par coup et rejette (422) toute ligne illégale.
-   * @param {{name: string, color: 'white'|'black', moves: string[]}} line
+   * Importe un répertoire depuis un PGN — Lotus Mastery Engine (EPIC 38,
+   * US 38.1, REMPLACE `createOpeningLine` de l'ex-EPIC 9). Le backend
+   * reconstruit l'arbre complet (variations incluses, python-chess) et
+   * rejette (422) tout PGN illisible ou sans coup.
+   * @param {{repertoireName: string, pgn: string}} params
    */
-  async function createOpeningLine(line) {
-    const res = await fetch(url("/api/v1/openings/repertoire"), {
+  async function importRepertoire({ repertoireName, pgn }) {
+    const res = await fetch(url("/api/v1/openings/trainer/import"), {
       method: "POST",
       headers: { "Content-Type": "application/json", ..._authHeaders() },
-      body: JSON.stringify(line),
+      body: JSON.stringify({ repertoire_name: repertoireName, pgn }),
     });
     return _json(res);
-  }
-
-  /** Liste tout le répertoire de l'utilisateur (EPIC 9). */
-  async function getOpeningLines() {
-    return _json(await fetch(url("/api/v1/openings/repertoire"), { headers: _authHeaders() }));
-  }
-
-  /** Lignes dont l'échéance de révision est arrivée aujourd'hui (EPIC 9, US 9.2). */
-  async function getDueOpeningLines() {
-    return _json(
-      await fetch(url("/api/v1/openings/repertoire/due"), { headers: _authHeaders() })
-    );
   }
 
   /**
-   * Soumet le résultat d'une session de révision (EPIC 9, US 9.2). La
-   * qualité SM-2 est déduite côté serveur du nombre d'erreurs commises —
-   * pas de notation manuelle, pour rester ludique.
+   * Prochain nœud à travailler (EPIC 38) : priorité révision en retard >
+   * nouvelles lignes débloquées > `{session_complete: true}`. Ne renvoie
+   * jamais la solution (`move_san`) — seule la position de départ (`fen`).
    */
-  async function reviewOpeningLine(lineId, mistakeCount) {
-    const res = await fetch(url(`/api/v1/openings/repertoire/${lineId}/review`), {
-      method: "POST",
-      headers: { "Content-Type": "application/json", ..._authHeaders() },
-      body: JSON.stringify({ mistake_count: mistakeCount }),
-    });
-    return _json(res);
+  async function getNextOpeningMove() {
+    return _json(await fetch(url("/api/v1/openings/trainer/next-move"), { headers: _authHeaders() }));
   }
 
-  /** Retire une ligne du répertoire (EPIC 9). */
-  async function deleteOpeningLine(lineId) {
-    const res = await fetch(url(`/api/v1/openings/repertoire/${lineId}`), {
-      method: "DELETE",
-      headers: _authHeaders(),
+  /**
+   * Soumet le coup joué sur un nœud (EPIC 38). La validation (coup correct
+   * ou non) est faite côté serveur exclusivement — le frontend ne fait que
+   * relayer le SAN joué, jamais un verdict de succès.
+   */
+  async function submitOpeningAttempt(nodeId, moveSan) {
+    const res = await fetch(url("/api/v1/openings/trainer/attempt"), {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ..._authHeaders() },
+      body: JSON.stringify({ node_id: nodeId, move_san: moveSan }),
     });
     return _json(res);
   }
@@ -338,7 +328,7 @@ const ApiClient = (() => {
   return {
     baseUrl, url, analyzeGame, getGame, getGames, updateGameStatus, salvageGame, syncGames,
     getNextTacticalProblem, submitTacticalAttempt, getTacticsStats,
-    createOpeningLine, getOpeningLines, getDueOpeningLines, reviewOpeningLine, deleteOpeningLine,
+    importRepertoire, getNextOpeningMove, submitOpeningAttempt,
     getNextEndgameProblem, submitEndgameAttempt,
     getErrorProfile, getCustomTacticalProblem,
     startSprint, submitSprintAttempt, finishSprint, getGhostReplay,

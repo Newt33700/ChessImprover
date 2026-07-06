@@ -458,13 +458,19 @@ class OpeningAttemptRequest(BaseModel):
 
 
 class OpeningAttemptResult(BaseModel):
-    """Nouvel état du nœud après une tentative (US 38.1)."""
+    """Nouvel état du nœud après une tentative (US 38.1).
+
+    ``solution`` : révélée uniquement si le coup était faux (``success=False``)
+    — jamais envoyée par avance, même politique que ``TacticalAttemptResult``.
+    """
     node_id: str
+    success: bool
     status: str
     mastery_score: int
     srs_interval: int
     rank: str
     unlocked_children: int
+    solution: Optional[str] = None
 
 
 # ---------------------------------------------------------------------------

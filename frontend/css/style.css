@@ -2655,10 +2655,10 @@ body.openings-trainer-active .openings-trainer-col { display: block; }
   margin-bottom: var(--space-sm);
   color: var(--text-primary);
 }
-.ot-add-card, .ot-review-card, .ot-list-card { margin-bottom: var(--space-md); }
+.ot-add-card, .ot-review-card { margin-bottom: var(--space-md); }
 
 .ot-add-form { display: flex; flex-direction: column; gap: var(--space-sm); }
-.ot-add-form input[type="text"] {
+.ot-add-form input[type="text"], .ot-pgn-input {
   background: var(--bg-900);
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
@@ -2666,29 +2666,20 @@ body.openings-trainer-active .openings-trainer-col { display: block; }
   color: var(--text-primary);
   font-size: 0.85rem;
 }
-.ot-color-choice { display: flex; gap: var(--space-md); font-size: 0.85rem; color: var(--text-secondary); }
+/* EPIC 38 — Lotus Mastery Engine : import PGN (remplace le formulaire de
+   ligne + choix de couleur de l'ex-EPIC 9). */
+.ot-pgn-input { font-family: var(--font-data); resize: vertical; }
 
 .ot-feedback { font-size: 0.85rem; color: var(--text-secondary); margin-top: var(--space-sm); min-height: 1.2em; }
 
-.ot-review-title {
-  text-align: center;
-  font-weight: 700;
-  color: var(--text-primary);
-  margin-bottom: var(--space-sm);
-}
-
-.ot-line-row {
+.ot-mastery-badges {
   display: flex;
   align-items: center;
+  justify-content: center;
   gap: var(--space-sm);
-  padding: var(--space-sm) 0;
-  border-bottom: 1px solid var(--border);
-  font-size: 0.85rem;
+  margin-bottom: var(--space-sm);
 }
-.ot-line-row:last-child { border-bottom: none; }
-.ot-line-name { font-weight: 700; color: var(--text-primary); flex: 1; }
-.ot-line-color { color: var(--text-secondary); }
-.ot-line-due { color: var(--text-muted); font-size: 0.78rem; }
+.ot-mastery-score { font-size: 0.85rem; color: var(--text-secondary); }
 
 /* ==========================================================================
    Vues détaillées par catégorie (US 4.2 — maquettes Finales / Tactiques)
