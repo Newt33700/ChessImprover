@@ -252,7 +252,8 @@ ChessImprover/
     └── workflows/
         ├── deploy-frontend.yml         # CI/CD 1 : Jest + Vercel (déclenché sur frontend/**)
         ├── deploy-backend.yml          # CI/CD 2 : pytest + Render (déclenché sur backend/**)
-        └── deploy-database.yml         # CI/CD 3 : sqlfluff + supabase db push (déclenché sur supabase/migrations/**)
+        ├── deploy-database.yml         # CI/CD 3 : sqlfluff + supabase db push (déclenché sur supabase/migrations/**)
+        └── ingest-puzzles.yml          # CI/CD 5 (EPIC 37) : ingestion manuelle (workflow_dispatch) du dump Lichess dans lichess_puzzles
 ```
 
 ---
@@ -2029,7 +2030,24 @@ Job 2 : push-migrations (main seulement, dépend de lint-migrations)
 
 **Secrets requis :** `SUPABASE_ACCESS_TOKEN`, `SUPABASE_DB_PASSWORD`, `SUPABASE_PROJECT_ID`
 
-### 7.5 Migration SQL initiale
+### 7.5 Ingestion ponctuelle des puzzles Lichess (EPIC 37)
+
+**Fichier :** `.github/workflows/ingest-puzzles.yml`
+**Déclencheur :** manuel uniquement (`workflow_dispatch`, onglet Actions → « Ingest Lichess Puzzles » → Run workflow) — pas de déclenchement automatique, ce n'est pas un pipeline de déploiement mais un job à la demande pour peupler/rafraîchir `lichess_puzzles`.
+
+```
+Job : ingest (ubuntu-latest, timeout 180 min, concurrency group anti-double-run)
+  → pip install -r backend/requirements.txt
+  → python -m scripts.ingest_lichess_puzzles [dump_url]
+    (dump_url optionnel, input du workflow ; vide = DEFAULT_PUZZLE_DUMP_URL,
+    le dump officiel https://database.lichess.org/lichess_db_puzzle.csv.zst)
+```
+
+**Secret requis :** `DATABASE_URL` (**distinct** des secrets `SUPABASE_*` de §7.4, qui servent au CLI `supabase` pour les migrations — ici une vraie chaîne de connexion Postgres, celle que le backend utilise en production). À ajouter dans *Settings → Secrets and variables → Actions* avant le premier run ; le job échoue explicitement (`::error::`) si absent plutôt que de tenter une connexion invalide.
+
+> Créé après un constat en session : ni le sandbox Claude Code (réseau sortant restreint) ni cette session n'ont un accès simultané à Internet (Lichess) et à `DATABASE_URL` — ce workflow tourne sur l'infrastructure GitHub Actions, qui a les deux dès que le secret est configuré.
+
+### 7.6 Migration SQL initiale
 
 **Fichier :** `supabase/migrations/20260630000000_init_auth.sql`
 
@@ -2146,7 +2164,7 @@ UNIQUE (user_id)
 
 - **Routes backend inutilisées** (`POST /analyze`, `GET /games/{username}`, `POST /srs/review`, `POST /srs/review/full`) : **supprimées** — le frontend fait l'analyse Stockfish côté client, appelle Chess.com en direct et gère le SRS localement ; ces routes publiques n'étaient que de la surface d'attaque. Des tests verrouillent leur non-réapparition (404) et le montage intact des routers métier. `ChessComClient.get_latest_games`/`get_games_for_months` sont, eux, bien vivants (sync EPIC 23, courbe d'Elo EPIC 24).
 - **`game.endgame_accuracy` non rétro-alimenté** : rattrapage automatique en tâche de fond (`app.js:_backfillEndgameAccuracy`, max 5 parties/session, best-effort, 4 s après le boot) — la règle coach « précision finale < 60 % » couvre désormais aussi l'historique.
-- **Catalogue `lichess_puzzles` (EPIC 37)** : table + `GET /tactics/random` opérationnels, mais **table vide tant que `scripts/ingest_lichess_puzzles.py` n'a pas été exécuté en production** contre un vrai dump Lichess (`lichess_db_puzzle.csv.zst`, téléchargé séparément — pas versionné dans le dépôt). Sans exécution de l'ETL, la route répond 404 (« Aucun puzzle disponible ») quelle que soit la plage d'Elo demandée.
+- **Catalogue `lichess_puzzles` (EPIC 37)** : table + `GET /tactics/random` opérationnels, mais **table vide tant que le workflow `ingest-puzzles.yml` (§7.5) n'a pas été lancé au moins une fois** contre le dump Lichess officiel (streamé en direct, rien à télécharger/versionner manuellement). Sans exécution de l'ETL, la route répond 404 (« Aucun puzzle disponible ») quelle que soit la plage d'Elo demandée.
 
 ---
 
@@ -2156,7 +2174,7 @@ UNIQUE (user_id)
 
 | Priorité | Chantier | Détail |
 |---|---|---|
-| 🔴 | Exécuter l'ETL en production | `scripts/ingest_lichess_puzzles.py` doit tourner au moins une fois contre `DATABASE_URL` de prod pour que `GET /tactics/random` renvoie autre chose que 404 (cf. §9) |
+| 🔴 | Exécuter l'ETL en production | Workflow `.github/workflows/ingest-puzzles.yml` (§7.5) prêt — reste à ajouter le secret `DATABASE_URL` (Settings → Secrets and variables → Actions) et lancer le workflow manuellement une première fois pour que `GET /tactics/random` renvoie autre chose que 404 (cf. §9) |
 | 🟡 | Migration Chessground (EPIC 37, Étape 8) | Remplacer chessboard.js par Chessground sur `board_manager.js`/`index.html` — préalable à toute UI consommant `/tactics/random` |
 | 🟡 | Coaching visuel `drawFeedback` (EPIC 37, Étape 9) | Flèches rouge/verte (`api.setShapes()`) une fois Chessground en place |
 | 🟢 | Lotus Mastery Engine — Ouvertures (EPIC 37, Étapes 10-14) | Référentiel ECO, arbre de progression par nœud (SRS + déblocage par mastery_score), endpoint `next-move` — chantier distinct, pas commencé |
