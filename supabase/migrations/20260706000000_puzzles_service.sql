@@ -12,9 +12,9 @@ CREATE TABLE IF NOT EXISTS lichess_puzzles (
     rating_deviation INTEGER NOT NULL,
     popularity INTEGER NOT NULL,
     nb_plays INTEGER NOT NULL,
-    themes TEXT[] NOT NULL DEFAULT '{}',
+    themes TEXT [] NOT NULL DEFAULT '{}',
     game_url TEXT,
-    opening_tags TEXT[] NOT NULL DEFAULT '{}'
+    opening_tags TEXT [] NOT NULL DEFAULT '{}'
 );
 
 -- Sélection par plage d'Elo (US 37.1 : recherche standard + fallback ±100).
@@ -23,4 +23,4 @@ ON lichess_puzzles (rating);
 
 -- Filtrage par thème via l'opérateur `@>` (ex. themes @> ARRAY['mateIn2']).
 CREATE INDEX IF NOT EXISTS idx_lichess_puzzles_themes
-ON lichess_puzzles USING GIN (themes);
+ON lichess_puzzles USING gin (themes);
