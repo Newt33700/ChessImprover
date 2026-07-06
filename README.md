@@ -2085,7 +2085,7 @@ Job 1 : test-e2e (ubuntu-latest, Python 3.11 + Node 20)
 
 **Secrets requis :** aucun (`JWT_SECRET` retombe sur `ci-test-secret`, comme §7.2)
 
-### 7.4 Pipeline Database → Supabase
+### 7.4 Pipeline Database → applique les migrations (EPIC 39 — ex-Supabase CLI)
 
 **Fichier :** `.github/workflows/deploy-database.yml`  
 **Déclencheur :** push ou PR sur `main` affectant `supabase/migrations/**`
@@ -2096,12 +2096,11 @@ Job 1 : lint-migrations (ubuntu-latest)
   → sqlfluff lint supabase/migrations/ --dialect postgres --exclude-rules LT12,AM06
 
 Job 2 : push-migrations (main seulement, dépend de lint-migrations)
-  → supabase/setup-cli@v1
-  → supabase link --project-ref "$SUPABASE_PROJECT_ID"
-  → supabase db push --password "$SUPABASE_DB_PASSWORD"
+  → pip install -r backend/requirements.txt
+  → python -m scripts.apply_migrations "$DATABASE_URL"
 ```
 
-**Secrets requis :** `SUPABASE_ACCESS_TOKEN`, `SUPABASE_DB_PASSWORD`, `SUPABASE_PROJECT_ID`
+**Secret requis :** `DATABASE_URL` (**même secret** que §7.5 — une connexion Postgres directe, celle que le backend utilise en production). Ex-pipeline Supabase (`supabase/setup-cli` + `supabase db push`, secrets `SUPABASE_ACCESS_TOKEN`/`SUPABASE_DB_PASSWORD`/`SUPABASE_PROJECT_ID`) retiré après saturation du quota gratuit Supabase (EPIC 39) — `scripts/apply_migrations.py` fonctionne contre n'importe quel Postgres compatible, plus besoin du CLI ni des secrets propres à Supabase.
 
 ### 7.5 Ingestion ponctuelle des puzzles Lichess (EPIC 37)
 
@@ -2116,13 +2115,13 @@ Job : ingest (ubuntu-latest, timeout 180 min, concurrency group anti-double-run)
     le dump officiel https://database.lichess.org/lichess_db_puzzle.csv.zst)
 ```
 
-**Secret requis :** `DATABASE_URL` (**distinct** des secrets `SUPABASE_*` de §7.4, qui servent au CLI `supabase` pour les migrations — ici une vraie chaîne de connexion Postgres, celle que le backend utilise en production). À ajouter dans *Settings → Secrets and variables → Actions* avant le premier run ; le job échoue explicitement (`::error::`) si absent plutôt que de tenter une connexion invalide.
+**Secret requis :** `DATABASE_URL` (**même secret** que §7.4 depuis EPIC 39). À ajouter dans *Settings → Secrets and variables → Actions* avant le premier run ; le job échoue explicitement (`::error::`) si absent plutôt que de tenter une connexion invalide.
 
 > Créé après un constat en session : ni le sandbox Claude Code (réseau sortant restreint) ni cette session n'ont un accès simultané à Internet (Lichess) et à `DATABASE_URL` — ce workflow tourne sur l'infrastructure GitHub Actions, qui a les deux dès que le secret est configuré.
 
 ### 7.5 bis Migration d'hébergement Postgres — Supabase → CockroachDB (EPIC 39)
 
-**Contexte** : quota Supabase gratuit (500 Mo) saturé avant même l'ingestion complète du dump Lichess. CockroachDB Basic (ex-Serverless) retenu : **5 Gio gratuits**, vrai wire-protocol Postgres.
+**Contexte** : quota Supabase gratuit (500 Mo) saturé avant même l'ingestion complète du dump Lichess. CockroachDB Basic (ex-Serverless) retenu : **10 Gio + 50M Request Units gratuits/mois**, vrai wire-protocol Postgres. La CB demandée à la création du cluster ne sert qu'à la vérification anti-abus — en choisissant « Set a monthly limit » (au lieu de « Unlimited ») avec des valeurs nulles/négligeables (Request Units et Storage GiB au minimum accepté par le formulaire, `0` étant refusé), le compte est bloqué (pas facturé) si le quota gratuit est dépassé.
 
 **Script :** `backend/scripts/apply_migrations.py`
 
@@ -2138,10 +2137,9 @@ Rejouable sans risque (`IF NOT EXISTS`, `ON CONFLICT DO NOTHING`). Ne nécessite
 
 **Étapes pour basculer réellement (à faire par l'utilisateur — hors du périmètre de ce sandbox) :** voir le tutoriel détaillé fourni en session ; résumé :
 1. Créer un cluster CockroachDB Basic (gratuit), récupérer son DSN.
-2. `python -m scripts.apply_migrations "<DSN CockroachDB>"` depuis `backend/`.
+2. `python -m scripts.apply_migrations "<DSN CockroachDB>"` depuis `backend/` (bootstrap initial du schéma).
 3. Relancer `scripts/seed_eco.py` et `scripts/ingest_lichess_puzzles.py` contre ce même DSN.
-4. Remplacer le secret `DATABASE_URL` (workflow `ingest-puzzles.yml` §7.5, déploiement backend Render) par le DSN CockroachDB.
-5. Désactiver ou adapter `deploy-database.yml` (§7.4) — ce pipeline est spécifique au CLI `supabase` et ne s'applique plus si Supabase n'héberge plus la base.
+4. Remplacer le secret `DATABASE_URL` (workflows `deploy-database.yml` §7.4 et `ingest-puzzles.yml` §7.5, déploiement backend Render) par le DSN CockroachDB — `deploy-database.yml` est déjà générique (EPIC 39, ne dépend plus du CLI `supabase`) : dès que le secret pointe vers CockroachDB, chaque futur push de migration sur `main` s'y applique automatiquement, sans étape manuelle supplémentaire.
 
 ### 7.6 Migration SQL initiale
 
