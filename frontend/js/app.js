@@ -41,6 +41,13 @@ const VIEW_BODY_CLASSES = {
   exercise: "exercise-active",
   advstats: "advstats-active",
 };
+// Vues pilotées par classe <body> mais dont le markup vit DANS une section du
+// shell : la section hôte doit rester visible (ex: Statistiques Avancées est
+// la colonne .advstats-col de #section-dashboard, affichée via
+// body.advstats-active — sans cette entrée, la page Statistiques est blanche).
+const VIEW_HOST_SECTIONS = {
+  advstats: "dashboard",
+};
 //: Les 4 destinations de la sidebar → clé de vue correspondante.
 const TOP_LEVEL_TO_VIEW = {
   accueil: "dashboard", parties: "library", entrainement: "training-hub", stats: "advstats",
@@ -2696,9 +2703,10 @@ class ChessImproverApp {
   // qu'il ne soit plus possible d'avoir deux vues superposées.
 
   _setActiveView(key) {
+    const sectionKey = VIEW_HOST_SECTIONS[key] || key;
     Object.entries(VIEW_SECTIONS).forEach(([k, id]) => {
       const el = document.getElementById(id);
-      if (el) el.hidden = k !== key;
+      if (el) el.hidden = k !== sectionKey;
     });
     Object.values(VIEW_BODY_CLASSES).forEach((cls) => document.body.classList.remove(cls));
     const bodyClass = VIEW_BODY_CLASSES[key];
