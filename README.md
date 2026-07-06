@@ -1989,7 +1989,7 @@ JWT_SECRET=ci-test-secret pytest tests/ -v
 | `test_puzzles_service.py` (EPIC 37) | `resolve_random_puzzles` (thème `mateIn1` dans la plage, `limit` respecté, sans thème = filtre Elo seul), fallback (plage vide élargie de ±100, toujours vide après fallback, élargissement symétrique min/max, `rating_min` jamais négatif), `PuzzleQueryParams` (rejet `rating_max < rating_min`, bornes égales, thème inconnu, valeur enum), `PuzzleResponse` (construction, `opening_tags` par défaut), `GET /tactics/random` (503 sans base, 422 plage/thème invalide, 401 sans JWT) | US 37.1 |
 | `test_ingest_lichess_puzzles.py` (EPIC 37) | `parse_puzzle_row` (champs scalaires, `Themes`/`OpeningTags` espace → liste, champs vides → liste/`None`, cast entier) | US 37.1 |
 
-**Couverture backend :** **1155 TUs** au total (EPIC 38 : +42 TUs nets — Lotus Mastery Engine remplace l'ex-EPIC 9 (test_opening_repertoire.py/test_db_opening_repertoire.py/test_openings_trainer_api.py réécrits, `success`/`solution` sur `POST /attempt`), + `test_mastery_engine.py`/`test_seed_eco.py` ; EPIC 37 : +28 TUs — moteur de puzzles + workflow d'ingestion ; audit mutation testing 07/2026 : +120 TUs ; EPIC 36 : +3 TUs), couverture globale **89 %+** ; cœur Stats Avancées + EPIC 1/5.1/US 4.2/EPIC 19 à 92–100 % (`stats_aggregator`, `cadence`, `progress_history`, `models`, `engine`, `cognitive_load`, `srs_flashcards` à 100 %, `analysis_pipeline` 92 %, `routers/games` 92 %, `db_client` 98 %). Les requêtes SQL réelles de `pg_repository` (nécessitant une base) sont marquées `pragma: no cover`.
+**Couverture backend :** **1164 TUs** au total (EPIC 39 : +9 TUs — nettoyage RLS/trigger avant rejeu des migrations sur un Postgres cible arbitraire ; EPIC 38 : +42 TUs nets — Lotus Mastery Engine remplace l'ex-EPIC 9 (test_opening_repertoire.py/test_db_opening_repertoire.py/test_openings_trainer_api.py réécrits, `success`/`solution` sur `POST /attempt`), + `test_mastery_engine.py`/`test_seed_eco.py` ; EPIC 37 : +28 TUs — moteur de puzzles + workflow d'ingestion ; audit mutation testing 07/2026 : +120 TUs ; EPIC 36 : +3 TUs), couverture globale **89 %+** ; cœur Stats Avancées + EPIC 1/5.1/US 4.2/EPIC 19 à 92–100 % (`stats_aggregator`, `cadence`, `progress_history`, `models`, `engine`, `cognitive_load`, `srs_flashcards` à 100 %, `analysis_pipeline` 92 %, `routers/games` 92 %, `db_client` 98 %). Les requêtes SQL réelles de `pg_repository` (nécessitant une base) sont marquées `pragma: no cover`.
 
 **Architecture de test `test_auth.py` :**
 - App de test minimale (`FastAPI()` + routers auth/sync uniquement) pour éviter la dépendance `python-chess`
@@ -2119,6 +2119,29 @@ Job : ingest (ubuntu-latest, timeout 180 min, concurrency group anti-double-run)
 **Secret requis :** `DATABASE_URL` (**distinct** des secrets `SUPABASE_*` de §7.4, qui servent au CLI `supabase` pour les migrations — ici une vraie chaîne de connexion Postgres, celle que le backend utilise en production). À ajouter dans *Settings → Secrets and variables → Actions* avant le premier run ; le job échoue explicitement (`::error::`) si absent plutôt que de tenter une connexion invalide.
 
 > Créé après un constat en session : ni le sandbox Claude Code (réseau sortant restreint) ni cette session n'ont un accès simultané à Internet (Lichess) et à `DATABASE_URL` — ce workflow tourne sur l'infrastructure GitHub Actions, qui a les deux dès que le secret est configuré.
+
+### 7.5 bis Migration d'hébergement Postgres — Supabase → CockroachDB (EPIC 39)
+
+**Contexte** : quota Supabase gratuit (500 Mo) saturé avant même l'ingestion complète du dump Lichess. CockroachDB Basic (ex-Serverless) retenu : **5 Gio gratuits**, vrai wire-protocol Postgres.
+
+**Script :** `backend/scripts/apply_migrations.py`
+
+```
+python -m scripts.apply_migrations <DATABASE_URL_cible> [--migrations-dir supabase/migrations]
+```
+
+Rejoue tous les fichiers de `supabase/migrations/` dans l'ordre chronologique, après avoir retiré :
+- les `CREATE POLICY`/`ALTER TABLE ... ENABLE ROW LEVEL SECURITY` (reposent sur `auth.uid()`, une fonction Supabase/PostgREST — le backend s'y connecte en direct via `psycopg` et ne passe jamais par PostgREST, donc ces politiques ne sont **jamais appliquées à l'exécution** quel que soit le moteur cible ; l'autorisation réelle est faite côté application) ;
+- le trigger `set_updated_at` (`user_data.updated_at` n'est lu nulle part côté application).
+
+Rejouable sans risque (`IF NOT EXISTS`, `ON CONFLICT DO NOTHING`). Ne nécessite ni le CLI `supabase` ni les secrets `SUPABASE_*`.
+
+**Étapes pour basculer réellement (à faire par l'utilisateur — hors du périmètre de ce sandbox) :** voir le tutoriel détaillé fourni en session ; résumé :
+1. Créer un cluster CockroachDB Basic (gratuit), récupérer son DSN.
+2. `python -m scripts.apply_migrations "<DSN CockroachDB>"` depuis `backend/`.
+3. Relancer `scripts/seed_eco.py` et `scripts/ingest_lichess_puzzles.py` contre ce même DSN.
+4. Remplacer le secret `DATABASE_URL` (workflow `ingest-puzzles.yml` §7.5, déploiement backend Render) par le DSN CockroachDB.
+5. Désactiver ou adapter `deploy-database.yml` (§7.4) — ce pipeline est spécifique au CLI `supabase` et ne s'applique plus si Supabase n'héberge plus la base.
 
 ### 7.6 Migration SQL initiale
 
