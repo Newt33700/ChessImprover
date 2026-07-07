@@ -177,7 +177,7 @@ async def analyze_games(
         existing = db_client.find_game_by_pgn_hash(user_id, pgn_hash)
         if existing is not None:
             accepted.append(
-                AnalyzeAcceptedItem(game_id=existing["id"], status=existing["status"])
+                AnalyzeAcceptedItem(game_id=str(existing["id"]), status=existing["status"])
             )
         else:
             game = db_client.create_game(
@@ -192,7 +192,7 @@ async def analyze_games(
                 run_analysis, game["id"], body.pgn, body.evals,
                 user_id, body.user_color, body.time_control,
             )
-            accepted.append(AnalyzeAcceptedItem(game_id=game["id"]))
+            accepted.append(AnalyzeAcceptedItem(game_id=str(game["id"])))
 
     for gid in body.game_ids or []:
         game = db_client.get_game(gid)

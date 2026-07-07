@@ -58,7 +58,7 @@ async def start_sprint(user_id: str = Depends(get_current_user_id)) -> SprintSta
     sprint = db_client.create_sprint(user_id)
     problem = _next_problem(user_id)
     return SprintStartResponse(
-        sprint_id=sprint["id"],
+        sprint_id=str(sprint["id"]),
         duration_seconds=SPRINT_DURATION_SECONDS,
         problem=_public_problem(problem),
     )
@@ -142,7 +142,7 @@ async def finish_sprint(
         sprint = db_client.update_sprint(sprint_id, finished_at=now, duration_seconds=duration)
 
     return SprintFinishResponse(
-        sprint_id=sprint["id"],
+        sprint_id=str(sprint["id"]),
         score=sprint["score"],
         problems_solved_count=sprint["problems_solved_count"],
         duration_seconds=sprint["duration_seconds"],
