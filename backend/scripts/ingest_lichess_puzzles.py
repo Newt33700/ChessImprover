@@ -101,7 +101,14 @@ def _open_binary_stream(source: str):  # pragma: no cover - I/O réel
 def iter_puzzle_rows(csv_zst_source: str) -> Iterator[Dict[str, Any]]:  # pragma: no cover - I/O réel
     """Décompresse et parse le dump Lichess en flux, sans jamais matérialiser
     le fichier entier en mémoire (chunks Zstandard -> lignes CSV).
-    ``csv_zst_source`` : chemin local OU URL HTTP(S) (cf. ``is_url``)."""
+    ``csv_zst_source`` : chemin local OU URL HTTP(S) (cf. ``is_url``).
+
+    Une ligne malformée (champ manquant/`None` — vu en production sur un
+    dump de 6M+ lignes streamé depuis une connexion HTTP distante, cause
+    exacte non confirmée : ligne réellement corrompue dans le dump ou aléa
+    réseau au milieu du flux) est ignorée (log `WARNING`) plutôt que de faire
+    échouer l'intégralité d'un import de plusieurs dizaines de minutes pour
+    une seule ligne sur des millions."""
     import zstandard
 
     with _open_binary_stream(csv_zst_source) as compressed:
@@ -109,7 +116,13 @@ def iter_puzzle_rows(csv_zst_source: str) -> Iterator[Dict[str, Any]]:  # pragma
         with dctx.stream_reader(compressed) as reader:
             text_stream = io.TextIOWrapper(reader, encoding="utf-8")
             for row in csv.DictReader(text_stream):
-                yield parse_puzzle_row(row)
+                try:
+                    yield parse_puzzle_row(row)
+                except (TypeError, ValueError, KeyError) as exc:
+                    logger.warning(
+                        "ingest_lichess_puzzles: ligne ignorée (PuzzleId=%s) : %s",
+                        row.get("PuzzleId", "?"), exc,
+                    )
 
 
 def ingest(csv_zst_source: str, dsn: str, batch_size: int = BATCH_SIZE) -> int:  # pragma: no cover - I/O réel
