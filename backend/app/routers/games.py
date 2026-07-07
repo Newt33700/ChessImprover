@@ -99,6 +99,7 @@ def run_analysis(
             pivot_move_index=find_defeat_pivot(outcome["moves"], user_color),
         )
     except Exception:  # pragma: no cover - garde-fou worker
+        logger.exception(f"run_analysis: erreur lors de l'analyse du game_id={game_id}")
         db_client.update_game(game_id, status=GameStatus.FAILED.value)
         return
 
