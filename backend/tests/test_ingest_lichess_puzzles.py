@@ -7,6 +7,8 @@ dépendre du fichier `.csv.zst` réel ni d'une connexion Postgres.
 
 from __future__ import annotations
 
+import pytest
+
 from scripts.ingest_lichess_puzzles import DEFAULT_PUZZLE_DUMP_URL, is_url, parse_puzzle_row
 
 
@@ -66,6 +68,14 @@ class TestParsePuzzleRow:
             isinstance(puzzle[key], int)
             for key in ("rating", "rating_deviation", "popularity", "nb_plays")
         )
+
+    def test_missing_rating_field_raises_type_error(self):
+        # csv.DictReader met `None` (restval) sur les clés absentes d'une
+        # ligne trop courte -- vu en production sur le dump réel (EPIC 39,
+        # ~1,81M/6M lignes) ; iter_puzzle_rows attrape cette exception pour
+        # ignorer la ligne plutôt que de faire échouer tout l'import.
+        with pytest.raises(TypeError):
+            parse_puzzle_row(_row(Rating=None))
 
 
 class TestIsUrl:
