@@ -37,7 +37,7 @@ class ChessComClient:
 
     async def get_player(self, username: str) -> Dict[str, Any]:
         """Retourne le profil d'un joueur."""
-        url = f"{self.BASE_URL}/player/{self._safe(username)}"
+        url = f"{self.BASE_URL}/player/{self._safe(username.lower())}"
         resp = await self._client.get(url)
         resp.raise_for_status()
         return resp.json()
@@ -48,7 +48,7 @@ class ChessComClient:
 
     async def get_monthly_archives(self, username: str) -> List[str]:
         """Retourne la liste des URLs d'archives mensuelles (du plus récent au plus ancien)."""
-        url = f"{self.BASE_URL}/player/{self._safe(username)}/games/archives"
+        url = f"{self.BASE_URL}/player/{self._safe(username.lower())}/games/archives"
         resp = await self._client.get(url)
         resp.raise_for_status()
         data = resp.json()
@@ -59,7 +59,7 @@ class ChessComClient:
         self, username: str, year: int, month: int
     ) -> List[Dict[str, Any]]:
         """Retourne les parties d'un mois donné (YYYY/MM)."""
-        url = f"{self.BASE_URL}/player/{self._safe(username)}/games/{year:04d}/{month:02d}"
+        url = f"{self.BASE_URL}/player/{self._safe(username.lower())}/games/{year:04d}/{month:02d}"
         resp = await self._client.get(url)
         resp.raise_for_status()
         data = resp.json()
@@ -104,7 +104,7 @@ class ChessComClient:
 
     async def get_player_stats(self, username: str) -> Dict[str, Any]:
         """Retourne les statistiques de rating du joueur."""
-        url = f"{self.BASE_URL}/player/{self._safe(username)}/stats"
+        url = f"{self.BASE_URL}/player/{self._safe(username.lower())}/stats"
         resp = await self._client.get(url)
         resp.raise_for_status()
         return resp.json()

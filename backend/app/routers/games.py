@@ -440,7 +440,7 @@ async def stats_elo_curve(
     client = _get_chess_com_client()
     try:
         raw_games = await client.get_games_for_months(
-            chess_username, elo_curve.months_covering(now, days)
+            chess_username.lower(), elo_curve.months_covering(now, days)
         )
     except Exception as exc:
         # Même politique de log que games/sync : cause réelle côté serveur,
