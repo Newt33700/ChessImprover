@@ -1505,3 +1505,15 @@ Reste à faire, consigné en Backlog (README §11) : migration complète des 5 a
 - **Test de régression** : `test_semicolon_inside_comment_does_not_leak_into_statement`, reproduisant exactement `20260701194517_tactics_epic8.sql`.
 
 **Validation US 39.3 :** backend **1165/1165 pytest** (+1 TU), `flake8` propre. Bug détecté uniquement grâce au run réel contre CockroachDB — aucun des 23 fichiers de test précédents (vérification manuelle « aucun mot-clé RLS/trigger résiduel ») n'avait exercé ce cas précis, les 22 autres migrations n'ayant pas de `;` à l'intérieur d'un commentaire.
+
+### US 39.4 : `ingest_lichess_puzzles` — une ligne malformée faisait échouer tout l'import après 56 min
+
+**Contexte** : premier run réel de `ingest-puzzles.yml` contre CockroachDB sur le dump officiel (6 057 356 puzzles, mis à jour le 2026-07-05). Échec après 1 810 000 lignes traitées (~56 min de travail) : `TypeError: int() argument must be a string, a bytes-like object or a real number, not 'NoneType'` sur `row["Rating"]`. Cause exacte non confirmée (ligne réellement malformée dans le dump vs. aléa réseau en cours de streaming HTTP depuis `database.lichess.org`) — `csv.DictReader` met `None` (`restval`) sur les clés absentes d'une ligne trop courte.
+
+**Statut :** ✅ Implémenté :
+- **`scripts/ingest_lichess_puzzles.py:iter_puzzle_rows`** : `parse_puzzle_row(row)` est maintenant appelé dans un `try/except (TypeError, ValueError, KeyError)` — une ligne malformée est ignorée (log `WARNING` avec le `PuzzleId` si disponible) au lieu de faire échouer l'intégralité d'un import de plusieurs dizaines de minutes pour une seule ligne sur 6 millions.
+- **Test** : `test_missing_rating_field_raises_type_error` verrouille le comportement de `parse_puzzle_row` (lève bien `TypeError`) dont dépend ce `try/except` — la logique de « skip » elle-même reste non testée (`pragma: no cover`, frontière d'I/O réelle comme le reste du fichier).
+
+**Hors périmètre** : pas de mécanisme de reprise (offset/curseur) — un nouvel échec (ou un simple timeout) oblige à retélécharger/redécompresser le dump depuis le début. Sans risque de doublons (`ON CONFLICT (puzzle_id) DO NOTHING`) mais avec un coût en temps ; jugé disproportionné d'ajouter une reprise pour un script à usage ponctuel.
+
+**Validation US 39.4 :** backend **1166/1166 pytest** (+1 TU), `flake8` propre (aucune ligne ajoutée en violation — le fichier porte de la dette flake8 préexistante non touchée ici).
